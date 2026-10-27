@@ -61,11 +61,15 @@
 
 ## 快速开始
 
+### 下载已构建版本（macOS，Apple Silicon）
+
+从 [Releases](https://github.com/tenderzzz/body-journal/releases) 下载 `身体手记-mac-arm64.zip`，解压后把 `身体手记.app` 放进 `~/Applications` 或任意位置打开。构建使用本地开发签名（ad-hoc），没有 Apple Developer ID 公证；首次打开若被系统拦截，请在 Finder 中右键应用选择“打开”。发布包只包含 unsigned 快捷指令源文件，不含签名版；手机入口需要用自己的 Apple 账号签名（见下文）。
+
 ### 从源码构建（macOS，Apple Silicon，Node.js 24+）
 
 ```sh
 npm ci
-npm test          # 50 项数据与模型契约测试，全部使用临时档案与合成数据
+npm test          # 80 项数据与模型契约测试，全部使用临时档案与合成数据
 npm run build     # TypeScript 检查 + 生产构建
 npm run package   # 打包为 release/身体手记-mac-arm64.zip
 ```
