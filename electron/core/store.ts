@@ -363,11 +363,14 @@ export class HealthStore {
     const changed:{id:string;before:Memory|null;after:Memory}[]=[];let goals={...expectedGoals};
     for(const c of updates){
       if(!user.text.includes(c.evidenceQuote))throw new Error('记忆更新缺少你的原话依据，未保存。');
-      const explicit=/记住|记下|更新|更正|改成|改为|改一下|纠正|以后|默认|我(?:不)?(?:喜欢|习惯|偏好|希望|目标|现在|最近|这周|目前|通常|一般|经常)|不再|忘掉|停用|不用再|最多|每次/.test(c.evidenceQuote)||/^\s*(?:请|帮我)?(?:记住|记下|更新.{0,8}记忆)/.test(user.text);
-      // 自动记忆：长期主题的事实在用户明确陈述时直接保存；临时状态/待验证判断写入短期记忆。
-      const durableAuto=/^(communication|eating|training|nutrition|recording|health|profile)\./.test(c.key)&&/我|我的/.test(c.evidenceQuote)&&!/[？?]|吗|多少|怎么|如何/.test(c.evidenceQuote);
+      const explicit=/记住|记下|记一下|记录一下|保存|添加|加一个|更新|更正|改成|改为|改一下|纠正|以后|默认|常用食物|补剂|我(?:不)?(?:喜欢|习惯|偏好|希望|目标|现在|最近|这周|目前|通常|一般|经常)|不再|忘掉|停用|不用再|最多|每次/.test(c.evidenceQuote)||/^\s*(?:请|帮我)?(?:记住|记下|记一下|记录一下|保存)/.test(user.text)||/(?:添加|加一个|更新|录入|设置).{0,12}(?:记忆|常用食物|食物|补剂|偏好|档案)/.test(user.text);
+      // 自动记忆：常用食物带标签数字即可直接保存；长期主题的事实用户明确陈述时保存；临时状态/待验证判断写入短期记忆。
+      const durableDomains=/^(communication|eating|training|nutrition|food|supplement|meal|diet|recording|health|profile)\./;
+      const looksQuestion=/[？?]|吗|多少|怎么|如何|是否/.test(c.evidenceQuote);
+      const labelLike=/(每\s*100\s*g|每100克|每份|每勺|每袋|每片)/i.test(c.evidenceQuote)&&/\d/.test(c.evidenceQuote);
+      const durableAuto=c.kind==='food'||labelLike||(durableDomains.test(c.key)&&!/^\s*$/.test(c.evidenceQuote)&&(/我|我的|常用|固定|每天|每份|以后|默认/.test(c.evidenceQuote))&&!looksQuestion);
       const ephemeral=c.kind==='state'||c.kind==='hypothesis';
-      if(!explicit&&!durableAuto&&!ephemeral)throw new Error('这句话的记忆更新意图不明确，未改动档案。');
+      if(!explicit&&!durableAuto&&!ephemeral)throw new Error('没有识别到可长期保存的信息或原话依据，未改动档案；可以说“记住：……”或补充更明确的说法。');
       if(c.kind==='food'){
         if(!c.food)throw new Error('常用食物需要名称、每份克数和四项营养，未保存。');
         const foodNums=[c.food.servingGrams,c.food.perServing.kcal,c.food.perServing.protein,c.food.perServing.carbs,c.food.perServing.fat];

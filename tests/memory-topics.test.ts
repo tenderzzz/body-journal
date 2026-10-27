@@ -102,3 +102,23 @@ test('analysis automatically saves a labeled supplement and shows the receipt',t
  const bad=store.importEnvelope({version:1,id:'meal-record-auto2',kind:'meal',text:'午餐：米饭',occurredAt:now(),timezone:'Asia/Shanghai'}).record;
  assert.throws(()=>store.applyAnalysis(bad.id,{summary:'午餐',questions:[],assumptions:[],engine:'local',at:now(),ingredients:[],memoryChanges:[{operation:'upsert',key:'nutrition.supplement.bad',kind:'food',text:'不存在的食物',food,evidenceQuote:'原文里没有这句话'}]},'local',bad.revision),/原文/);
 });
+
+test('adding a common food in chat does not require the word 记住',t=>{
+ const store=setup(t);
+ const text='加一个常用食物：盐味溏心蛋每100g：112–112 kcal，蛋白质 12.9–12.9g，碳水 5.5–5.5g，脂肪 4.2–4.2g';
+ const quote='盐味溏心蛋每100g：112–112 kcal，蛋白质 12.9–12.9g，碳水 5.5–5.5g，脂肪 4.2–4.2g';
+ const user={id:'user-message-food1',role:'user' as const,text,createdAt:now(),status:'complete' as const,sources:[],provider:'chatgpt',stale:false};
+ const reply={id:'assistant-message-food1',role:'assistant' as const,text:'已添加。',createdAt:now(),status:'complete' as const,sources:[],provider:'chatgpt',stale:false};
+ store.completeChat(reply,[{operation:'upsert',key:'food.salty_egg',kind:'food',food:{name:'盐味溏心蛋',servingGrams:100,perServing:{kcal:112,protein:12.9,carbs:5.5,fat:4.2}},evidenceQuote:quote}],user,store.memories(),store.getSettings().goals);
+ const preset=store.foodPresets().find(p=>p.name==='盐味溏心蛋');
+ assert.ok(preset);assert.equal(preset!.perServing.protein,12.9);
+});
+
+test('label-like nutrition stated as a long-term fact is accepted automatically',t=>{
+ const store=setup(t);
+ const text='盐味溏心蛋每100g：112 kcal、蛋白质12.9g、碳水5.5g、脂肪4.2g';
+ const user={id:'user-message-label1',role:'user' as const,text,createdAt:now(),status:'complete' as const,sources:[],provider:'chatgpt',stale:false};
+ const reply={id:'assistant-message-label1',role:'assistant' as const,text:'已记住。',createdAt:now(),status:'complete' as const,sources:[],provider:'chatgpt',stale:false};
+ store.completeChat(reply,[{operation:'upsert',key:'nutrition.food.salty_egg',kind:'fact',text,evidenceQuote:text}],user,store.memories(),store.getSettings().goals);
+ assert.ok(store.memories().some(m=>m.kind==='fact'&&/盐味溏心蛋/.test(m.text)));
+});
