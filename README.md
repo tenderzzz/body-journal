@@ -3,6 +3,8 @@
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 ![Platform: macOS Apple Silicon](https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-lightgrey)
 ![Stage: 0.x](https://img.shields.io/badge/stage-0.x%20personal%20project-orange)
+[![Release](https://img.shields.io/github/v/release/tenderzzz/body-journal?label=release)](https://github.com/tenderzzz/body-journal/releases/latest)
+[![macOS 安装包](https://github.com/tenderzzz/body-journal/actions/workflows/macos-package.yml/badge.svg)](https://github.com/tenderzzz/body-journal/actions/workflows/macos-package.yml)
 
 > 本地优先的个人健康助理。iPhone 随手记录，通过 iCloud 同步；Mac 保存持续更新的训练、饮食、体重腰围和生活状态档案。默认只有你点击分析或提问时才调用 AI。
 
@@ -14,8 +16,8 @@
 
 | 项 | 现状 |
 | --- | --- |
-| 当前版本 | `0.2.2`；安装包由 GitHub Actions 构建（标签 `v0.2.2`）。 |
-| 公开预编译安装包 | v0.2.2 起改由 GitHub Actions 在 macOS 托管 runner 上构建并发布到 [Releases](https://github.com/tenderzzz/body-journal/releases)：下载 `body-journal-mac-arm64.zip`，并核对同页 `SHA256SUMS.txt`。v0.1.19 的本地构建已撤下。 |
+| 当前版本 | `0.2.2`；标签 `v0.2.2`，安装包由 GitHub Actions 构建。 |
+| 公开预编译安装包 | **[v0.2.2 Release](https://github.com/tenderzzz/body-journal/releases/tag/v0.2.2)**（2026-10-28）：`body-journal-mac-arm64.zip`，125,159,028 字节，SHA-256 `e296930a…c78c0a`，完整校验值见同页 `SHA256SUMS.txt`。v0.1.19 的本地构建已撤下。 |
 | 签名与公证 | 本地开发签名（ad-hoc），没有 Apple Developer ID，也没有经过 Apple 公证，不是 App Store 发行版。首次打开可能被系统拦截，需在 Finder 中右键应用 →“打开”。 |
 | 平台 | 仅 macOS Apple Silicon（arm64）。从源码构建需要 Node.js 24 或更高版本。 |
 | 测试 | `npm test` 运行 105 项数据与模型契约测试，全部使用临时档案与合成数据。 |
@@ -101,11 +103,11 @@
 
 ### 下载预编译安装包
 
-v0.2.2 的安装包由 GitHub Actions 在 macOS 托管 runner 上构建，发布在 [Releases](https://github.com/tenderzzz/body-journal/releases) 页面：
+v0.2.2 的安装包由 GitHub Actions 在 macOS 托管 runner 上构建，发布在 [Releases](https://github.com/tenderzzz/body-journal/releases/tag/v0.2.2) 页面：
 
 1. 下载 `body-journal-mac-arm64.zip` 并解压，把 `身体手记.app` 放进“应用程序”（或任意位置）打开。
 2. 首次打开若被系统拦截，在 Finder 中右键应用 →“打开”。
-3. 校验：`shasum -a 256 body-journal-mac-arm64.zip`，与 Release 页面上的 `SHA256SUMS.txt` 对照。
+3. 校验：`shasum -a 256 body-journal-mac-arm64.zip`，结果应为 `e296930aaa165150f5a1bf5aa6cd5e89543269a87d77b159bb4420e407c78c0a`（与 Release 页面的 `SHA256SUMS.txt` 对照）。
 
 发布包是本地 ad-hoc 签名、未经 Apple Developer ID 公证的构建。CI 从干净检出构建，包内快捷指令只含 unsigned 源文件。
 
@@ -208,7 +210,7 @@ npm run package   # 产物写入 release/
 
 [`.github/workflows/macos-package.yml`](.github/workflows/macos-package.yml) 在推送 `v*` 标签时，由 GitHub 托管的 macOS（Apple Silicon）runner 自动完成：校验标签与 `package.json` 的 `version` 一致 → 安装依赖 → 运行契约测试 → 打包并解压验证 ad-hoc 签名 → 把 `body-journal-mac-arm64.zip` 与 `SHA256SUMS.txt` 发布到同名 Release。不需要 Apple Developer 证书，也不需要配置 secret；公开仓库使用标准 runner 不消耗 Actions 配额。
 
-> 发布记录：v0.2.2（2026-10-28）由 GitHub Actions 构建并发布。v0.1.19 的本地构建已撤下，不再提供下载。
+> 发布记录：**v0.2.2**（2026-10-28）由 GitHub Actions 在 `macos-26-arm64` runner 上构建并发布，整次运行约 1 分 12 秒（[运行记录](https://github.com/tenderzzz/body-journal/actions/runs/40548384634)）。v0.1.19 的本地构建已撤下，不再提供下载。
 
 ```sh
 # 1. 更新版本号（package.json 与 package-lock.json），提交
