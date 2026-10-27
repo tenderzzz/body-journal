@@ -1,0 +1,20 @@
+node_modules/
+dist/
+dist-electron/
+release/
+.DS_Store
+*.log
+.env*
+*.sqlite*
+*.db*
+*.key
+*.enc
+coverage/
+test-results/
+playwright-report/
+private-data/
+# 已签名的快捷指令含本人 Apple ID 签名记录，不随公开仓库分发；源文件见 shortcuts/unsigned/
+shortcuts/*.shortcut
+# 本地档案与备份
+vault/
+*.bodyjournal

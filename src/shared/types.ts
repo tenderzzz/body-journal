@@ -1,0 +1,29 @@
+export type RecordKind = 'meal' | 'training' | 'body' | 'note';
+export type Provider = 'chatgpt' | 'deepseek';
+export type Range = { low: number; high: number };
+export type Macro = { kcal: Range; protein: Range; carbs: Range; fat: Range };
+export type FoodPreset = { name:string; brand?:string; servingGrams:number; perServing:{ kcal:number; protein:number; carbs:number; fat:number }; note?:string };
+export type MealSlot = 'breakfast'|'lunch'|'dinner'|'other';
+export type FoodCandidate = { name:string; meals:number; days:number; latestGrams:Range; per100g:Macro; source:'label'|'estimate'|'catalog'; latestAt:string };
+export type Attachment = { name: string; mime: string; sha256: string; file: string };
+export type TrainingPart='chest'|'back'|'shoulders'|'legs'|'mixed'|'unknown';
+export type TrainingSession={part:TrainingPart;completion:'completed'|'planned'|'unknown';durationMinutes?:number;pain?:string;recovery?:string};
+export type RunEntry={km?:number;minutes?:number;paceSecondsPerKm?:number;avgHeartRate?:number;effort?:string};
+export type SetEntry = { exercise: string; exerciseId?:string;originalExercise?:string;equipment?:string;equipmentId?:string;position?:'seated'|'standing'|'unknown';side?:'each'|'left'|'right'|'both';round?:number;dropStage?:number;setType?:'work'|'warmup'|'drop'|'superset';groupId?:string;notes?:string;rir?:number;pain?:string;classificationNeeded?:boolean;exerciseManuallyClassified?:boolean; kg: number|null; reps: number; sets: number; effort?: string; loadBasis: 'total' | 'per_hand' | 'machine' | 'bodyweight' | 'unknown'; basisSource?:'auto'|'reported'|'manual'; confirmed: boolean };
+export type ExerciseRules = { archived: string[]; overrides: Record<string, SetEntry['loadBasis']> };
+export type FoodNutrition = { source: 'label' | 'estimate'; per100g: Macro; basis: string };
+export type Ingredient = { name: string; foodId: number | null; grams: Range; assumption: string; nutrition?: FoodNutrition };
+export type Analysis = { summary: string; questions: string[]; assumptions: string[]; copyFromRecordId?:string; copiedFrom?:{recordId:string;occurredAt:string;slot:MealSlot;label:string}; sets?: SetEntry[]; run?: RunEntry; training?:TrainingSession; ingredients?: Ingredient[]; macros?: Macro | null; unmatched?: string[]; estimatedFoods?:string[]; memories?: { kind: 'state' | 'hypothesis'; text: string; expiresAt?: string }[]; engine: 'local' | Provider; at: string };
+export type HealthRecord = { id: string; kind: RecordKind; occurredAt: string; timeSource?: 'file_modified'; capturedAt?:string; dateLocked?:boolean; dateResolution?:{originalAt:string;matchedText:string;dateOnly:boolean}; timezone: string; text: string; attachments: Attachment[]; body: { weightKg?: number; waistCm?: number } | null; analysis: Analysis | null; status: 'pending' | 'ready' | 'needs_info'; revision: number; createdAt: string; updatedAt: string; deleted: boolean; source: string };
+export type Memory = { id: string; kind: 'fact' | 'state' | 'hypothesis' | 'habit' | 'food'; text: string; startsAt: string; expiresAt: string | null; sourceIds: string[]; active: boolean; confirmed: boolean; stale: boolean; autoKey?:string; autoCategory?:'training'|'meal'|'preference'; autoManaged?:boolean; sourceRevisions?:{id:string;revision:number}[]; mealTemplate?:Ingredient[]; topicKey?:string;sourceMessageIds?:string[];policy?:{split?:TrainingPart[]};food?:FoodPreset };
+export type Message = { id: string; role: 'user' | 'assistant'; text: string; createdAt: string; status: 'complete' | 'failed' | 'streaming'; sources: { id: string; revision: number }[]; provider: string; stale: boolean; error?: string;memoryReceipt?:{changed:{id:string;before:Memory|null;after:Memory}[];beforeGoals?:Settings['goals'];afterGoals?:Settings['goals'];undone?:boolean};trainingDraft?:string };
+export type Food = { id: number; description: string; zh?: string; kcal: number | null; protein: number | null; carbs: number | null; fat: number | null; source: string };
+export type Settings = { provider: Provider; chatgptModel: string; deepseekModel: string; deepseekBudget: number; deepseekInputPrice: number; deepseekOutputPrice: number; inbox: string; goals: { goal: string; kcal: number | null; protein: number | null; training: string }; timezone: string };
+export type Connection = { connected: boolean; sharing: boolean; email?: string; name?: string; hasDeepSeek: boolean; models: string[]; error?: string };
+export type Snapshot = { records: HealthRecord[]; memories: Memory[]; messages: Message[]; settings: Settings; connection: Connection; sync: { imported: number; pending: number; errors: string[]; at?: string }; usage: { month: string; inputTokens: number; outputTokens: number; cost: number; uncertain: boolean }; vault: string; version: string; conversationStart?:string;coachProfile?:CoachProfile;exerciseAliases?:{raw:string;name:string}[];exerciseRules?:ExerciseRules; foodCandidates?:FoodCandidate[] };
+export type Envelope = { version: 1; id: string; kind: RecordKind; occurredAt: string; timezone: string; text: string; body?: { weightKg?: number; waistCm?: number }; attachments?: { name: string; mime?: string; path?: string; base64?: string; sha256?: string }[]; imageBase64?: string; textBase64?:string; dateLocked?:boolean };
+export type Bridge = { invoke<T = unknown>(action: string, payload?: unknown): Promise<T>; onEvent(callback: (event: { type: string; [key: string]: unknown }) => void): () => void };
+declare global { interface Window { health: Bridge } }
+
+export type CoachProfile={profile:string;trainingRules:string;feedbackRules:string;weeklyRules:string;originalText:string;reportedAt:string};
+export type MemoryChange={operation:'upsert'|'deactivate'|'set_goal';key:string;text?:string;kind?:'fact'|'state'|'hypothesis'|'food';expiresAt?:string|null;evidenceQuote:string;targetId?:string;split?:TrainingPart[];food?:FoodPreset};
