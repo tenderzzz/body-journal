@@ -103,11 +103,36 @@ export function baselineKey(s:SetEntry){return [s.equipmentId??s.equipment??'器
 export function baselineLabel(s:SetEntry){return [s.equipmentId??s.equipment,s.loadBasis==='per_hand'?'单只重量':s.loadBasis==='total'?'报告总重':s.loadBasis==='bodyweight'?'自重':s.loadBasis==='unknown'?'重量口径待确认':'器械标重',s.position==='seated'?'坐姿':s.position==='standing'?'站姿':undefined].filter(Boolean).join(' · ');}
 export function inferSession(text:string,sets:SetEntry[]=[]):TrainingSession {
  const parts:TrainingPart[]=[];for(const [p,word] of [['chest','胸'],['back','背'],['shoulders','肩'],['legs','腿']] as const)if(new RegExp(`(?:^|\\n)\\s*${word}(?:部|日|训练)?\\s*[：:]?\\s*(?:$|\\n)`,'m').test(text))parts.push(p);
- const planned=/(?:计划|打算|准备|明天|下次).{0,12}(?:练|训练)|训练计划/.test(text)&&!/(?:实际|已经|今天|本次).{0,8}(?:完成|练完)/.test(text);
- const hasData=sets.length>0||/\d+\s*(?:kg|公斤|千克).*\d+\s*[*x×]/i.test(text);
- const completion=planned?'planned':hasData||/已完成|练完|训练结束/.test(text)?'completed':'unknown';
+ const sessionText=sets.length?text.split(/\n|[；;]/).map(line=>{const before=line.replace(/(?:跑步机|跑步|慢跑|跑了).*$/,'');return before===line||/力量|正式组|热身|\d+(?:\.\d+)?\s*(?:kg|公斤|千克|lb|磅|组|[x×*])/i.test(before)?before:'';}).join('\n'):text;
+ const planned=(/(?:计划|打算|准备|明天|下次).{0,12}(?:练|训练|跑步|慢跑)|训练计划/.test(sessionText)||/^\s*(?:力量)?(?:训练)?计划\s*[:：]?\s*$/m.test(sessionText)||/(?:计划|打算|准备)[^\n]{0,60}\d+(?:\.\d+)?\s*(?:kg|公斤|千克|lb|磅|组|[x×*])/i.test(sessionText))&&!/已完成|练完|训练结束|(?:实际|已经|今天|本次).{0,8}(?:完成|练完)/.test(sessionText);
+ const cancelled=/(?:未|没(?:有)?)(?:完成|练完|跑步|慢跑)|取消.{0,8}(?:训练|跑步)|未训练/.test(sessionText);
+ const hasData=sets.length>0||/\d+\s*(?:kg|公斤|千克).*\d+\s*[*x×]/i.test(sessionText)||/(?:跑步(?:机)?|慢跑|跑了)?\s*\d+(?:\.\d+)?\s*(?:km|公里)/i.test(sessionText);
+ const completion=cancelled?'unknown':planned?'planned':hasData||/已完成|练完|训练结束/.test(sessionText)?'completed':'unknown';
  const duration=text.match(/(?:力量训练|训练用时|训练时长)\s*[:：]?\s*(\d+)\s*分钟/);
  return {part:parts.length>1?'mixed':parts[0]??'unknown',completion,...(duration?{durationMinutes:+duration[1]}:{})};
+}
+export function extractRunText(text:string){return text.split(/\n|[；;]/).filter(line=>/跑步|跑步机|慢跑|跑了/.test(line)||/^\s*(?:训练)?计划\s*[:：]?\s*$/.test(line)||(/^\s*\d+(?:\.\d+)?\s*(?:km|公里)/i.test(line)&&!/步行|走路|骑车|骑行|游泳/.test(line))).join('\n').replace(/(?:力量训练|训练用时|训练时长)\s*[:：]?\s*\d+(?:\.\d+)?\s*(?:分钟|min)/gi,'');}
+/** Resolve reported running independently of strength; image evidence need not be repeated in the caption. */
+export function runCompletion(record:Pick<HealthRecord,'kind'|'text'|'analysis'|'status'|'attachments'>):TrainingSession['completion']{
+ const a=record.analysis,run=a?.run;if(record.kind!=='training'||!a||!run||record.status==='pending')return 'unknown';
+ const mixed=!!a.sets?.length,component=extractRunText(record.text),evidence=mixed?component:(component.trim()?component:record.text);
+ const raw=inferSession(evidence).completion;
+ const unfinished=/(?:未|没(?:有)?)(?:完成|练完|跑步|慢跑)|取消.{0,8}(?:训练|跑步)|未训练/;
+ if(unfinished.test(mixed?component:record.text))return 'unknown';
+ if(raw==='planned'||run.completion==='planned'||(!mixed&&a.training?.completion==='planned'))return 'planned';
+ if(!mixed&&unfinished.test(a.summary))return 'unknown';
+ if(!mixed&&/计划|预设|尚未开始|未开始|待完成/.test(a.summary)&&!/已完成|实际完成|按计划完成|训练结束|跑步结束/.test(a.summary))return 'planned';
+ if(run.completion==='unknown')return 'unknown';
+ if(run.completion==='completed')return 'completed';
+ if(!mixed&&a.training?.completion==='unknown')return 'unknown';
+ if(raw==='completed'||(!mixed&&a.training?.completion==='completed'))return 'completed';
+ // Older model analyses did not include run.completion. Only use their photo evidence
+ // when analysis is complete, no question remains, and enough measurements exist.
+ const summary=a.summary;
+ if(unfinished.test(summary))return 'unknown';
+ if(/计划|预设|尚未开始|未开始|待完成/.test(summary)&&!/已完成|实际完成|按计划完成|训练结束|跑步结束/.test(summary))return 'planned';
+ const measurements=[run.km,run.minutes,run.paceSecondsPerKm].filter(v=>typeof v==='number'&&Number.isFinite(v)&&v>0);
+ return record.status==='ready'&&a.engine!=='local'&&record.attachments.length>0&&!a.questions?.length&&measurements.length>=2?'completed':'unknown';
 }
 export function normalizeAnalysis(a:Analysis,text:string,custom:ExerciseAlias[]=[],rules:ExerciseRules=EMPTY_RULES):Analysis {
  const sets=a.sets?.map(s=>normalizeSet(s,custom,{rules,text,rebase:true}));const inferred=inferSession(text,sets);

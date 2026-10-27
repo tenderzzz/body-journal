@@ -1,19 +1,24 @@
 {
   "name": "personal-health-assistant",
   "productName": "身体手记",
-  "version": "0.1.19",
+  "version": "0.2.2",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.cjs",
   "description": "本地优先的个人健康 AI 助理",
-  "author": "Personal project",
+  "author": "tenderzzz",
+  "license": "GPL-3.0-only",
+  "repository": { "type": "git", "url": "git+https://github.com/tenderzzz/body-journal.git" },
+  "homepage": "https://github.com/tenderzzz/body-journal#readme",
+  "bugs": { "url": "https://github.com/tenderzzz/body-journal/issues" },
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "tsc --noEmit && vite build && node scripts/build.mjs",
     "start": "electron .",
     "test": "node --import tsx --test tests/*.test.ts",
     "test:ui": "node scripts/smoke.mjs",
-    "package": "npm run build && node scripts/package.mjs"
+    "package": "npm run build && node scripts/package.mjs",
+    "test:energy-ui": "node scripts/energy-smoke.mjs"
   },
   "dependencies": {
     "jose": "^6.1.0",
@@ -35,5 +40,7 @@
     "typescript": "^5.9.0",
     "vite": "^7.1.0"
   },
-  "engines": { "node": ">=24" }
+  "engines": {
+    "node": ">=24"
+  }
 }
