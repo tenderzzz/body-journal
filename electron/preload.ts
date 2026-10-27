@@ -1,0 +1,6 @@
+import { contextBridge, ipcRenderer } from 'electron';
+const allowed=new Set(['snapshot','record:create','record:update','record:undo','record:history','record:analyze','record:analyzePending','record:importHistory','record:importFiles','attachment:choose','attachment:get','sync','memory:save','memory:undo','coach:save','exercise:reclassify','exercise:reclassifyMany','exercise:rules','exercise:deleteAlias','record:setDeleted','food:candidateIgnore','memory:tidy','settings:save','inbox:choose','inbox:prepare','vault:open','shortcuts:open','docs:open','backup:save','backup:restore','export','chat:send','chat:cancel','chat:new','chat:remember','chat:undoMemory','auth:login','auth:logout','auth:models','auth:usage','auth:test','deepseek:save','deepseek:remove','food:search']);
+contextBridge.exposeInMainWorld('health',{
+  invoke:async(action:string,payload?:unknown)=>{if(!allowed.has(action))throw new Error('不支持的操作'); const result=await ipcRenderer.invoke('health:invoke',action,payload);if(!result.ok)throw new Error(result.error);return result.value;},
+  onEvent:(callback:(event:unknown)=>void)=>{const listener=(_:unknown,event:unknown)=>callback(event);ipcRenderer.on('health:event',listener);return()=>ipcRenderer.removeListener('health:event',listener);}
+});

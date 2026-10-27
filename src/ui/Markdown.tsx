@@ -1,0 +1,10 @@
+import type {ReactNode} from 'react';
+import {ArrowUpRight} from 'lucide-react';
+function Inline({text,onSource}:{text:string;onSource:(id:string)=>void}){return <>{text.split(/(\[(?:记录|对话|记忆):[a-zA-Z0-9_-]+\]|\*\*[^*]+\*\*|`[^`]+`)/g).map((t,i)=>{const source=/^\[(记录|对话|记忆):([^\]]+)\]$/.exec(t);return source?<button key={i} className="source-link" onClick={()=>onSource(source[1]==='记录'?source[2]:`${source[1]==='对话'?'message':'memory'}:${source[2]}`)}>查看依据 <ArrowUpRight size={12}/></button>:t.startsWith('**')?<strong key={i}>{t.slice(2,-2)}</strong>:t.startsWith('`')?<code key={i}>{t.slice(1,-1)}</code>:<span key={i}>{t}</span>;})}</>;}
+const cells=(line:string)=>line.trim().replace(/^\|/,'').replace(/\|$/,'').split(/(?<!\\)\|/).map(c=>c.trim().replace(/\\\|/g,'|'));
+export function Markdown({text,onSource}:{text:string;onSource:(id:string)=>void}){const lines=text.split('\n'),blocks:ReactNode[]=[];for(let i=0;i<lines.length;i++){const line=lines[i];if(!line.trim())continue;
+ if(line.includes('|')&&i+1<lines.length&&/^\s*\|?\s*:?-{3,}/.test(lines[i+1])){const headers=cells(line),rows:string[][]=[];i+=2;while(i<lines.length&&lines[i].includes('|')&&lines[i].trim()){rows.push(cells(lines[i]));i++;}i--;blocks.push(<div className="table-wrap" key={i}><table><thead><tr>{headers.map((v,j)=><th key={j}><Inline text={v} onSource={onSource}/></th>)}</tr></thead><tbody>{rows.map((row,j)=><tr key={j}>{headers.map((_,k)=><td key={k}><Inline text={row[k]??''} onSource={onSource}/></td>)}</tr>)}</tbody></table></div>);continue;}
+ const heading=/^#{1,6}\s+(.+)$/.exec(line);if(heading){blocks.push(<h3 key={i}><Inline text={heading[1]} onSource={onSource}/></h3>);continue;}
+ if(/^\s*(?:[-*]|\d+[.)、])\s+/.test(line)){const list:string[]=[];while(i<lines.length&&/^\s*(?:[-*]|\d+[.)、])\s+/.test(lines[i])){list.push(lines[i].replace(/^\s*(?:[-*]|\d+[.)、])\s+/,''));i++;}i--;blocks.push(<ul key={i}>{list.map((s,j)=><li key={j}><Inline text={s} onSource={onSource}/></li>)}</ul>);continue;}
+ blocks.push(<p key={i}><Inline text={line} onSource={onSource}/></p>);
+ }return <div className="rich-text markdown">{blocks}</div>;}

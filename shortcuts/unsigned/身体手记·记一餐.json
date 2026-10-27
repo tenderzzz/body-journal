@@ -1,0 +1,784 @@
+{
+  "WFWorkflowName": "身体手记·记一餐",
+  "WFWorkflowClientVersion": "3036.0.4",
+  "WFWorkflowMinimumClientVersion": 900,
+  "WFWorkflowMinimumClientVersionString": "900",
+  "WFWorkflowTypes": [
+    "ActionExtension"
+  ],
+  "WFWorkflowInputContentItemClasses": [
+    "WFImageContentItem"
+  ],
+  "WFWorkflowOutputContentItemClasses": [],
+  "WFWorkflowHasOutputFallback": false,
+  "WFWorkflowIcon": {
+    "WFWorkflowIconStartColor": 4282601983,
+    "WFWorkflowIconGlyphNumber": 59511
+  },
+  "WFWorkflowImportQuestions": [
+    {
+      "Category": "Parameter",
+      "ActionIndex": 48,
+      "ParameterKey": "WFFolder",
+      "Text": "选择保存位置：iCloud Drive → Shortcuts → BodyJournal → inbox。先在 Mac 应用“连接与数据”建立收件箱。"
+    }
+  ],
+  "WFWorkflowActions": [
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.comment",
+      "WFWorkflowActionParameters": {
+        "WFCommentActionText": "身体手记 v0.1.4。原始记录保存到你选择的 iCloud 收件箱；不会调用 AI。只有保存文件成功后才提示成功。安装时请选择 iCloud Drive/Shortcuts/BodyJournal/inbox。若失败或取消，不会显示“已保存”。",
+        "UUID": "6D923905-DEBA-45BA-9470-C05532FD5ECE"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.gettext",
+      "WFWorkflowActionParameters": {
+        "WFTextActionText": "",
+        "UUID": "D52F9363-0A5D-4C90-8734-2EF808BBAAF4"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.setvariable",
+      "WFWorkflowActionParameters": {
+        "WFVariableName": "记录文字",
+        "WFInput": {
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "D52F9363-0A5D-4C90-8734-2EF808BBAAF4",
+            "OutputName": "gettext"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "UUID": "2289FE4C-D876-43DF-9EB9-E814DB39F05B"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.setvariable",
+      "WFWorkflowActionParameters": {
+        "WFVariableName": "记录照片",
+        "WFInput": {
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "D52F9363-0A5D-4C90-8734-2EF808BBAAF4",
+            "OutputName": "gettext"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "UUID": "1B5C56F8-BF62-4B00-90C9-5A85FC28B196"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.date",
+      "WFWorkflowActionParameters": {
+        "WFDateActionMode": "Current Date",
+        "UUID": "BC5865C3-2856-408B-9079-206B5F52FB7E"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.format.date",
+      "WFWorkflowActionParameters": {
+        "WFDate": {
+          "Value": {
+            "string": "￼",
+            "attachmentsByRange": {
+              "{0, 1}": {
+                "Type": "ActionOutput",
+                "OutputUUID": "BC5865C3-2856-408B-9079-206B5F52FB7E",
+                "OutputName": "date"
+              }
+            }
+          },
+          "WFSerializationType": "WFTextTokenString"
+        },
+        "WFDateFormatStyle": "Custom",
+        "WFDateFormat": "yyyy-MM-dd'T'HH:mm:ssXXX",
+        "UUID": "AC390383-5BA9-4C27-B2A4-E14793426678"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.setvariable",
+      "WFWorkflowActionParameters": {
+        "WFVariableName": "记录时间",
+        "WFInput": {
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "AC390383-5BA9-4C27-B2A4-E14793426678",
+            "OutputName": "format.date"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "UUID": "B30A55BF-21A3-46BE-87CF-E8C510E27300"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 0,
+        "GroupingIdentifier": "81CDE93A-11C2-4211-AE59-DB41B91D9D8C",
+        "WFConditions": {
+          "Value": {
+            "WFActionParameterFilterPrefix": 1,
+            "WFContentPredicateBoundedDate": false,
+            "WFActionParameterFilterTemplates": [
+              {
+                "WFCondition": 100,
+                "WFInput": {
+                  "Type": "Variable",
+                  "Variable": {
+                    "Value": {
+                      "Type": "Variable",
+                      "VariableName": "记录时间"
+                    },
+                    "WFSerializationType": "WFTextTokenAttachment"
+                  }
+                }
+              }
+            ]
+          },
+          "WFSerializationType": "WFContentPredicateTableTemplate"
+        },
+        "UUID": "39CC0B83-30E6-49D1-96C4-941A40FD6628"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 1,
+        "GroupingIdentifier": "81CDE93A-11C2-4211-AE59-DB41B91D9D8C",
+        "UUID": "0636C5E4-3998-456C-ACF7-F1B4D2B083E3"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.showresult",
+      "WFWorkflowActionParameters": {
+        "Text": "系统没有生成记录时间，未保存。请更新快捷指令后重试。",
+        "UUID": "2597E10F-FD01-4076-92C7-A8908C1492F1"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.exit",
+      "WFWorkflowActionParameters": {
+        "UUID": "41A93007-E3F2-4F8F-B2E3-6CCEC860AC40"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 2,
+        "GroupingIdentifier": "81CDE93A-11C2-4211-AE59-DB41B91D9D8C",
+        "UUID": "1ABE392C-3E2B-4154-A686-479B7B5D229B"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.format.date",
+      "WFWorkflowActionParameters": {
+        "WFDate": {
+          "Value": {
+            "string": "￼",
+            "attachmentsByRange": {
+              "{0, 1}": {
+                "Type": "ActionOutput",
+                "OutputUUID": "BC5865C3-2856-408B-9079-206B5F52FB7E",
+                "OutputName": "date"
+              }
+            }
+          },
+          "WFSerializationType": "WFTextTokenString"
+        },
+        "WFDateFormatStyle": "Custom",
+        "WFDateFormat": "yyyyMMddHHmmssSSS",
+        "UUID": "647027B1-BEE9-4478-BB93-C512BD0D486E"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.number.random",
+      "WFWorkflowActionParameters": {
+        "WFRandomNumberMinimum": 1000000,
+        "WFRandomNumberMaximum": 9999999,
+        "UUID": "7F8F8C0B-DDDE-45FF-938F-5C129A06DA5A"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.gettext",
+      "WFWorkflowActionParameters": {
+        "WFTextActionText": {
+          "Value": {
+            "string": "￼-￼",
+            "attachmentsByRange": {
+              "{0, 1}": {
+                "Type": "ActionOutput",
+                "OutputUUID": "647027B1-BEE9-4478-BB93-C512BD0D486E",
+                "OutputName": "format.date"
+              },
+              "{2, 1}": {
+                "Type": "ActionOutput",
+                "OutputUUID": "7F8F8C0B-DDDE-45FF-938F-5C129A06DA5A",
+                "OutputName": "number.random"
+              }
+            }
+          },
+          "WFSerializationType": "WFTextTokenString"
+        },
+        "UUID": "6BF75AA7-24C1-4AA6-AB09-494A92FAC00C"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.setvariable",
+      "WFWorkflowActionParameters": {
+        "WFVariableName": "记录编号",
+        "WFInput": {
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "6BF75AA7-24C1-4AA6-AB09-494A92FAC00C",
+            "OutputName": "gettext"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "UUID": "19FFAE5D-99BB-41AF-A848-99D007DF5156"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 0,
+        "GroupingIdentifier": "D4DEB6F8-2022-4462-A07E-6CE3C3716DBD",
+        "WFConditions": {
+          "Value": {
+            "WFActionParameterFilterPrefix": 1,
+            "WFContentPredicateBoundedDate": false,
+            "WFActionParameterFilterTemplates": [
+              {
+                "WFCondition": 100,
+                "WFInput": {
+                  "Type": "Variable",
+                  "Variable": {
+                    "Value": {
+                      "Type": "ExtensionInput"
+                    },
+                    "WFSerializationType": "WFTextTokenAttachment"
+                  }
+                }
+              }
+            ]
+          },
+          "WFSerializationType": "WFContentPredicateTableTemplate"
+        },
+        "UUID": "56FA13C6-2D06-4C75-8563-0C867FFD937F"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.getitemfromlist",
+      "WFWorkflowActionParameters": {
+        "WFInput": {
+          "Value": {
+            "Type": "ExtensionInput"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "WFItemSpecifier": "First Item",
+        "UUID": "47F1716E-FF02-447F-AF5B-3DC3B63B1134"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.image.convert",
+      "WFWorkflowActionParameters": {
+        "WFInput": {
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "47F1716E-FF02-447F-AF5B-3DC3B63B1134",
+            "OutputName": "getitemfromlist"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "WFImageFormat": "JPEG",
+        "WFImageCompressionQuality": 0.85,
+        "WFImagePreserveMetadata": false,
+        "UUID": "8034648D-9612-48DB-8877-B7EA201A3979"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.base64encode",
+      "WFWorkflowActionParameters": {
+        "WFInput": {
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "8034648D-9612-48DB-8877-B7EA201A3979",
+            "OutputName": "image.convert"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "WFEncodeMode": "Encode",
+        "WFBase64LineBreakMode": "None",
+        "UUID": "60BA1EB7-492C-4273-B3DC-EB3E65AA9DBC"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.setvariable",
+      "WFWorkflowActionParameters": {
+        "WFVariableName": "记录照片",
+        "WFInput": {
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "60BA1EB7-492C-4273-B3DC-EB3E65AA9DBC",
+            "OutputName": "base64encode"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "UUID": "58498CF0-176C-44CD-AD24-5627F4A2EF1B"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.ask",
+      "WFWorkflowActionParameters": {
+        "WFAskActionPrompt": "补充菜名、大概分量或剩下多少；没有补充可直接确认。",
+        "WFInputType": "Text",
+        "WFAskActionDefaultAnswer": "无补充",
+        "UUID": "20C11E9C-F4D6-4E9B-ABE0-77313760EBA3"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.base64encode",
+      "WFWorkflowActionParameters": {
+        "WFInput": {
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "20C11E9C-F4D6-4E9B-ABE0-77313760EBA3",
+            "OutputName": "ask"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "WFEncodeMode": "Encode",
+        "WFBase64LineBreakMode": "None",
+        "UUID": "AF60DE66-6949-4FBA-B44F-22EB81E6CFFF"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.setvariable",
+      "WFWorkflowActionParameters": {
+        "WFVariableName": "记录文字",
+        "WFInput": {
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "AF60DE66-6949-4FBA-B44F-22EB81E6CFFF",
+            "OutputName": "base64encode"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "UUID": "567B4E80-BC1C-4EF4-A147-A9A942746EFA"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 1,
+        "GroupingIdentifier": "D4DEB6F8-2022-4462-A07E-6CE3C3716DBD",
+        "UUID": "C81BE856-2D67-44AA-A99D-4F6A88E3A204"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.choosefrommenu",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 0,
+        "GroupingIdentifier": "A6A0D08D-E464-4AFB-98B7-A9A61CC58727",
+        "WFMenuPrompt": "这餐怎么记？",
+        "WFMenuItems": [
+          "拍照记餐",
+          "只记文字"
+        ],
+        "UUID": "335FD10D-A7EE-438B-972E-F01F472A9F53"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.choosefrommenu",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 1,
+        "GroupingIdentifier": "A6A0D08D-E464-4AFB-98B7-A9A61CC58727",
+        "WFMenuItemTitle": "拍照记餐",
+        "UUID": "735A545C-1A9F-4E9C-874E-8F437D9DC02C"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.takephoto",
+      "WFWorkflowActionParameters": {
+        "WFCameraCaptureDevice": "Back",
+        "WFCameraCaptureShowPreview": true,
+        "WFCameraCaptureCount": 1,
+        "UUID": "2123EB4C-BE20-472A-A6FA-CE0D380FAD3A"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.getitemfromlist",
+      "WFWorkflowActionParameters": {
+        "WFInput": {
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "2123EB4C-BE20-472A-A6FA-CE0D380FAD3A",
+            "OutputName": "takephoto"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "WFItemSpecifier": "First Item",
+        "UUID": "AD2AF66C-0355-4F2D-B455-8A048C4AD664"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.image.convert",
+      "WFWorkflowActionParameters": {
+        "WFInput": {
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "AD2AF66C-0355-4F2D-B455-8A048C4AD664",
+            "OutputName": "getitemfromlist"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "WFImageFormat": "JPEG",
+        "WFImageCompressionQuality": 0.85,
+        "WFImagePreserveMetadata": false,
+        "UUID": "3CAABB63-5BE4-48B4-898D-3C682E13F7CF"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.base64encode",
+      "WFWorkflowActionParameters": {
+        "WFInput": {
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "3CAABB63-5BE4-48B4-898D-3C682E13F7CF",
+            "OutputName": "image.convert"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "WFEncodeMode": "Encode",
+        "WFBase64LineBreakMode": "None",
+        "UUID": "EB42F862-56BE-48C7-8768-09FB684744E2"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.setvariable",
+      "WFWorkflowActionParameters": {
+        "WFVariableName": "记录照片",
+        "WFInput": {
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "EB42F862-56BE-48C7-8768-09FB684744E2",
+            "OutputName": "base64encode"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "UUID": "58FEE6A8-B01F-4484-9D4C-0F8BB7464851"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.ask",
+      "WFWorkflowActionParameters": {
+        "WFAskActionPrompt": "补充菜名、大概分量或剩下多少；没有补充可直接确认。",
+        "WFInputType": "Text",
+        "WFAskActionDefaultAnswer": "无补充",
+        "UUID": "6F5E7913-3B31-49B6-B5CE-C926C30C47BB"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.base64encode",
+      "WFWorkflowActionParameters": {
+        "WFInput": {
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "6F5E7913-3B31-49B6-B5CE-C926C30C47BB",
+            "OutputName": "ask"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "WFEncodeMode": "Encode",
+        "WFBase64LineBreakMode": "None",
+        "UUID": "871C2142-0C89-4ECB-A172-31D7B8FBC293"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.setvariable",
+      "WFWorkflowActionParameters": {
+        "WFVariableName": "记录文字",
+        "WFInput": {
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "871C2142-0C89-4ECB-A172-31D7B8FBC293",
+            "OutputName": "base64encode"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "UUID": "B86FA93A-97C9-455B-BA63-F386512F4479"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.choosefrommenu",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 1,
+        "GroupingIdentifier": "A6A0D08D-E464-4AFB-98B7-A9A61CC58727",
+        "WFMenuItemTitle": "只记文字",
+        "UUID": "C7B514B1-9B35-4966-959A-3854F9A5D204"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.ask",
+      "WFWorkflowActionParameters": {
+        "WFAskActionPrompt": "这餐吃了什么？写下菜名和大概分量即可，也可以用键盘听写。例：一碗米饭、两块鸡腿、半份青菜。",
+        "WFInputType": "Text",
+        "UUID": "E5CFCD37-5D2E-41D5-A77F-2098B6F0FBB0"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 0,
+        "GroupingIdentifier": "9052AD51-0F0B-436D-96DF-F74D0A60148E",
+        "WFConditions": {
+          "Value": {
+            "WFActionParameterFilterPrefix": 1,
+            "WFContentPredicateBoundedDate": false,
+            "WFActionParameterFilterTemplates": [
+              {
+                "WFCondition": 100,
+                "WFInput": {
+                  "Type": "Variable",
+                  "Variable": {
+                    "Value": {
+                      "Type": "ActionOutput",
+                      "OutputUUID": "E5CFCD37-5D2E-41D5-A77F-2098B6F0FBB0",
+                      "OutputName": "ask"
+                    },
+                    "WFSerializationType": "WFTextTokenAttachment"
+                  }
+                }
+              }
+            ]
+          },
+          "WFSerializationType": "WFContentPredicateTableTemplate"
+        },
+        "UUID": "49190BEF-38DA-4B37-9BE0-4C24A84DCCA7"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.base64encode",
+      "WFWorkflowActionParameters": {
+        "WFInput": {
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "E5CFCD37-5D2E-41D5-A77F-2098B6F0FBB0",
+            "OutputName": "ask"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "WFEncodeMode": "Encode",
+        "WFBase64LineBreakMode": "None",
+        "UUID": "333AA1AC-3E9A-4E3A-ACA5-41D03C4D9EED"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.setvariable",
+      "WFWorkflowActionParameters": {
+        "WFVariableName": "记录文字",
+        "WFInput": {
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "333AA1AC-3E9A-4E3A-ACA5-41D03C4D9EED",
+            "OutputName": "base64encode"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "UUID": "2534ABFE-309C-427B-87A3-B7214231DF82"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 1,
+        "GroupingIdentifier": "9052AD51-0F0B-436D-96DF-F74D0A60148E",
+        "UUID": "1846456B-CD7A-44F0-9EF7-159B55D7E4D9"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.showresult",
+      "WFWorkflowActionParameters": {
+        "Text": "没有输入内容，记录未保存。",
+        "UUID": "290482F4-F231-499E-9FB0-6701863C6DEC"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.exit",
+      "WFWorkflowActionParameters": {
+        "UUID": "C708F8D5-D3ED-438A-9864-EEE3123217D6"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 2,
+        "GroupingIdentifier": "9052AD51-0F0B-436D-96DF-F74D0A60148E",
+        "UUID": "1BA51E83-6077-4350-9D63-021C4AB25D0F"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.choosefrommenu",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 2,
+        "GroupingIdentifier": "A6A0D08D-E464-4AFB-98B7-A9A61CC58727",
+        "UUID": "BAD667DF-D981-40F0-91C5-8A8BF94CD111"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 2,
+        "GroupingIdentifier": "D4DEB6F8-2022-4462-A07E-6CE3C3716DBD",
+        "UUID": "A1BE42BA-25C3-4C1E-8EDD-AE2D08404E4F"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.gettext",
+      "WFWorkflowActionParameters": {
+        "WFTextActionText": {
+          "Value": {
+            "string": "{\"version\":1,\"id\":\"￼\",\"kind\":\"meal\",\"occurredAt\":\"￼\",\"timezone\":\"Asia/Shanghai\",\"textBase64\":\"￼\",\"imageBase64\":\"￼\"}",
+            "attachmentsByRange": {
+              "{19, 1}": {
+                "Type": "Variable",
+                "VariableName": "记录编号"
+              },
+              "{50, 1}": {
+                "Type": "Variable",
+                "VariableName": "记录时间"
+              },
+              "{94, 1}": {
+                "Type": "Variable",
+                "VariableName": "记录文字"
+              },
+              "{112, 1}": {
+                "Type": "Variable",
+                "VariableName": "记录照片"
+              }
+            }
+          },
+          "WFSerializationType": "WFTextTokenString"
+        },
+        "UUID": "24C912B2-F369-4D66-98CB-8F35854C3B36"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.setitemname",
+      "WFWorkflowActionParameters": {
+        "WFInput": {
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "24C912B2-F369-4D66-98CB-8F35854C3B36",
+            "OutputName": "gettext"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "WFName": {
+          "Value": {
+            "string": "￼.health.json",
+            "attachmentsByRange": {
+              "{0, 1}": {
+                "Type": "Variable",
+                "VariableName": "记录编号"
+              }
+            }
+          },
+          "WFSerializationType": "WFTextTokenString"
+        },
+        "WFDontIncludeFileExtension": false,
+        "UUID": "06E15BDC-7E48-4D9A-AC74-571B4F1B823C"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.documentpicker.save",
+      "WFWorkflowActionParameters": {
+        "WFInput": {
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "06E15BDC-7E48-4D9A-AC74-571B4F1B823C",
+            "OutputName": "setitemname"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "WFAskWhereToSave": false,
+        "WFFileDestinationPath": {
+          "Value": {
+            "string": "￼.health.json",
+            "attachmentsByRange": {
+              "{0, 1}": {
+                "Type": "Variable",
+                "VariableName": "记录编号"
+              }
+            }
+          },
+          "WFSerializationType": "WFTextTokenString"
+        },
+        "WFSaveFileOverwrite": false,
+        "UUID": "EB8E3CB2-EB9D-43AD-B5A6-4E8A3AA148D9"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 0,
+        "GroupingIdentifier": "E65B50AC-3A10-486C-8244-35D9E6438605",
+        "WFConditions": {
+          "Value": {
+            "WFActionParameterFilterPrefix": 1,
+            "WFContentPredicateBoundedDate": false,
+            "WFActionParameterFilterTemplates": [
+              {
+                "WFCondition": 100,
+                "WFInput": {
+                  "Type": "Variable",
+                  "Variable": {
+                    "Value": {
+                      "Type": "ActionOutput",
+                      "OutputUUID": "EB8E3CB2-EB9D-43AD-B5A6-4E8A3AA148D9",
+                      "OutputName": "documentpicker.save"
+                    },
+                    "WFSerializationType": "WFTextTokenAttachment"
+                  }
+                }
+              }
+            ]
+          },
+          "WFSerializationType": "WFContentPredicateTableTemplate"
+        },
+        "UUID": "87F42767-418C-41C8-8D66-89F3CB94178C"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.showresult",
+      "WFWorkflowActionParameters": {
+        "Text": "已保存到手机收件箱。等待 iCloud 同步后，打开 Mac 的身体手记即可查看。",
+        "UUID": "C1E325C6-C1F4-45B8-A4AB-BBF7BF2ECBB6"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 1,
+        "GroupingIdentifier": "E65B50AC-3A10-486C-8244-35D9E6438605",
+        "UUID": "BC30CA52-5AA9-43ED-8C3C-582D824EDCC4"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.showresult",
+      "WFWorkflowActionParameters": {
+        "Text": "记录未保存。请检查 iCloud 空间、网络和保存位置后重试。",
+        "UUID": "B6B9B844-9860-4834-A309-AB1E08E642CC"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 2,
+        "GroupingIdentifier": "E65B50AC-3A10-486C-8244-35D9E6438605",
+        "UUID": "E63ACC71-52BD-42A2-BFC5-66AD8584276C"
+      }
+    }
+  ]
+}
