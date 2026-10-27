@@ -12,6 +12,10 @@ release/
 coverage/
 test-results/
 playwright-report/
+*.tsbuildinfo
+.vscode/
+__pycache__/
+*.pyc
 private-data/
 # 已签名的快捷指令含本人 Apple ID 签名记录，不随公开仓库分发；源文件见 shortcuts/unsigned/
 shortcuts/*.shortcut

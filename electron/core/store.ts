@@ -4,16 +4,17 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdir
 import path from 'node:path';
 import type { Analysis, Attachment, Envelope, HealthRecord, Memory, Message, Settings, CoachProfile, MemoryChange, ExerciseRules, FoodPreset, FoodCandidate } from '../../src/shared/types';
 import { analysisSchema, bodySchema, envelopeSchema, idSchema, memoryInputSchema, settingsSchema, readableError, coachProfileSchema, memoryChangeSchema } from './validation';
-import { localRecordStatus, parseBody } from './parser';
+import { localRecordStatus, parseBody, parseTraining } from './parser';
 import { FoodCatalog } from './nutrition';
 import { computeStats, validMemory, localDay } from '../../src/shared/stats';
 import { z } from 'zod';
 import { resolveRecordDate } from './dates';
 import { automaticMemories } from './personalization';
-import { normalizeAnalysis, DEFAULT_SPLIT, type ExerciseAlias } from '../../src/shared/exercises';
+import { normalizeAnalysis, DEFAULT_SPLIT, inferSession, type ExerciseAlias } from '../../src/shared/exercises';
 import { foodPer100g, foodText, matchFoodPreset, normalizeFoodName } from '../../src/shared/food';
 import { mealLabel, mealSlot } from '../../src/shared/meals';
 import { DEFAULT_COACH, weeklyContext } from './coaching';
+import { EnergyStore } from './energy-store';
 
 export function sha256(data:Buffer|string) { return createHash('sha256').update(data).digest('hex'); }
 export function atomicWrite(file:string,data:string|Buffer) { mkdirSync(path.dirname(file),{recursive:true,mode:0o700}); const tmp=`${file}.${randomUUID()}.tmp`; writeFileSync(tmp,data,{mode:0o600}); renameSync(tmp,file); }
@@ -30,13 +31,14 @@ function parseJSON<T>(s:unknown):T { return JSON.parse(String(s)) as T; }
 function iso() { return new Date().toISOString(); }
 export class HealthStore {
   db: DatabaseSync;
+  energy!:EnergyStore;
   syncState: { imported:number;pending:number;errors:string[];at?:string }={imported:0,pending:0,errors:[]};
   constructor(public root:string,public catalog:FoodCatalog,defaultInbox:string,seed=true) {
     mkdirSync(root,{recursive:true,mode:0o700});
     this.db=new DatabaseSync(path.join(root,'health.sqlite'));
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
     const version=Number(this.db.prepare('PRAGMA user_version').get()?.user_version??0);
-    if(version>1) throw new Error('档案由更高版本创建，请升级应用后再打开。');
+    if(version>2) throw new Error('档案由更高版本创建，请升级应用后再打开。');
     if(version>0 && version<1) this.db.prepare('VACUUM INTO ?').run(path.join(root,`before-migration-${Date.now()}.sqlite`));
     this.db.exec(`CREATE TABLE IF NOT EXISTS records(id TEXT PRIMARY KEY, doc TEXT NOT NULL, fingerprint TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS revisions(seq INTEGER PRIMARY KEY AUTOINCREMENT, entity TEXT NOT NULL, id TEXT NOT NULL, doc TEXT NOT NULL, at TEXT NOT NULL);
@@ -44,7 +46,7 @@ export class HealthStore {
       CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY,doc TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS config(key TEXT PRIMARY KEY,value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS usage(id TEXT PRIMARY KEY,month TEXT NOT NULL,provider TEXT NOT NULL,input INTEGER NOT NULL,output INTEGER NOT NULL,cost REAL NOT NULL,state TEXT NOT NULL,at TEXT NOT NULL);
-      PRAGMA user_version=1;`);
+      `);
     if(!this.db.prepare('SELECT value FROM config WHERE key=?').get('settings')) {
       this.setSettings({provider:'chatgpt',chatgptModel:'',deepseekModel:'deepseek-flash',deepseekBudget:0,deepseekInputPrice:0.3,deepseekOutputPrice:1.2,inbox:defaultInbox,timezone:'Asia/Shanghai',goals:{goal:'增肌减脂，逐步练出更厚实、精干的体型',kcal:null,protein:null,training:''}});
       if(seed) for(const text of ['主要吃食堂和外卖，目前没有自己做饭的条件。','喜欢更换菜式，食物分量通常只能估计。','希望记录负担尽量低，可以接受有针对性的追问。']) this.saveMemory({kind:'fact',text,startsAt:iso(),expiresAt:null,sourceIds:[],active:true,confirmed:true});
@@ -52,15 +54,35 @@ export class HealthStore {
     // A crashed request is never presented as a completed answer or forgotten spend.
     this.db.prepare("UPDATE usage SET state='uncertain' WHERE state='reserved'").run();
     for(const m of this.messages()) if(m.status==='streaming') this.putMessage({...m,status:'failed',error:'上次请求被中断，请重新提问。'});
+    if(version===1)this.backup(path.join(root,'backups',`before-energy-v2-${Date.now()}.bodyjournal`));
+    this.transaction(()=>{this.energy=new EnergyStore(this);
+      if(version<2&&this.getSettings().goals.kcal!==null)this.energy.importManualTarget(this.getSettings().goals.kcal!,this.getSettings().goals.protein);
+      this.db.exec('PRAGMA user_version=2');});
+    this.energy.syncTarget();this.energy.invalidate();
   }
   close() { this.db.close(); }
+  migrateEnergyParsing(){
+    if(this.getConfig<boolean>('energyParsingV1'))return 0;
+    const corrections=this.records().flatMap(r=>{
+      if(r.kind!=='training'||r.analysis?.engine!=='local'||!r.analysis.run)return [];
+      const parsed=parseTraining(r.text),duration=inferSession(r.text,r.analysis.sets).durationMinutes;
+      if(!parsed?.run)return [];
+      const badDuration=!!duration&&r.analysis.run.minutes===duration&&parsed.run.minutes!==undefined&&parsed.run.minutes!==duration;
+      const completion=r.analysis.training?.completion==='unknown'&&parsed.training?.completion==='completed';
+      if(!badDuration&&!completion)return [];
+      const analysis={...r.analysis,run:{...r.analysis.run,...(badDuration?{minutes:parsed.run.minutes}:{})},training:{...(r.analysis.training??parsed.training!),...(completion?{completion:'completed' as const}:{})}};
+      return [{r,analysis}];
+    });
+    if(corrections.length)this.backup(path.join(this.root,'backups',`before-energy-parsing-${Date.now()}.bodyjournal`));
+    this.transaction(()=>{for(const {r,analysis} of corrections)this.commitRevision(r,{...r,analysis});this.setConfig('energyParsingV1',true);});return corrections.length;
+  }
   getSettings():Settings { return parseJSON(this.db.prepare('SELECT value FROM config WHERE key=?').get('settings')!.value); }
-  setSettings(value:unknown) { const s=settingsSchema.parse(value); this.db.prepare('INSERT INTO config VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('settings',JSON.stringify(s)); return s; }
+  setSettings(value:unknown) { const s=settingsSchema.parse(value),old=this.getConfig<Settings>('settings'); this.db.prepare('INSERT INTO config VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('settings',JSON.stringify(s));if(this.energy&&!this.energy.mirroring&&(!old||old.goals.kcal!==s.goals.kcal||old.goals.protein!==s.goals.protein))this.energy.rememberManualTarget(s.goals.kcal,s.goals.protein);if(this.energy&&old?.timezone!==s.timezone)this.energy.invalidate(); return s; }
   getConfig<T>(key:string):T|undefined { const row=this.db.prepare('SELECT value FROM config WHERE key=?').get(key); return row?parseJSON<T>(row.value):undefined; }
   setConfig(key:string,value:unknown) { this.db.prepare('INSERT INTO config VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key,JSON.stringify(value)); }
   records(includeDeleted=false):HealthRecord[] { return this.db.prepare('SELECT doc FROM records').all().map(r=>parseJSON<HealthRecord>(r.doc)).filter(r=>includeDeleted||!r.deleted).sort((a,b)=>Date.parse(b.occurredAt)-Date.parse(a.occurredAt)); }
   record(id:string):HealthRecord { idSchema.parse(id); const r=this.db.prepare('SELECT doc FROM records WHERE id=?').get(id); if(!r) throw new Error('没有找到这条记录'); return parseJSON(r.doc); }
-  private putRecord(r:HealthRecord,fingerprint?:string) { if(fingerprint) this.db.prepare('INSERT INTO records VALUES(?,?,?)').run(r.id,JSON.stringify(r),fingerprint); else this.db.prepare('UPDATE records SET doc=? WHERE id=?').run(JSON.stringify(r),r.id); }
+  private putRecord(r:HealthRecord,fingerprint?:string) { if(fingerprint) this.db.prepare('INSERT INTO records VALUES(?,?,?)').run(r.id,JSON.stringify(r),fingerprint); else this.db.prepare('UPDATE records SET doc=? WHERE id=?').run(JSON.stringify(r),r.id);this.energy?.invalidate(); }
   private transaction<T>(fn:()=>T):T { if(this.db.isTransaction)return fn();this.db.exec('BEGIN IMMEDIATE'); try { const result=fn(); this.db.exec('COMMIT'); return result; } catch(e) { this.db.exec('ROLLBACK'); throw e; } }
   importEnvelope(input:unknown,sourceDir?:string,source='桌面记录'): {record:HealthRecord;duplicate:boolean} {
     return this.importRecord(input,sourceDir,source);
@@ -358,7 +380,7 @@ export class HealthStore {
     return this.transaction(()=>{this.setConfig('exerciseAliases',aliases);for(const {before,analysis} of updates)this.commitRevision(before,{...before,analysis});return {aliases,updatedRecords:updates.length,changedAliases:changes.length};});
   }
   repairExerciseAliases(){const aliases=this.exerciseAliases();if(aliases.length)this.reclassifyExercises(aliases);}
-  completeChat(reply:Message,changes:MemoryChange[],user:Message,expected:Memory[],expectedGoals:Settings['goals']) {
+  completeChat(reply:Message,changes:MemoryChange[],user:Message,expected:Memory[],expectedGoals:Settings['goals'],energyProposal?:{value:{kcal:number;reason:string};hash:string}) {
     const updates=changes.map(c=>memoryChangeSchema.parse(c));const current=this.memories();
     const changed:{id:string;before:Memory|null;after:Memory}[]=[];let goals={...expectedGoals};
     for(const c of updates){
@@ -404,7 +426,8 @@ export class HealthStore {
     return this.transaction(()=>{
       for(const c of changed){if(c.before)this.db.prepare('INSERT INTO revisions(entity,id,doc,at) VALUES(?,?,?,?)').run('memory',c.id,JSON.stringify(c.before),iso());this.db.prepare('INSERT INTO memories VALUES(?,?) ON CONFLICT(id) DO UPDATE SET doc=excluded.doc').run(c.id,JSON.stringify(c.after));}
       if(receipt?.afterGoals)this.setSettings({...this.getSettings(),goals});
-      const complete={...reply,memoryReceipt:receipt};this.putMessage(complete);return complete;
+      const proposal=energyProposal?this.energy.createProposal(energyProposal.value,reply.id,energyProposal.hash):undefined;
+      const complete={...reply,memoryReceipt:receipt,...(proposal?{goalProposalId:proposal.id}:{})};this.putMessage(complete);return complete;
     });
   }
   undoChatMemory(messageId:string){
@@ -493,11 +516,12 @@ export class HealthStore {
     const tables:Record<string,unknown[]>={}; for(const name of ['records','revisions','memories','messages','usage']) tables[name]=this.db.prepare(`SELECT * FROM ${name}`).all();
     const files:{path:string;sha256:string;base64:string}[]=[];
     for(const r of this.records(true)) { for(const a of r.attachments) { const data=readFileSync(safePath(this.root,a.file)); files.push({path:a.file,sha256:sha256(data),base64:data.toString('base64')}); } const raw=`raw/${r.id}.json`; if(existsSync(safePath(this.root,raw))) {const data=readFileSync(safePath(this.root,raw));files.push({path:raw,sha256:sha256(data),base64:data.toString('base64')});} }
-    return {format:'bodyjournal-backup',version:1,createdAt:iso(),coachProfile:this.coachProfile(),exerciseAliases:this.exerciseAliases(),settings:this.getSettings(),tables,files};
+    return {format:'bodyjournal-backup',version:this.energy?2:1,createdAt:iso(),coachProfile:this.coachProfile(),exerciseAliases:this.exerciseAliases(),settings:this.getSettings(),tables,files,energy:this.energy?.export()};
   }
   backup(file:string) { const data=JSON.stringify(this.exportBundle());if(Buffer.byteLength(data)>512*1024*1024)throw new Error('此档案超过首版完整备份的 512 MB 上限，请使用可读导出保存资料。');atomicWrite(file,data); }
   restore(bundle:unknown) {
-    const b=bundle as ReturnType<HealthStore['exportBundle']>; if(!b||b.format!=='bodyjournal-backup'||b.version!==1||!Array.isArray(b.files)||!b.tables) throw new Error('备份格式不支持');
+    const b=bundle as ReturnType<HealthStore['exportBundle']>; if(!b||b.format!=='bodyjournal-backup'||![1,2].includes(b.version)||!Array.isArray(b.files)||!b.tables) throw new Error('备份格式不支持');
+    const energyData=this.energy.validateBackup(b.version===2?b.energy:{profiles:[],targets:[],days:[],proposals:[]});
     const profile=b.coachProfile?coachProfileSchema.parse(b.coachProfile):undefined;const aliases=b.exerciseAliases?z.array(z.object({raw:z.string().max(200),name:z.string().min(1).max(100)})).max(1000).parse(b.exerciseAliases):undefined;
     const settings=settingsSchema.parse(b.settings); settings.inbox=this.getSettings().inbox;
     const revisionRows=z.array(z.object({seq:z.number().int().positive(),entity:z.enum(['record','memory']),id:idSchema,doc:z.string(),at:z.iso.datetime({offset:true})})).max(1000000).parse(b.tables.revisions);
@@ -519,11 +543,15 @@ export class HealthStore {
       for(const row of revisionRows) this.db.prepare('INSERT INTO revisions VALUES(?,?,?,?,?)').run(row.seq,row.entity,row.id,row.doc,row.at);
       for(const name of ['memories','messages']) for(const row of b.tables[name] as {id:string;doc:string}[]) this.db.prepare(`INSERT INTO ${name} VALUES(?,?)`).run(row.id,row.doc);
       for(const r of usageRows) this.db.prepare('INSERT OR IGNORE INTO usage VALUES(?,?,?,?,?,?,?,?)').run(r.id,r.month,r.provider,r.input,r.output,r.cost,r.state,r.at);
-      this.setSettings(settings);if(profile)this.saveCoachProfile(profile);if(aliases)this.setConfig('exerciseAliases',aliases);
+      this.energy.restore(energyData);this.energy.mirroring=true;try{this.setSettings(settings);}finally{this.energy.mirroring=false;}
+      if(b.version===1&&settings.goals.kcal!==null)this.energy.importManualTarget(settings.goals.kcal,settings.goals.protein);
+      this.energy.syncTarget();this.energy.invalidate();if(profile)this.saveCoachProfile(profile);if(aliases)this.setConfig('exerciseAliases',aliases);
+      this.setConfig('energyParsingV1',false);
       this.setConfig('conversationStart','');
-    }); return safety;
+    });this.migrateEnergyParsing(); return safety;
   }
   exportReadable(dir:string) {
+    atomicWrite(path.join(dir,'能量资料与目标.json'),JSON.stringify(this.energy.export(),null,2));
     mkdirSync(dir,{recursive:true,mode:0o700});
     const records=this.records(true);atomicWrite(path.join(dir,'个人执行规则.json'),JSON.stringify(this.coachProfile(),null,2));atomicWrite(path.join(dir,'个人执行规则.md'),this.coachProfile().originalText);atomicWrite(path.join(dir,'动作别名.json'),JSON.stringify(this.exerciseAliases(),null,2)); atomicWrite(path.join(dir,'records.json'),JSON.stringify(records,null,2)); atomicWrite(path.join(dir,'memories.json'),JSON.stringify(this.memories(),null,2)); atomicWrite(path.join(dir,'conversations.json'),JSON.stringify(this.messages(),null,2)); atomicWrite(path.join(dir,'goals.json'),JSON.stringify(this.getSettings().goals,null,2));
     atomicWrite(path.join(dir,'我的档案.md'),`# 身体手记\n\n导出时间：${iso()}\n\n## 当前目标\n\n${this.getSettings().goals.goal}\n\n## 记忆\n\n${this.memories().map(m=>`- [${m.kind}] ${m.text}${m.expiresAt?`（至 ${m.expiresAt}）`:''}${m.stale?'（依据已修改）':''}`).join('\n')}\n\n## 记录\n\n${records.map(r=>`### ${r.occurredAt} / ${r.kind}${r.deleted?'（已删除）':''}\n\n编号：${r.id}；修订：${r.revision}${r.timeSource?'；时间待确认（暂用文件保存时间）':''}\n\n${r.text}\n\n${r.analysis?.summary??''}\n\n${r.attachments.map(a=>`![${a.name}](${a.file})`).join('\n')}`).join('\n\n')}`);

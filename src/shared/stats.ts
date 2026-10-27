@@ -1,6 +1,7 @@
-import { normalizeSet, baselineKey, baselineLabel, inferSession, workSetCount, EMPTY_RULES } from './exercises';
+import { normalizeSet, baselineKey, baselineLabel, inferSession, workSetCount, EMPTY_RULES, runCompletion } from './exercises';
 import type { HealthRecord, Memory, SetEntry, ExerciseRules } from './types';
-export function localDay(iso:string, zone='Asia/Shanghai') { return new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(iso)); }
+const dayFormatters=new Map<string,Intl.DateTimeFormat>();
+export function localDay(iso:string, zone='Asia/Shanghai') {let formatter=dayFormatters.get(zone);if(!formatter){formatter=new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'});if(dayFormatters.size>=32)dayFormatters.clear();dayFormatters.set(zone,formatter);}return formatter.format(new Date(iso)); }
 export function validMemory(m:Memory, now=new Date()) { return m.active && !m.stale && Date.parse(m.startsAt)<=now.valueOf() && (!m.expiresAt || Date.parse(m.expiresAt)>now.valueOf()); }
 export function computeStats(records:HealthRecord[], zone='Asia/Shanghai', options:{rules?:ExerciseRules}={}) {
   const rules=options.rules??EMPTY_RULES,archived=new Set(rules.archived);
@@ -17,7 +18,7 @@ export function computeStats(records:HealthRecord[], zone='Asia/Shanghai', optio
   for(const d of daily.values())for(const k of ['kcal','protein','carbs','fat'] as const){d[k].low=Math.round(d[k].low*10)/10;d[k].high=Math.round(d[k].high*10)/10;}
   const completed=active.filter(r=>r.kind==='training'&&(r.analysis?.sets?.length??0)>0&&(r.analysis?.training??inferSession(r.text,r.analysis?.sets)).completion==='completed');
   const byPart:Record<string,number>={};for(const r of completed){const part=(r.analysis?.training??inferSession(r.text,r.analysis?.sets)).part;byPart[part]=(byPart[part]??0)+1;}
-  return { trainingParts:byPart,trainingDetails:completed.map(r=>({id:r.id,date:localDay(r.occurredAt,zone),...r.analysis?.training,workSets:workSetCount(r.analysis?.sets??[]),totalReps:(r.analysis?.sets??[]).filter(s=>s.setType!=='warmup').reduce((n,s)=>n+s.sets*s.reps,0)})),measurements, exercises:Object.fromEntries(exercises), nutrition:[...daily.values()], recordCount:active.length, pending:active.filter(r=>r.status!=='ready').length, trainingSessions:active.filter(r=>r.kind==='training'&&(r.analysis?.sets?.length??0)>0&&(r.analysis?.training??inferSession(r.text,r.analysis?.sets)).completion==='completed').length, runs:active.filter(r=>r.analysis?.run).map(r=>({id:r.id,date:localDay(r.occurredAt,zone),...r.analysis!.run!})) };
+  return { trainingParts:byPart,trainingDetails:completed.map(r=>({id:r.id,date:localDay(r.occurredAt,zone),...r.analysis?.training,workSets:workSetCount(r.analysis?.sets??[]),totalReps:(r.analysis?.sets??[]).filter(s=>s.setType!=='warmup').reduce((n,s)=>n+s.sets*s.reps,0)})),measurements, exercises:Object.fromEntries(exercises), nutrition:[...daily.values()], recordCount:active.length, pending:active.filter(r=>r.status!=='ready').length, trainingSessions:active.filter(r=>r.kind==='training'&&(r.analysis?.sets?.length??0)>0&&(r.analysis?.training??inferSession(r.text,r.analysis?.sets)).completion==='completed').length, runs:active.filter(r=>r.analysis?.run&&runCompletion(r)==='completed').map(r=>({id:r.id,date:localDay(r.occurredAt,zone),...r.analysis!.run!})) };
 }
 
 export function needsAnalysis(r:HealthRecord){return r.status==='pending'||(r.kind==='meal'&&!!r.analysis?.unmatched?.length);}

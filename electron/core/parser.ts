@@ -1,4 +1,4 @@
-import { normalizeSet, inferSession, workSetCount, resolveLoadBasis, EMPTY_RULES } from '../../src/shared/exercises';
+import { normalizeSet, inferSession, workSetCount, resolveLoadBasis, EMPTY_RULES, extractRunText } from '../../src/shared/exercises';
 import type { Analysis, HealthRecord, SetEntry } from '../../src/shared/types';
 export function parseBody(text: string): { weightKg?: number; waistCm?: number } {
   const w = text.match(/(?:体重|weight)\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(kg|公斤|千克|斤)/i);
@@ -15,7 +15,7 @@ export function parseTraining(text: string): Analysis | null {
  for(const original of text.split(/\n|[；;]/).map(x=>x.trim()).filter(Boolean)) {
   if(/^\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}(?:日|号)?\s*$/.test(original)||/^(?:胸|背|肩|腿)(?:部|日|训练)?\s*[：:]?$/.test(original)||/^(?:补充|更正|纠正)[：:].*(?:实际|日期|发生|这次是)/.test(original)||/^我(?:不)?(?:喜欢|习惯|偏好|通常|一般|经常)/.test(original))continue;
   if(/^(感受|RPE|RIR|状态|备注|疼痛|恢复)\s*[:：]/i.test(original)){if(sets.length){sets.at(-1)!.effort=original;const rir=original.match(/RIR\s*[:：]?\s*(\d+)/i);if(rir)sets.at(-1)!.rir=+rir[1];if(/疼痛|不适|痛/.test(original))sets.at(-1)!.pain=original;}continue;}
-  if(/跑步|跑步机|\d\s*(?:km|公里)/i.test(original))continue;
+  if(/跑步|跑步机|慢跑|跑了|\d\s*(?:km|公里)/i.test(original))continue;
   const line=original.replace(/[*xX×]/g,'×');
   if(/→|递减/.test(line)&&/\d(?:\.\d+)?\s*(?:→)/.test(line)){ask('递减组各档重量、次数以及重复轮数分别是多少？');continue;}
   let m=line.match(/^(.+?)\s+(\d+(?:\.\d+)?)\s*(kg|公斤|千克|lb|磅)\s*(.+)$/i);
@@ -37,11 +37,12 @@ export function parseTraining(text: string): Analysis | null {
   else {ask('这行组次记号无法确定，请补充“组×次数”。');continue;}
   for(const b of blocks){if(b.sets<1||b.sets>100||b.reps<1||b.reps>200){ask('组数或次数超出可识别范围，请核对原文。');continue;}sets.push(normalizeSet({exercise,kg,reps:b.reps,sets:b.sets,loadBasis:basis,confirmed:basis!=='unknown',setType:warmup?'warmup':'work',...(tail.match(/RIR\s*[:：]?\s*(\d+)/i)?{rir:+tail.match(/RIR\s*[:：]?\s*(\d+)/i)![1]}:{})},[],{text:original,explicitTotal}));}
  }
- const km=text.match(/(?:跑步(?:机)?\s*)?(\d+(?:\.\d+)?)\s*(?:km|公里)/i),duration=text.match(/(?:用时|时长)?\s*(\d+(?:\.\d+)?)\s*(?:分钟|min)/i);
- const pace=text.match(/(\d{1,2})\s*['′’](?:(\d{1,2})\s*["″”])?/),paceLabel=text.match(/配速\s*[:：]?\s*(\d{1,2})[:：](\d{2})/);
+ const runText=extractRunText(text);
+ const km=runText.match(/(?:跑步(?:机)?\s*)?(\d+(?:\.\d+)?)\s*(?:km|公里)/i),duration=runText.match(/(?:用时|时长)?\s*(\d+(?:\.\d+)?)\s*(?:分钟|min)/i);
+ const pace=runText.match(/(\d{1,2})\s*['′’](?:(\d{1,2})\s*["″”])?/),paceLabel=runText.match(/配速\s*[:：]?\s*(\d{1,2})[:：](\d{2})/);
  const seconds=paceLabel?+paceLabel[1]*60 + +paceLabel[2]:pace?+pace[1]*60 + +(pace[2]??0):undefined;
  const hr=text.match(/(?:平均心率|均心率|心率)\s*[:：]?\s*(\d{2,3})/);
- const run=km?{km:+km[1],...(duration&&!/(?:训练用时|训练时长|力量训练)/.test(duration[0])?{minutes:+duration[1]}:seconds?{minutes:Math.round(+km[1]*seconds/60*100)/100}:{}),...(seconds?{paceSecondsPerKm:seconds}:{}),...(hr?{avgHeartRate:+hr[1]}:{})}:undefined;
+ const run=km?{km:+km[1],completion:inferSession(runText).completion,...(duration?{minutes:+duration[1]}:seconds?{minutes:Math.round(+km[1]*seconds/60*100)/100}:{}),...(seconds?{paceSecondsPerKm:seconds}:{}),...(hr?{avgHeartRate:+hr[1]}:{})}:undefined;
  if(!sets.length&&!run)return null;
  const work=sets.filter(s=>s.setType!=='warmup');
  const analysis:Analysis={summary:[work.length?`识别 ${new Set(work.map(s=>s.exerciseId)).size} 个动作，共 ${workSetCount(work)} 个非热身组。`:'',run?`跑步 ${run.km} 公里${run.minutes?`，用时 ${run.minutes} 分钟`:''}。`:''].join(''),sets,run,questions,assumptions,training:inferSession(text,sets),engine:'local',at:new Date().toISOString()};
