@@ -1,0 +1,193 @@
+name: macOS 安装包
+
+# 触发方式：
+#   1. 推送 v* 标签（如 v0.1.20）：构建、测试，并把安装包与校验文件发布到同名 GitHub Release。
+#   2. Actions 页面手动 Run workflow：
+#      - tag 留空：只构建，安装包作为 Actions artifact 保留 30 天（用于试构建）；
+#      - tag 填写已推送的标签（如 v0.1.19）：构建后把同名资产覆盖上传到该版本的 Release。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要上传到的已有 Release 标签（如 v0.1.19）；留空则只构建、不发布'
+        required: false
+        default: ''
+        type: string
+
+# 仓库默认的 GITHUB_TOKEN 可能只有只读权限；创建 Release 和上传资产需要 contents: write。
+# workflow 里显式声明会覆盖仓库的默认设置，不需要再改仓库设置或配置 secret。
+permissions:
+  contents: write
+
+# 同一个 RELEASE_TAG 的构建串行执行：标签推送（refs/tags/vX）和「手动从 main 跑 + 填 tag」
+# 会落到同一个 group，避免两次运行同时覆盖同一个 Release 的资产。
+concurrency:
+  group: macos-package-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Build and publish macOS app
+    # 当前 macos-latest 是 macOS 26 arm64（Apple Silicon）标准 runner；打包脚本固定产出 arm64 包。
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      # push 标签时等于标签名；手动触发时用输入值，留空则只构建不发布。
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      IS_RELEASE: ${{ github.event_name == 'push' || github.event.inputs.tag != '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # 手动指定 tag 时按该标签构建，否则按触发本次运行的 ref（标签推送就是该标签）。
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          # 拉全量历史与所有标签：生成 release notes 时要用 git describe 找上一个版本。
+          fetch-depth: 0
+          # 不把 GITHUB_TOKEN 留在本地 git 配置里：发布步骤显式用 GH_TOKEN，不需要 checkout 凭据。
+          persist-credentials: false
+
+      - name: Show runner and toolchain
+        run: |
+          sw_vers
+          uname -m
+          node --version
+          npm --version
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+
+      # 先校验版本再装依赖：标签和 package.json 不一致时几秒内失败，不用白跑几分钟构建。
+      - name: Verify tag matches package.json version
+        if: env.IS_RELEASE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg_version="$(node -p "require('./package.json').version")"
+          if [ "$RELEASE_TAG" != "v$pkg_version" ]; then
+            echo "::error::标签 $RELEASE_TAG 与 package.json 版本 v$pkg_version 不一致：请先把 package.json 的 version 改成 ${RELEASE_TAG#v}，提交后再打标签。"
+            exit 1
+          fi
+          echo "版本一致：$RELEASE_TAG"
+
+      # Electron 42 起 npm 安装不再下载 Electron 二进制，@electron/packager 打包时才下载（约 110 MB）；
+      # 发布构建按 tag 隔离缓存、复用率低，就不额外加 actions/cache 了。
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build and package
+        run: npm run package
+
+      - name: Verify package and normalize asset names
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release
+          # 发布资产统一用 ASCII 文件名，避免下载工具处理中文名时出问题（与 README 一致）。
+          mv "身体手记-mac-arm64.zip" "body-journal-mac-arm64.zip"
+          shasum -a 256 body-journal-mac-arm64.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          # 解压一遍并验证 ad-hoc 签名，确认要上传的就是能正常打开的 app。
+          rm -rf /tmp/bodyjournal-verify
+          ditto -x -k body-journal-mac-arm64.zip /tmp/bodyjournal-verify
+          codesign --verify --deep --strict "/tmp/bodyjournal-verify/身体手记.app"
+          echo "解压后签名校验通过"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: body-journal-mac-arm64
+          path: |
+            release/body-journal-mac-arm64.zip
+            release/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0 # 产物本身已是 zip，不再重复压缩
+
+      - name: Generate release notes
+        if: env.IS_RELEASE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          electron_version="$(node -p "require('electron/package.json').version")"
+          prev_tag="$(git describe --tags --abbrev=0 "$RELEASE_TAG^" 2>/dev/null || true)"
+          {
+            # 注意：macOS 自带的 bash 3.2 在 UTF-8 locale 下会把紧跟变量的全角标点当成变量名的一部分，
+            # 所以变量后面接中文标点时一律写成 ${var} 形式。
+            echo "本版本由 GitHub Actions 在 GitHub 托管的 macOS（Apple Silicon）runner 上自动构建：Electron ${electron_version}，本地 ad-hoc 签名，未经 Apple Developer ID 公证。"
+            echo
+            echo "### 本版本提交"
+            echo
+            if [ -n "$prev_tag" ]; then
+              git log --pretty='- %s' -n 30 "$prev_tag..$RELEASE_TAG"
+              echo
+              echo "**完整变更**：$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$prev_tag...$RELEASE_TAG"
+            else
+              git log --pretty='- %s' -n 30 "$RELEASE_TAG"
+            fi
+            echo
+            echo "### 安装"
+            echo
+            echo "1. 下载 \`body-journal-mac-arm64.zip\` 并解压。"
+            echo "2. 把 \`身体手记.app\` 放进「应用程序」（~/Applications）或任意位置打开。"
+            echo "3. 首次打开若被系统拦截，在 Finder 中右键应用 →「打开」。"
+            echo "4. 校验：\`shasum -a 256 body-journal-mac-arm64.zip\`，与 \`SHA256SUMS.txt\` 对照。"
+            echo
+            echo "手机快捷指令：发布包只包含 unsigned 源文件；请用自己的 Apple 账号签名（见 README）。"
+          } > release/RELEASE_NOTES.md
+          cat release/RELEASE_NOTES.md
+
+      - name: Publish GitHub Release
+        if: env.IS_RELEASE == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if release_draft="$(gh release view "$RELEASE_TAG" --json isDraft -q .isDraft --repo "$GITHUB_REPOSITORY" 2>/dev/null)"; then
+            # 已存在（例如手动重跑）：覆盖同名资产；如果上次失败留下的是 draft，顺手发布。
+            echo "Release $RELEASE_TAG 已存在（isDraft=${release_draft}），覆盖上传资产"
+            gh release upload "$RELEASE_TAG" \
+              release/body-journal-mac-arm64.zip \
+              release/SHA256SUMS.txt \
+              --clobber --repo "$GITHUB_REPOSITORY"
+            if [ "$release_draft" = "true" ]; then
+              gh release edit "$RELEASE_TAG" --draft=false --repo "$GITHUB_REPOSITORY" >/dev/null
+            fi
+          else
+            # gh release create 会先建 draft、上传资产、最后发布，上传失败不会留下公开的空 release。
+            echo "创建 Release $RELEASE_TAG"
+            gh release create "$RELEASE_TAG" \
+              release/body-journal-mac-arm64.zip \
+              release/SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "身体手记 $RELEASE_TAG" \
+              --notes-file release/RELEASE_NOTES.md \
+              --verify-tag
+          fi
+
+      - name: Write job summary
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "## 安装包构建完成"
+            echo
+            echo "- 安装包：\`body-journal-mac-arm64.zip\`（$(du -h release/body-journal-mac-arm64.zip | cut -f1)）"
+            echo "- 校验：\`$(cat release/SHA256SUMS.txt)\`"
+            if [ "$IS_RELEASE" = "true" ]; then
+              echo "- Release：$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG"
+            else
+              echo "- 本次只构建未发布；安装包在本次运行页的 Artifacts 中保留 30 天。"
+            fi
+            echo "- 本次运行：$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -88,6 +88,25 @@ shortcuts sign --mode anyone \
 
 签名可能需要联网；未签名的源文件不能直接导入 iPhone。
 
+### 自动构建与发布（GitHub Actions）
+
+推送 `v*` 标签时，[`macos-package.yml`](.github/workflows/macos-package.yml) 会在 GitHub 托管的 macOS（Apple Silicon）runner 上自动完成：安装依赖 → 运行数据与模型契约测试 → 校验标签与 `package.json` 版本一致 → 打包并解压验证 ad-hoc 签名 → 把 `body-journal-mac-arm64.zip` 和 `SHA256SUMS.txt` 发布到同名 GitHub Release。不需要 Apple Developer 证书，也不需要配置任何 secret。
+
+发布新版本（标签必须与 `package.json` 的 `version` 对应）：
+
+```sh
+# 1. 更新版本号（同时改 package.json 和 package-lock.json），提交
+npm version 0.1.20 --no-git-tag-version
+git commit -am "Bump version to 0.1.20"
+# 2. 打标签，只推送 main 和这一条标签，工作流会自动构建并发布 v0.1.20
+git tag v0.1.20
+git push origin main v0.1.20
+```
+
+只想试构建、不发布：仓库页面 **Actions** → **macOS 安装包** → **Run workflow**，`tag` 留空；安装包在本次运行页的 **Artifacts** 中保留 30 天。要重新上传某个已有版本的安装包，`tag` 填该标签（如 `v0.1.19`）再运行，同名资产会被覆盖。
+
+公开仓库使用标准 runner 不消耗 Actions 配额。构建仍是本地 ad-hoc 签名、未经 Apple Developer ID 公证，首次打开若被系统拦截，仍需在 Finder 中右键应用选择“打开”。
+
 ### 首次使用
 
 1. 打开应用，去“我的档案”检查目标和已知偏好；能量、蛋白质目标可以暂时留空。
