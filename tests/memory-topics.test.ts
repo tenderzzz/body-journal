@@ -102,3 +102,23 @@ test('analysis automatically saves a labeled supplement and shows the receipt',t
  const bad=store.importEnvelope({version:1,id:'meal-record-auto2',kind:'meal',text:'午餐：米饭',occurredAt:now(),timezone:'Asia/Shanghai'}).record;
  assert.throws(()=>store.applyAnalysis(bad.id,{summary:'午餐',questions:[],assumptions:[],engine:'local',at:now(),ingredients:[],memoryChanges:[{operation:'upsert',key:'nutrition.supplement.bad',kind:'food',text:'不存在的食物',food,evidenceQuote:'原文里没有这句话'}]},'local',bad.revision),/原文/);
 });
+
+test('adding a common food in chat does not require the word 记住',t=>{
+ const store=setup(t);
+ const quote='青柠燕麦方块每100g：248–248 kcal，蛋白质 7.5–7.5g，碳水 37.5–37.5g，脂肪 7.8–7.8g';
+ const text='添加常用食物：'+quote;
+ const user={id:'user-message-food1',role:'user' as const,text,createdAt:now(),status:'complete' as const,sources:[],provider:'chatgpt',stale:false};
+ const reply={id:'assistant-message-food1',role:'assistant' as const,text:'已添加。',createdAt:now(),status:'complete' as const,sources:[],provider:'chatgpt',stale:false};
+ store.completeChat(reply,[{operation:'upsert',key:'food.sample_oat_square',kind:'food',food:{name:'青柠燕麦方块',servingGrams:100,perServing:{kcal:248,protein:7.5,carbs:37.5,fat:7.8}},evidenceQuote:quote}],user,store.memories(),store.getSettings().goals);
+ const preset=store.foodPresets().find(p=>p.name==='青柠燕麦方块');
+ assert.ok(preset);assert.equal(preset!.perServing.protein,7.5);
+});
+
+test('label-like nutrition stated as a long-term fact is accepted automatically',t=>{
+ const store=setup(t);
+ const text='青柠燕麦方块每100g：248 kcal、蛋白质7.5g、碳水37.5g、脂肪7.8g';
+ const user={id:'user-message-label1',role:'user' as const,text,createdAt:now(),status:'complete' as const,sources:[],provider:'chatgpt',stale:false};
+ const reply={id:'assistant-message-label1',role:'assistant' as const,text:'已记住。',createdAt:now(),status:'complete' as const,sources:[],provider:'chatgpt',stale:false};
+ store.completeChat(reply,[{operation:'upsert',key:'nutrition.food.sample_oat_square',kind:'fact',text,evidenceQuote:text}],user,store.memories(),store.getSettings().goals);
+ assert.ok(store.memories().some(m=>m.kind==='fact'&&/青柠燕麦方块/.test(m.text)));
+});
