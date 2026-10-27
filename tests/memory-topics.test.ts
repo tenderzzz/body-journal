@@ -74,3 +74,31 @@ test('chat prompt carries only the selected memories and reports coverage',async
  const weekly=store.context('本周复盘','weekly');
  assert.ok(weekly.memories.some((m:any)=>m.autoCategory==='training'));
 });
+
+test('chat automatically saves ephemeral state and durable facts without imperative words',t=>{
+ const store=setup(t);
+ const user=(text:string)=>({id:'user-message-auto1',role:'user' as const,text,createdAt:now(),status:'complete' as const,sources:[],provider:'chatgpt',stale:false});
+ const reply={id:'assistant-message-auto1',role:'assistant' as const,text:'好的。',createdAt:now(),status:'complete' as const,sources:[],provider:'chatgpt',stale:false};
+ store.completeChat(reply,[{operation:'upsert',key:'state.sleep',kind:'state',text:'最近睡眠质量差',evidenceQuote:'最近睡不好'}],user('最近睡不好'),store.memories(),store.getSettings().goals);
+ assert.ok(store.memories().some(m=>m.kind==='state'&&/睡眠质量差/.test(m.text)));
+ const durableUser=user('我的固定训练安排是每周三次，周日晚更灵活');
+ store.completeChat({...reply,id:'assistant-message-auto2'},[{operation:'upsert',key:'training.schedule',kind:'fact',text:'每周三次固定训练，周日晚更灵活',evidenceQuote:'我的固定训练安排是每周三次，周日晚更灵活'}],durableUser,store.memories(),store.getSettings().goals);
+ const durable=store.memories().find(m=>m.topicKey==='training.schedule');
+ assert.ok(durable);assert.equal(durable!.kind,'fact');
+});
+
+test('analysis automatically saves a labeled supplement and shows the receipt',t=>{
+ const store=setup(t);
+ const text='早餐：测试蛋白粉一勺，包装标注每份30g，能量120kcal，蛋白质24g，碳水3g，脂肪1.5g';
+ const r=store.importEnvelope({version:1,id:'meal-record-auto1',kind:'meal',text,occurredAt:now(),timezone:'Asia/Shanghai'}).record;
+ const food={name:'测试蛋白粉',servingGrams:30,perServing:{kcal:120,protein:24,carbs:3,fat:1.5}};
+ const updated=store.applyAnalysis(r.id,{summary:'早餐',questions:[],assumptions:[],engine:'local',at:now(),ingredients:[{name:'测试蛋白粉',foodId:null,grams:{low:30,high:30},assumption:'一勺',nutrition:{source:'estimate',basis:'估算',per100g:{kcal:{low:300,high:400},protein:{low:50,high:60},carbs:{low:10,high:20},fat:{low:5,high:10}}}}],memoryChanges:[{operation:'upsert',key:'nutrition.supplement.test',kind:'food',text:'测试蛋白粉',food,evidenceQuote:'测试蛋白粉一勺，包装标注每份30g，能量120kcal，蛋白质24g，碳水3g，脂肪1.5g'}]},'local',r.revision);
+ const preset=store.foodPresets().find(p=>p.name==='测试蛋白粉');
+ assert.ok(preset);assert.equal(preset!.servingGrams,30);
+ assert.ok(updated.analysis!.memoryReceipt?.some(x=>/测试蛋白粉/.test(x.text)));
+ const ingredient=updated.analysis!.ingredients!.find(i=>i.name==='测试蛋白粉')!;
+ assert.equal(ingredient.nutrition!.source,'label');
+ assert.deepEqual(ingredient.nutrition!.per100g.kcal,{low:400,high:400});
+ const bad=store.importEnvelope({version:1,id:'meal-record-auto2',kind:'meal',text:'午餐：米饭',occurredAt:now(),timezone:'Asia/Shanghai'}).record;
+ assert.throws(()=>store.applyAnalysis(bad.id,{summary:'午餐',questions:[],assumptions:[],engine:'local',at:now(),ingredients:[],memoryChanges:[{operation:'upsert',key:'nutrition.supplement.bad',kind:'food',text:'不存在的食物',food,evidenceQuote:'原文里没有这句话'}]},'local',bad.revision),/原文/);
+});
