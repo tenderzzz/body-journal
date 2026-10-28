@@ -103,12 +103,12 @@ export function baselineKey(s:SetEntry){return [s.equipmentId??s.equipment??'器
 export function baselineLabel(s:SetEntry){return [s.equipmentId??s.equipment,s.loadBasis==='per_hand'?'单只重量':s.loadBasis==='total'?'报告总重':s.loadBasis==='bodyweight'?'自重':s.loadBasis==='unknown'?'重量口径待确认':'器械标重',s.position==='seated'?'坐姿':s.position==='standing'?'站姿':undefined].filter(Boolean).join(' · ');}
 export function inferSession(text:string,sets:SetEntry[]=[]):TrainingSession {
  const parts:TrainingPart[]=[];for(const [p,word] of [['chest','胸'],['back','背'],['shoulders','肩'],['legs','腿']] as const)if(new RegExp(`(?:^|\\n)\\s*${word}(?:部|日|训练)?\\s*[：:]?\\s*(?:$|\\n)`,'m').test(text))parts.push(p);
- const sessionText=sets.length?text.split(/\n|[；;]/).map(line=>{const before=line.replace(/(?:跑步机|跑步|慢跑|跑了).*$/,'');return before===line||/力量|正式组|热身|\d+(?:\.\d+)?\s*(?:kg|公斤|千克|lb|磅|组|[x×*])/i.test(before)?before:'';}).join('\n'):text;
+ const sessionText=sets.length||/力量训练\s*[:：]?\s*\d+(?:\.\d+)?\s*(?:分钟|min)/i.test(text)?text.split(/\n|[；;]/).map(line=>{const before=line.replace(/(?:跑步机|跑步|慢跑|跑了).*$/,'');return before===line||/力量|正式组|热身|\d+(?:\.\d+)?\s*(?:kg|公斤|千克|lb|磅|组|[x×*])/i.test(before)?before:'';}).join('\n'):text;
  const planned=(/(?:计划|打算|准备|明天|下次).{0,12}(?:练|训练|跑步|慢跑)|训练计划/.test(sessionText)||/^\s*(?:力量)?(?:训练)?计划\s*[:：]?\s*$/m.test(sessionText)||/(?:计划|打算|准备)[^\n]{0,60}\d+(?:\.\d+)?\s*(?:kg|公斤|千克|lb|磅|组|[x×*])/i.test(sessionText))&&!/已完成|练完|训练结束|(?:实际|已经|今天|本次).{0,8}(?:完成|练完)/.test(sessionText);
  const cancelled=/(?:未|没(?:有)?)(?:完成|练完|跑步|慢跑)|取消.{0,8}(?:训练|跑步)|未训练/.test(sessionText);
- const hasData=sets.length>0||/\d+\s*(?:kg|公斤|千克).*\d+\s*[*x×]/i.test(sessionText)||/(?:跑步(?:机)?|慢跑|跑了)?\s*\d+(?:\.\d+)?\s*(?:km|公里)/i.test(sessionText);
+ const hasData=sets.length>0||/\d+\s*(?:kg|公斤|千克).*\d+\s*[*x×]/i.test(sessionText)||/(?:跑步(?:机)?|慢跑|跑了)?\s*\d+(?:\.\d+)?\s*(?:km|公里)/i.test(sessionText)||/力量训练\s*[:：]?\s*\d+(?:\.\d+)?\s*(?:分钟|min)/i.test(sessionText);
  const completion=cancelled?'unknown':planned?'planned':hasData||/已完成|练完|训练结束/.test(sessionText)?'completed':'unknown';
- const duration=text.match(/(?:力量训练|训练用时|训练时长)\s*[:：]?\s*(\d+)\s*分钟/);
+ const duration=text.match(/(?:力量训练|训练用时|训练时长)\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(?:分钟|min)/i);
  return {part:parts.length>1?'mixed':parts[0]??'unknown',completion,...(duration?{durationMinutes:+duration[1]}:{})};
 }
 export function extractRunText(text:string){return text.split(/\n|[；;]/).filter(line=>/跑步|跑步机|慢跑|跑了/.test(line)||/^\s*(?:训练)?计划\s*[:：]?\s*$/.test(line)||(/^\s*\d+(?:\.\d+)?\s*(?:km|公里)/i.test(line)&&!/步行|走路|骑车|骑行|游泳/.test(line))).join('\n').replace(/(?:力量训练|训练用时|训练时长)\s*[:：]?\s*\d+(?:\.\d+)?\s*(?:分钟|min)/gi,'');}

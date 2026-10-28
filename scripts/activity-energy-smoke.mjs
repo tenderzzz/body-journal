@@ -1,0 +1,129 @@
+import {_electron,expect} from '@playwright/test';
+import electron from 'electron';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+
+// Isolated profile and synthetic records only; no credentials or real model calls.
+const vault=mkdtempSync(path.join(tmpdir(),'bodyjournal-energy-v3-ui-'));
+let app;
+const errors=[];
+try{
+  app=await _electron.launch({executablePath:process.env.BODYJOURNAL_APP??electron,args:process.env.BODYJOURNAL_APP?[]:[process.cwd()],env:{...process.env,HEALTH_TEST_VAULT:vault,HEALTH_DEMO:'0'},timeout:30000});
+  const page=await app.firstWindow();
+  page.on('pageerror',e=>errors.push(e.message));
+  await page.getByRole('navigation',{name:'主导航'}).waitFor();
+  const today=await page.evaluate(async()=>(await window.health.invoke('energy:get')).today);
+  await page.evaluate(async date=>window.health.invoke('record:create',{kind:'body',text:'合成体重',occurredAt:date+'T08:00:00+08:00',dateLocked:true,body:{weightKg:80},attachmentTokens:[]}),today);
+  await page.getByRole('navigation').getByRole('button',{name:'能量',exact:true}).click();
+  await page.getByRole('button',{name:'补充计算资料',exact:true}).click();
+  let modal=page.getByRole('dialog');
+  await modal.getByLabel('生效时年龄',{exact:true}).fill('30');
+  await modal.getByLabel('身高 cm',{exact:true}).fill('180');
+  await modal.getByLabel('公式使用的性别参数',{exact:true}).selectOption('male');
+  await modal.getByLabel('平常非训练步数',{exact:true}).fill('4000');
+  await modal.getByLabel('步行步长 cm',{exact:true}).fill('72');
+  await modal.getByLabel('我已核对以上资料、活动档位和常规训练时长',{exact:true}).check();
+  await modal.getByRole('button',{name:'保存计算资料',exact:true}).click();
+  await expect(modal).toHaveCount(0);
+  await page.getByLabel('手动补充步数',{exact:true}).fill('2000');
+  await page.getByLabel('步数范围',{exact:true}).selectOption('nonTraining');
+  await page.getByRole('button',{name:'保存当天补充',exact:true}).click();
+  await expect.poll(()=>page.evaluate(async()=>(await window.health.invoke('energy:get')).selected.walking?.correction?.high)).toBeLessThan(0);
+  await expect(page.getByRole('button',{name:'保存当天补充',exact:true})).toBeEnabled();
+  const low=await page.evaluate(async()=>(await window.health.invoke('energy:get')).selected.expenditure.low);
+  await page.getByLabel('手动补充步数',{exact:true}).fill('12000');
+  await page.getByRole('button',{name:'保存当天补充',exact:true}).click();
+  await expect.poll(()=>page.evaluate(async()=>(await window.health.invoke('energy:get')).selected.walking?.correction?.low)).toBeGreaterThan(0);
+  const high=await page.evaluate(async()=>(await window.health.invoke('energy:get')).selected.expenditure.low);
+  if(high<=low)throw new Error('Complete nontraining steps did not change expenditure');
+  await expect(page.getByText(/非训练 12,000 步/)).toBeVisible();
+  await page.getByLabel('步数覆盖时间',{exact:true}).selectOption('partial');
+  await page.getByRole('button',{name:'保存当天补充',exact:true}).click();
+  await expect.poll(()=>page.evaluate(async()=>(await window.health.invoke('energy:get')).selected.walking?.correction)).toBe(null);
+  await page.getByLabel('步数覆盖时间',{exact:true}).selectOption('full');
+  await page.getByRole('button',{name:'保存当天补充',exact:true}).click();
+
+  const runId=await page.evaluate(async date=>{
+    const r=await window.health.invoke('record:create',{kind:'training',text:'合成测试跑步数据',occurredAt:date+'T18:00:00+08:00',dateLocked:true,attachmentTokens:[]});
+    await window.health.invoke('record:analyze',{ids:[r.id],revision:r.revision,analysis:{summary:'合成手机跑步结果',questions:[],assumptions:[],sets:[],run:{km:5,minutes:30,activeKcal:330,steps:5000,sourceApp:'合成 App',completion:'completed'}}});
+    return r.id;
+  },today);
+  await expect.poll(()=>page.evaluate(async()=>(await window.health.invoke('energy:get')).selected.workouts[0]?.method)).toBe('app-active');
+  await expect(page.locator('.energy-breakdown').getByText('App 报告',{exact:true})).toBeVisible();
+  await page.locator('.energy-breakdown').getByRole('button',{name:'跑步',exact:true}).click();
+  modal=page.getByRole('dialog');
+  await modal.getByRole('button',{name:'核对 / 更正活动数据',exact:true}).click();
+  await modal.getByLabel('更正活动热量 kcal',{exact:true}).fill('');
+  await modal.getByLabel('更正口径未明的热量 kcal',{exact:true}).fill('300');
+  await modal.getByLabel('原热量标签',{exact:true}).fill('消耗');
+  await modal.getByRole('button',{name:'保存活动更正',exact:true}).click();
+  await expect(modal.getByText(/已保留手动更正/)).toBeVisible();
+  let updated=await page.evaluate(async id=>(await window.health.invoke('snapshot')).records.find(r=>r.id===id),runId);
+  if(updated.analysis.run.activeKcal!==undefined||updated.analysis.run.reportedKcal!==300)throw new Error('Activity correction did not clear active kcal or retain unknown kcal');
+  await page.evaluate(async r=>window.health.invoke('record:analyze',{ids:[r.id],revision:r.revision,analysis:{summary:'合成重新提取',questions:[],assumptions:[],sets:[],run:{km:5,minutes:30,activeKcal:999,reportedKcal:888,steps:5000,sourceApp:'合成 App',completion:'completed'}}}),updated);
+  updated=await page.evaluate(async id=>(await window.health.invoke('snapshot')).records.find(r=>r.id===id),runId);
+  if(updated.analysis.run.activeKcal!==undefined||updated.analysis.run.reportedKcal!==300)throw new Error('Re-extraction overwrote manual corrections');
+  await modal.getByRole('button',{name:'关闭',exact:true}).click();
+  await expect.poll(()=>page.evaluate(async()=>(await window.health.invoke('energy:get')).selected.workouts[0]?.method)).toBe('met');
+  await expect(page.locator('.energy-breakdown').getByText('公式估算',{exact:true})).toBeVisible();
+
+  const duplicateId=await page.evaluate(async date=>{
+    const r=await window.health.invoke('record:create',{kind:'training',text:'合成测试疑似重复跑步',occurredAt:date+'T18:01:00+08:00',dateLocked:true,attachmentTokens:[]});
+    await window.health.invoke('record:analyze',{ids:[r.id],revision:r.revision,analysis:{summary:'合成重复跑步截图',questions:[],assumptions:[],sets:[],run:{km:5,minutes:30,steps:5000,completion:'completed'}}});return r.id;
+  },today);
+  await expect(page.locator('.energy-duplicates')).toBeVisible();
+  await page.getByLabel('这是两次不同训练，均计入',{exact:true}).check();
+  await page.getByRole('button',{name:'保存当天补充',exact:true}).click();
+  await expect.poll(()=>page.evaluate(async()=>(await window.health.invoke('energy:get')).selected.workouts.length)).toBe(2);
+  await expect(page.locator('.energy-duplicates')).toHaveCount(0);
+  await page.getByRole('button',{name:'清除不同训练确认',exact:true}).click();
+  await page.getByRole('button',{name:'保存当天补充',exact:true}).click();
+  await expect(page.locator('.energy-duplicates')).toBeVisible();
+  await page.getByLabel('不计入：合成测试疑似重复跑步',{exact:true}).check();
+  await page.getByRole('button',{name:'保存当天补充',exact:true}).click();
+  await expect.poll(()=>page.evaluate(async id=>(await window.health.invoke('energy:get')).dayInput.excludedWorkoutIds.includes(id),duplicateId)).toBe(true);
+  await expect.poll(()=>page.evaluate(async()=>(await window.health.invoke('energy:get')).selected.workouts.length)).toBe(1);
+
+  await page.getByRole('button',{name:'补充活动截图',exact:true}).click();
+  modal=page.getByRole('dialog',{name:'补充活动截图',exact:true});
+  await expect(modal.getByLabel('发生时间',{exact:true})).toHaveValue(today+'T12:00');
+  // The isolated profile has no model connection, so extraction fails before any request.
+  await modal.getByLabel('记录内容',{exact:true}).fill('合成截图提取失败重试记录');
+  await modal.getByRole('button',{name:'保存并提取',exact:true}).click();
+  await expect(modal.getByText(/原始记录已保存/)).toBeVisible();
+  await expect(modal.getByRole('alert')).toBeVisible();
+  const count=()=>page.evaluate(async()=>(await window.health.invoke('snapshot')).records.filter(r=>r.text==='合成截图提取失败重试记录').length);
+  await expect.poll(count).toBe(1);
+  await modal.getByRole('button',{name:'重新提取',exact:true}).click();
+  await expect(modal.getByRole('alert')).toBeVisible();
+  await expect.poll(count).toBe(1);
+  await modal.getByRole('button',{name:'关闭',exact:true}).last().click();
+  const strengthId=await page.evaluate(async date=>{
+    const r=await window.health.invoke('record:create',{kind:'note',text:'合成力量截图，无组次',occurredAt:date+'T16:00:00+08:00',dateLocked:true,attachmentTokens:[]});
+    await window.health.invoke('record:analyze',{ids:[r.id],revision:r.revision,analysis:{summary:'已完成力量训练42.5分钟',questions:[],assumptions:[],training:{part:'unknown',completion:'completed',durationMinutes:42.5}}});return r.id;
+  },today);
+  await expect.poll(()=>page.evaluate(async id=>(await window.health.invoke('energy:get')).selected.workouts.find(w=>w.recordId===id)?.minutes.low,strengthId)).toBe(42.5);
+  await page.locator('.energy-breakdown').getByRole('button',{name:'力量训练',exact:true}).click();
+  modal=page.getByRole('dialog');
+  await modal.getByRole('button',{name:'核对 / 更正活动数据',exact:true}).click();
+  await modal.getByLabel('更正实际力量时长 分钟',{exact:true}).fill('40.5');
+  await modal.getByRole('button',{name:'保存活动更正',exact:true}).click();
+  await expect.poll(()=>page.evaluate(async id=>(await window.health.invoke('energy:get')).selected.workouts.find(w=>w.recordId===id)?.minutes.low,strengthId)).toBe(40.5);
+  await modal.getByRole('button',{name:'关闭',exact:true}).click();
+  const notification=page.getByRole('button',{name:'关闭提示',exact:true});
+  if(await notification.count())await notification.click();
+  await page.setViewportSize({width:1300,height:900});
+  await page.locator('.energy-page').evaluate(el=>{el.scrollTop=0;});
+  await page.screenshot({path:'/tmp/bodyjournal-energy-v3-ui.png'});
+  await page.locator('.energy-two-columns').screenshot({path:'/tmp/bodyjournal-energy-v3-breakdown.png'});
+  await page.locator('.energy-page').evaluate(el=>{el.scrollTop=0;});
+  await page.setViewportSize({width:860,height:700});
+  if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw new Error('Energy v3 page overflows at 860px');
+  await page.screenshot({path:'/tmp/bodyjournal-energy-v3-compact.png'});
+  if(errors.length)throw new Error(errors.join('\n'));
+  console.log('Energy v3 UI passed: reference/stride setup, duration-only strength correction, signed step correction, partial-day fallback, App/unknown calorie fields, persistent manual corrections, duplicate exclusion/distinct-session confirmation, and extraction failure retry without duplicate creation.');
+}finally{
+  if(app)await app.close().catch(()=>{});
+  rmSync(vault,{recursive:true,force:true});
+}

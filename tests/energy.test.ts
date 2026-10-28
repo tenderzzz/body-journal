@@ -33,7 +33,7 @@ test('Mifflin equations and net exercise replace overlapping baseline energy',()
   const extra=workoutExtra(80,{low:60,high:60},{low:3.5,high:6},{low:2136,high:2403});
   assert.ok(Math.abs(extra.low-(3.5*3.5*80/200-2403/1440)*60)<1e-9);
   assert.ok(extra.high<6*3.5*80/200*60);
-  assert.equal(runningMET(360)?.low,9.3);
+  assert.ok(Math.abs(runningMET(360)!.low-(9.3+(3600/360/1.609344-6.15)/(6.7-6.15)*(10.5-9.3)))<1e-9);
   assert.equal(runningMET(100),null);
 });
 test('mixed strength and running durations are independent; pure reported runs are completed',()=>{
@@ -103,7 +103,7 @@ test('confirmed usual duration is an assumption, plans are excluded and inputs s
   const day=store.energy.day(today);assert.equal(day.workouts.length,1);assert.equal(day.workouts[0].assumed,true);assert.deepEqual(day.workouts[0].minutes,{low:60,high:75});
   assert.equal(store.record(r.id).analysis?.training?.durationMinutes,undefined);
   store.energy.saveDay({date:today,steps:20000,mealComplete:false,activityComplete:false},now);
-  assert.deepEqual(store.energy.day(today).expenditure,day.expenditure);
+  assert.ok(store.energy.day(today).expenditure!.low>day.expenditure!.low);
   store.revise(r.id,{deleted:true},r.revision);assert.equal(store.energy.day(today).workouts.length,0);
   store.undoRecord(r.id);assert.equal(store.energy.day(today).workouts.length,1);
 });
@@ -208,16 +208,16 @@ test('dependency hashes use the same actual-time ordering as calculation for pre
   assert.equal(store.energy.day(today).resting,1880);
   assert.equal(store.messages().at(-1)?.stale,true);
 });
-test('v1 migration creates a pre-upgrade backup; v2 backup round-trip and v1 restore clear energy data',t=>{
+test('v1 migration creates a pre-upgrade backup; v3 backup round-trip and v1 restore clear energy data',t=>{
   let store=setup(t);store.energy.saveProfile(profile,now);weight(store);meal(store);complete(store);
-  const bundle=store.exportBundle();assert.equal(bundle.version,2);
+  const bundle=store.exportBundle();assert.equal(bundle.version,3);
   const expected=store.energy.export();store.energy.saveProfile({...profile,heightCm:170},now);store.restore(bundle);assert.deepEqual(store.energy.export(),expected);
   const bad=structuredClone(bundle);bad.energy!.profiles[0].heightCm=0;assert.throws(()=>store.restore(bad));assert.deepEqual(store.energy.export(),expected);
   store.restore({...bundle,version:1,energy:undefined});assert.deepEqual(store.energy.export(),{profiles:[],targets:[],days:[],proposals:[]});
   const root=store.root;store.db.exec('PRAGMA user_version=1');store.close();
   store=new HealthStore(root,new FoodCatalog([]),path.join(root,'inbox'),false);
   const files=readdirSync(path.join(root,'backups')).filter(f=>f.startsWith('before-energy-v2-'));assert.equal(files.length,1);assert.equal(JSON.parse(readFileSync(path.join(root,'backups',files[0]),'utf8')).version,1);
-  assert.equal(store.db.prepare('PRAGMA user_version').get()?.user_version,2);store.close();
+  assert.equal(store.db.prepare('PRAGMA user_version').get()?.user_version,3);store.close();
 });
 
 function sse(value:unknown,complete=true){const text=JSON.stringify(value);return new Response(`data: ${JSON.stringify({type:'response.output_text.delta',delta:text})}\n\n`+(complete?`data: ${JSON.stringify({type:'response.completed',response:{usage:{input_tokens:20,output_tokens:30}}})}\n\n`:''),{headers:{'Content-Type':'text/event-stream'}});}
