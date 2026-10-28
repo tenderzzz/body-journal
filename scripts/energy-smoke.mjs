@@ -157,7 +157,9 @@ try{
   `],{cwd:process.cwd(),env:{...process.env,BODYJOURNAL_REVIEW_FIXTURE:reviewVault},stdio:'pipe'});
   page=await launch(reviewVault);
   await page.getByRole('navigation').getByRole('button',{name:'能量',exact:true}).click();
+  await page.getByText('饮食与训练建议',{exact:true}).click();
   await page.getByRole('button',{name:'采纳建议',exact:true}).click();
+  await page.getByText('饮食目标的生效记录',{exact:true}).click();
   await expect(page.getByText(/已安排 .*2400 kcal／天/)).toBeVisible();
   let reviewed=await page.evaluate(async()=>window.health.invoke('energy:get'));
   if(reviewed.selected.target.kcal!==2300||!reviewed.targets.some(t=>t.kcal===2400&&t.effectiveDate>reviewed.today&&!t.undoneAt))throw new Error('Adoption did not schedule the next-day goal');

@@ -1,0 +1,48 @@
+name: 错误反馈
+description: 报告安装、记录、同步、计算或界面问题
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请使用示例档案或自编记录复现，不要上传真实健康数据、密钥、完整备份或已签名快捷指令。
+        可能涉及隐私泄露或越权访问的问题，请先阅读 [安全问题反馈](https://github.com/tenderzzz/body-journal/blob/main/SECURITY.md)。
+  - type: input
+    id: version
+    attributes:
+      label: 应用版本与来源
+      description: 填写版本号；从源码运行时请附提交编号。
+      placeholder: 例如 v0.4.0，GitHub Releases 安装包
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 使用环境
+      description: macOS 版本、芯片；手机同步问题请补充 iOS 版本。
+      placeholder: macOS 版本 / Apple 芯片型号 / iOS 版本（如适用）
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤
+      description: 写明操作顺序；分析或计算问题可附一条合成记录及必要设置。
+      placeholder: |
+        1. 打开……
+        2. 输入测试记录……
+        3. 点击……
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期结果与实际结果
+      description: 写清希望发生什么、实际发生什么，可附已脱敏的报错或截图。
+    validations:
+      required: true
+  - type: textarea
+    id: additional
+    attributes:
+      label: 补充信息
+      description: 如只在特定模型连接、窗口尺寸或同步条件下出现，请说明。无需提供登录凭据。

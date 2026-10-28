@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { HealthStore } from '../electron/core/store';
@@ -103,6 +103,66 @@ test('same meal copied from a past record keeps ingredients and recalculates loc
  assert.throws(()=>store.applyAnalysis(target.id,{summary:'x',questions:[],assumptions:[],engine:'local',at:now(),copyFromRecordId:'missing-record-id'},'local',copied.revision),/引用/);
  const training=store.importEnvelope({version:1,id:randomUUID(),kind:'training',text:'胸：\n卧推 50kg 3x8',occurredAt:'2026-10-21T19:00:00+08:00',timezone:'Asia/Shanghai'}).record;
  assert.throws(()=>store.applyAnalysis(target.id,{summary:'x',questions:[],assumptions:[],engine:'local',at:now(),copyFromRecordId:training.id},'local',copied.revision),/引用的那餐/);
+});
+
+function syntheticCopyIngredients():NonNullable<Analysis['ingredients']>{return [{name:'合成测试米饭',foodId:null,grams:{low:150,high:200},assumption:'合成测试分量',nutrition:{source:'estimate',basis:'合成测试营养',per100g:{kcal:{low:116,high:116},protein:{low:2.6,high:2.6},carbs:{low:25.9,high:25.9},fat:{low:0.3,high:0.3}}}}];}
+
+test('copy-only meal model response copies ingredients and local nutrition without changing the source',async t=>{
+ const store=setup(t);store.setSettings({...store.getSettings(),chatgptModel:'test-model'});
+ const source=meal(store,'合成午餐：米饭','2026-10-20T12:00:00+08:00');
+ const sourceDone=analyzed(store,source.id,syntheticCopyIngredients(),source.revision);
+ const target=meal(store,'午餐和10月20日那餐一样','2026-10-22T12:00:00+08:00');
+ const sourceBefore=store.record(source.id);
+ const rawBefore=readFileSync(path.join(store.root,'raw',target.id+'.json'),'utf8');
+ const svc=service(store),original=globalThis.fetch;t.after(()=>{globalThis.fetch=original;});
+ globalThis.fetch=async()=>sse({copyFromRecordId:source.id});
+ await svc.analyze([target.id]);
+ const copied=store.record(target.id);
+ assert.equal(copied.status,'ready');assert.ok(copied.analysis!.summary.trim());
+ assert.equal(copied.text,target.text);assert.equal(copied.revision,target.revision+1);
+ assert.equal(readFileSync(path.join(store.root,'raw',target.id+'.json'),'utf8'),rawBefore);
+ assert.deepEqual(copied.analysis!.ingredients!.map(({name,grams,nutrition})=>({name,grams,nutrition})),sourceDone.analysis!.ingredients!.map(({name,grams,nutrition})=>({name,grams,nutrition})));
+ assert.deepEqual(copied.analysis!.macros!.kcal,{low:174,high:232});
+ assert.deepEqual(copied.analysis!.macros,sourceDone.analysis!.macros);
+ assert.equal(copied.analysis!.copiedFrom!.recordId,source.id);
+ assert.deepEqual(store.record(source.id),sourceBefore);
+ store.saveMemory({kind:'food',text:'合成测试米饭当前标签',food:{name:'合成测试米饭',servingGrams:100,perServing:{kcal:200,protein:5,carbs:40,fat:2}},startsAt:now(),expiresAt:null,sourceIds:[],active:true,confirmed:true});
+ const newerTarget=meal(store,'午餐仍和10月20日那餐一样','2026-10-23T12:00:00+08:00');
+ await svc.analyze([newerTarget.id]);
+ const withCurrentLabel=store.record(newerTarget.id);
+ assert.equal(withCurrentLabel.status,'ready');
+ assert.deepEqual(withCurrentLabel.analysis!.ingredients![0].grams,sourceDone.analysis!.ingredients![0].grams);
+ assert.equal(withCurrentLabel.analysis!.ingredients![0].nutrition!.source,'label');
+ assert.deepEqual(withCurrentLabel.analysis!.ingredients![0].nutrition!.per100g.kcal,{low:200,high:200});
+ assert.deepEqual(withCurrentLabel.analysis!.macros,{kcal:{low:300,high:400},protein:{low:7.5,high:10},carbs:{low:60,high:80},fat:{low:3,high:4}});
+ assert.equal(withCurrentLabel.analysis!.copiedFrom!.recordId,source.id);
+ assert.deepEqual(store.record(source.id),sourceBefore);
+});
+
+test('ordinary meal model response without summary remains rejected and leaves the target pending',async t=>{
+ const store=setup(t);store.setSettings({...store.getSettings(),chatgptModel:'test-model'});
+ const target=meal(store,'合成午餐：米饭'),svc=service(store),original=globalThis.fetch;t.after(()=>{globalThis.fetch=original;});
+ const before=store.record(target.id);
+ for(const summary of [undefined,null,42]){
+  globalThis.fetch=async()=>sse({summary,ingredients:syntheticCopyIngredients(),questions:[],assumptions:[]});
+  await assert.rejects(()=>svc.analyze([target.id]),error=>error instanceof Error&&/summary/.test(error.message));
+  assert.deepEqual(store.record(target.id),before);assert.equal(store.history(target.id).length,0);assert.equal(target.status,'pending');
+ }
+});
+
+test('invalid copy-only meal references are rejected without changing the pending target',async t=>{
+ const store=setup(t);store.setSettings({...store.getSettings(),chatgptModel:'test-model'});
+ const target=meal(store,'合成午餐：照旧'),unanalyzed=meal(store,'合成来源：未分析餐食');
+ const removed=meal(store,'合成来源：已删除餐食');
+ const removedDone=analyzed(store,removed.id,syntheticCopyIngredients(),removed.revision);store.revise(removed.id,{deleted:true},removedDone.revision);
+ const training=store.importEnvelope({version:1,id:randomUUID(),kind:'training',text:'卧推50kg 3x8',occurredAt:'2026-10-20T19:00:00+08:00',timezone:'Asia/Shanghai'}).record;
+ const svc=service(store),original=globalThis.fetch;let sourceId:unknown;t.after(()=>{globalThis.fetch=original;});
+ const before=store.record(target.id);
+ globalThis.fetch=async()=>sse({copyFromRecordId:sourceId});
+ for(const [label,id] of [['malformed','bad?'],['missing','missing-record-id'],['self',target.id],['non-meal',training.id],['deleted',removed.id],['unanalyzed',unanalyzed.id]]){
+  sourceId=id;await assert.rejects(()=>svc.analyze([target.id]));
+  assert.deepEqual(store.record(target.id),before,label);assert.equal(store.history(target.id).length,0,label);
+ }
 });
 
 test('chat conversation keeps more recent turns and recalls keyword-matched older ones',async t=>{

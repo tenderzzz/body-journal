@@ -1,0 +1,28 @@
+name: 功能建议
+description: 说明一个具体使用场景或改进需求
+title: "[Feature] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        这是个人维护的项目。欢迎说明实际使用场景；提交建议不代表已安排开发。
+        请使用虚构示例，避免包含私人健康信息。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你想解决什么问题？
+      description: 描述当前流程中遇到的困难、发生频率和使用场景。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 你希望怎样改进？
+      description: 给出期望行为或一个具体例子。
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 其他办法或补充信息
+      description: 如尝试过现有功能或替代方案，可以说明。

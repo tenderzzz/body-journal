@@ -86,7 +86,9 @@ try {
   await page.screenshot({path:`evidence/${id}.png`});
   const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth);if(overflow)throw new Error(`Horizontal overflow: ${name}`);
  }
- await page.getByRole('button',{name:'连接与数据',exact:true}).click();await page.screenshot({path:'evidence/settings.png'});
+ await page.getByRole('button',{name:'连接与数据',exact:true}).click();
+ // Public screenshots omit machine-specific paths, including isolated temporary inboxes.
+ await page.screenshot({path:'evidence/settings.png',mask:[page.locator('.path-box')],maskColor:'#eaf3ed'});
  await app.close();rmSync(demoVault,{recursive:true,force:true});
  if(errors.length)throw new Error(errors.join('\n'));
  console.log('UI checks passed: create, edit, undo, historical import, trends, memory, restart persistence, renderer isolation; five screenshots captured.');

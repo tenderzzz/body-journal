@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, statSync, lstatSync, realpathSync, copyFileSync } from 'node:fs';
 import path from 'node:path';
 import type { Analysis, Attachment, Envelope, HealthRecord, Memory, Message, Settings, CoachProfile, MemoryChange, ExerciseRules, FoodPreset, FoodCandidate } from '../../src/shared/types';
-import { analysisSchema, bodySchema, envelopeSchema, idSchema, memoryInputSchema, settingsSchema, readableError, coachProfileSchema, memoryChangeSchema } from './validation';
+import { analysisSchema, bodySchema, envelopeSchema, idSchema, memoryInputSchema, settingsSchema, readableError, coachProfileSchema, memoryChangeSchema, runSchema, dailyActivitySchema } from './validation';
 import { localRecordStatus, parseBody, parseTraining } from './parser';
 import { FoodCatalog } from './nutrition';
 import { computeStats, validMemory, localDay } from '../../src/shared/stats';
@@ -29,6 +29,18 @@ export function sniffImage(data:Buffer):string {
 }
 function parseJSON<T>(s:unknown):T { return JSON.parse(String(s)) as T; }
 function iso() { return new Date().toISOString(); }
+// Model output cannot replace user corrections, including fields explicitly cleared.
+function withActivityOverrides<T extends Pick<Analysis,'run'|'training'|'dailyActivity'|'activityOverrides'>>(analysis:T,overrides:Analysis['activityOverrides']):T {
+  const next={...analysis,activityOverrides:overrides};
+  for(const group of ['run','training','dailyActivity'] as const){
+    if(overrides?.[group])Object.assign(next,{[group]:{...next[group],...overrides[group]}});
+  }
+  for(const field of overrides?.cleared??[]){
+    const [group,key]=field.split('.');
+    if(['run','training','dailyActivity'].includes(group)&&key){const object=next[group as 'run'] as Record<string,unknown>|undefined;if(object)delete object[key];}
+  }
+  return next;
+}
 export class HealthStore {
   db: DatabaseSync;
   energy!:EnergyStore;
@@ -38,7 +50,7 @@ export class HealthStore {
     this.db=new DatabaseSync(path.join(root,'health.sqlite'));
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
     const version=Number(this.db.prepare('PRAGMA user_version').get()?.user_version??0);
-    if(version>2) throw new Error('档案由更高版本创建，请升级应用后再打开。');
+    if(version>3) throw new Error('档案由更高版本创建，请升级应用后再打开。');
     if(version>0 && version<1) this.db.prepare('VACUUM INTO ?').run(path.join(root,`before-migration-${Date.now()}.sqlite`));
     this.db.exec(`CREATE TABLE IF NOT EXISTS records(id TEXT PRIMARY KEY, doc TEXT NOT NULL, fingerprint TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS revisions(seq INTEGER PRIMARY KEY AUTOINCREMENT, entity TEXT NOT NULL, id TEXT NOT NULL, doc TEXT NOT NULL, at TEXT NOT NULL);
@@ -55,9 +67,11 @@ export class HealthStore {
     this.db.prepare("UPDATE usage SET state='uncertain' WHERE state='reserved'").run();
     for(const m of this.messages()) if(m.status==='streaming') this.putMessage({...m,status:'failed',error:'上次请求被中断，请重新提问。'});
     if(version===1)this.backup(path.join(root,'backups',`before-energy-v2-${Date.now()}.bodyjournal`));
-    this.transaction(()=>{this.energy=new EnergyStore(this);
+    this.energy=new EnergyStore(this);
+    if(version===2)this.backup(path.join(root,'backups',`before-activity-v3-${Date.now()}.bodyjournal`));
+    this.transaction(()=>{
       if(version<2&&this.getSettings().goals.kcal!==null)this.energy.importManualTarget(this.getSettings().goals.kcal!,this.getSettings().goals.protein);
-      this.db.exec('PRAGMA user_version=2');});
+      this.db.exec('PRAGMA user_version=3');});
     this.energy.syncTarget();this.energy.invalidate();
   }
   close() { this.db.close(); }
@@ -152,17 +166,23 @@ export class HealthStore {
     }
     const contentChanged=checked.text!==old.text||JSON.stringify(body)!==JSON.stringify(old.body);
     const updated={...old,text:checked.text,occurredAt:resolved?.occurredAt??checked.occurredAt,timeSource:manualDate||resolved?undefined:old.timeSource,dateLocked:manualDate?true:old.dateLocked,dateResolution:manualDate?undefined:resolved?{originalAt:old.occurredAt,matchedText:resolved.matchedText,dateOnly:resolved.dateOnly}:old.dateResolution,body,deleted:changes.deleted??old.deleted,...(contentChanged?localRecordStatus({...old,text:checked.text,body}):{})};
+    if(contentChanged&&old.analysis?.activityOverrides)updated.analysis=withActivityOverrides(updated.analysis??{...old.analysis,run:undefined,training:undefined,dailyActivity:undefined,sets:undefined},old.analysis.activityOverrides);
     return this.commitRevision(old,updated);
   }
   private commitRevision(old:HealthRecord,updated:HealthRecord,options?:{skipInvalidate?:string[]}):HealthRecord {
-    const next={...updated,...(updated.analysis?{analysis:normalizeAnalysis(updated.analysis,updated.text,this.exerciseAliases(),this.exerciseRules())}:{}),revision:old.revision+1,updatedAt:iso()};
+    const next={...updated,...(updated.analysis?{analysis:withActivityOverrides(normalizeAnalysis(updated.analysis,updated.text,this.exerciseAliases(),this.exerciseRules()),updated.analysis.activityOverrides)}:{}),revision:old.revision+1,updatedAt:iso()};
     const result=this.transaction(()=>{ this.db.prepare('INSERT INTO revisions(entity,id,doc,at) VALUES(?,?,?,?)').run('record',old.id,JSON.stringify(old),iso()); this.putRecord(next); this.invalidate(old.id,new Set(options?.skipInvalidate??[])); return next; });
     this.refreshAutomaticMemories(); return result;
   }
   undoRecord(id:string) { const old=this.record(id); const row=this.db.prepare("SELECT doc FROM revisions WHERE entity='record' AND id=? ORDER BY seq DESC LIMIT 1").get(id); if(!row) throw new Error('这条记录还没有可撤销的修改'); const prior=parseJSON<HealthRecord>(row.doc);return this.commitRevision(old,{...prior,dateLocked:old.occurredAt!==prior.occurredAt?true:prior.dateLocked}); }
   applyAnalysis(id:string,value:unknown,engine:Analysis['engine'],expectedRevision:number):HealthRecord {
     const old=this.record(id); if(old.revision!==expectedRevision) throw new Error('分析期间记录已修改，本次结果未覆盖新内容，请重新分析。'); if(old.deleted) throw new Error('记录已删除');
-    let a=analysisSchema.parse(value);
+    // Earlier meal prompts requested only the source id for an identical meal.
+    // Supply the display text locally for that response; ordinary analyses still
+    // require their summary, and source/ingredient validation below stays intact.
+    const result=value&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:undefined;
+    const copyResult=old.kind==='meal'&&result?.summary===undefined&&typeof result?.copyFromRecordId==='string';
+    let a=withActivityOverrides(analysisSchema.parse(copyResult?{...result,summary:'按历史同款餐食复用'}:value),old.analysis?.activityOverrides);
     // 分析结果里附带的长期记忆（补剂标签、记法、偏好等）：先校验原文依据与数字，再自动保存。
     const pendingChanges=a.memoryChanges??[];
     if(pendingChanges.length){
@@ -206,6 +226,35 @@ export class HealthStore {
     const r=this.commitRevision(old,{...old,analysis,status:old.kind==='meal'&&(!a.ingredients?.length||('unmatched' in calc&&calc.unmatched?.length))?'pending':a.questions.length?'needs_info':'ready'},{skipInvalidate:analysis.memoryReceipt?.map(m=>m.id)??[]});
     for(const m of proposed) this.saveMemory(m);
     return r;
+  }
+  updateActivity(value:unknown):HealthRecord {
+    const p=z.object({id:idSchema,revision:z.number().int().positive(),run:z.record(z.string(),z.unknown()).optional(),trainingMinutes:z.number().positive().max(1440).nullable().optional(),dailyActivity:z.record(z.string(),z.unknown()).optional()}).strict().parse(value);
+    const old=this.record(p.id);
+    if(old.deleted)throw new Error('记录已删除');
+    if(old.revision!==p.revision)throw new Error('记录已变化，请刷新后再修改。');
+    if(!['training','note'].includes(old.kind))throw new Error('这类记录没有活动数据');
+    const overrides:NonNullable<Analysis['activityOverrides']>=structuredClone(old.analysis?.activityOverrides??{});
+    const cleared=new Set(overrides.cleared??[]);
+    for(const group of ['run','dailyActivity'] as const){
+      const changes=p[group];if(!changes)continue;
+      const schema=group==='run'?runSchema.partial().strict():dailyActivitySchema.partial().strict();
+      const nonNull=Object.fromEntries(Object.entries(changes).filter(([,v])=>v!==null));
+      // Validate key names even for null (cleared) fields.
+      for(const key of Object.keys(changes))if(!(key in (group==='run'?runSchema.shape:dailyActivitySchema.shape)))throw new Error('活动字段无效');
+      const checked=schema.parse(nonNull),saved={...overrides[group]} as Record<string,unknown>;
+      for(const [key,v] of Object.entries(changes)){if(v===null){delete saved[key];cleared.add(`${group}.${key}`);}else cleared.delete(`${group}.${key}`);}
+      Object.assign(saved,checked);Object.assign(overrides,{[group]:saved});
+    }
+    if(p.trainingMinutes!==undefined){
+      if(p.trainingMinutes===null){overrides.training={};cleared.add('training.durationMinutes');}
+      else{overrides.training={durationMinutes:p.trainingMinutes};cleared.delete('training.durationMinutes');}
+    }
+    overrides.cleared=[...cleared];
+    const initial=old.analysis??{summary:'手动补充活动数据',questions:[],assumptions:[],engine:'local' as const,at:iso()};
+    const analysis=withActivityOverrides({...initial,...(p.trainingMinutes!==undefined&&!initial.training?{training:inferSession(old.text,initial.sets)}:{})},overrides);
+    // A manually entered daily report requires explicit scope and coverage.
+    analysisSchema.parse(analysis);
+    return this.commitRevision(old,{...old,analysis,status:analysis.questions.length?'needs_info':'ready'});
   }
   private invalidate(id:string,skip:Set<string>=new Set()) {
     for(const m of this.messages()) if(m.sources.some(s=>s.id===id)) this.putMessage({...m,stale:true});
@@ -516,12 +565,12 @@ export class HealthStore {
     const tables:Record<string,unknown[]>={}; for(const name of ['records','revisions','memories','messages','usage']) tables[name]=this.db.prepare(`SELECT * FROM ${name}`).all();
     const files:{path:string;sha256:string;base64:string}[]=[];
     for(const r of this.records(true)) { for(const a of r.attachments) { const data=readFileSync(safePath(this.root,a.file)); files.push({path:a.file,sha256:sha256(data),base64:data.toString('base64')}); } const raw=`raw/${r.id}.json`; if(existsSync(safePath(this.root,raw))) {const data=readFileSync(safePath(this.root,raw));files.push({path:raw,sha256:sha256(data),base64:data.toString('base64')});} }
-    return {format:'bodyjournal-backup',version:this.energy?2:1,createdAt:iso(),coachProfile:this.coachProfile(),exerciseAliases:this.exerciseAliases(),settings:this.getSettings(),tables,files,energy:this.energy?.export()};
+    return {format:'bodyjournal-backup',version:this.energy?(Number(this.db.prepare('PRAGMA user_version').get()?.user_version)===2?2:3):1,createdAt:iso(),coachProfile:this.coachProfile(),exerciseAliases:this.exerciseAliases(),settings:this.getSettings(),tables,files,energy:this.energy?.export()};
   }
   backup(file:string) { const data=JSON.stringify(this.exportBundle());if(Buffer.byteLength(data)>512*1024*1024)throw new Error('此档案超过首版完整备份的 512 MB 上限，请使用可读导出保存资料。');atomicWrite(file,data); }
   restore(bundle:unknown) {
-    const b=bundle as ReturnType<HealthStore['exportBundle']>; if(!b||b.format!=='bodyjournal-backup'||![1,2].includes(b.version)||!Array.isArray(b.files)||!b.tables) throw new Error('备份格式不支持');
-    const energyData=this.energy.validateBackup(b.version===2?b.energy:{profiles:[],targets:[],days:[],proposals:[]});
+    const b=bundle as ReturnType<HealthStore['exportBundle']>; if(!b||b.format!=='bodyjournal-backup'||![1,2,3].includes(b.version)||!Array.isArray(b.files)||!b.tables) throw new Error('备份格式不支持');
+    const energyData=this.energy.validateBackup(b.version>=2?b.energy:{profiles:[],targets:[],days:[],proposals:[]});
     const profile=b.coachProfile?coachProfileSchema.parse(b.coachProfile):undefined;const aliases=b.exerciseAliases?z.array(z.object({raw:z.string().max(200),name:z.string().min(1).max(100)})).max(1000).parse(b.exerciseAliases):undefined;
     const settings=settingsSchema.parse(b.settings); settings.inbox=this.getSettings().inbox;
     const revisionRows=z.array(z.object({seq:z.number().int().positive(),entity:z.enum(['record','memory']),id:idSchema,doc:z.string(),at:z.iso.datetime({offset:true})})).max(1000000).parse(b.tables.revisions);
