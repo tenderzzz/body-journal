@@ -44,7 +44,7 @@ function withActivityOverrides<T extends Pick<Analysis,'run'|'training'|'dailyAc
   }
   return next;
 }
-const recordProgressSchema=z.object({analysisPending:z.boolean().optional(),analysisError:z.string().max(2000).optional(),analysisAttemptedRevision:z.number().int().positive().optional(),followups:z.array(z.object({answer:z.string().min(1).max(10000),questions:z.array(z.string().max(500)).max(2),at:z.iso.datetime({offset:true}),previousAnalysis:analysisSchema.pick({questions:true,training:true,sets:true,run:true}).optional()})).max(30).optional()});
+const recordProgressSchema=z.object({analysisPending:z.boolean().optional(),analysisError:z.string().max(2000).optional(),analysisAttemptedRevision:z.number().int().positive().optional(),followups:z.array(z.object({answer:z.string().min(1).max(10000),questions:z.array(z.string().max(500)).max(2),at:z.iso.datetime({offset:true}),previousAnalysis:analysisSchema.partial().optional()})).max(30).optional()});
 export class HealthStore {
   db: DatabaseSync;
   energy!:EnergyStore;
@@ -105,6 +105,18 @@ export class HealthStore {
     });
     if(changes.length)this.backup(path.join(this.root,'backups',`before-training-notation-${Date.now()}.bodyjournal`));
     this.transaction(()=>{for(const {r,parsed} of changes)this.commitRevision(r,{...r,analysis:parsed.analysis,status:parsed.status,analysisPending:parsed.status!=='ready',analysisError:undefined});this.setConfig('trainingNotationParsingV1',true);});
+    return changes.length;
+  }
+  migrateMealFollowupContext(){
+    if(this.getConfig<boolean>('mealFollowupContextV1'))return 0;
+    const changes=this.records().filter(r=>r.kind==='meal'&&r.followups?.length&&!r.followups.at(-1)?.previousAnalysis?.ingredients?.length).flatMap(r=>{
+      const prior=this.history(r.id).map(h=>h.record as HealthRecord).find(p=>p.analysis?.ingredients?.length&&r.text.startsWith(p.text));
+      if(!prior?.analysis)return [];
+      const followups=structuredClone(r.followups!);followups.at(-1)!.previousAnalysis=structuredClone(prior.analysis);
+      return [{r,followups}];
+    });
+    if(changes.length)this.backup(path.join(this.root,'backups',`before-meal-followup-${Date.now()}.bodyjournal`));
+    this.transaction(()=>{for(const {r,followups} of changes)this.commitRevision(r,{...r,followups});this.setConfig('mealFollowupContextV1',true);});
     return changes.length;
   }
   migrateEnergyParsing(){
@@ -200,7 +212,7 @@ export class HealthStore {
     }
     const contentChanged=checked.text!==old.text||JSON.stringify(body)!==JSON.stringify(old.body);
     const updated={...old,text:checked.text,occurredAt:resolved?.occurredAt??checked.occurredAt,timeSource:manualDate||resolved?undefined:old.timeSource,dateLocked:manualDate?true:old.dateLocked,dateResolution:manualDate?undefined:resolved?{originalAt:old.occurredAt,matchedText:resolved.matchedText,dateOnly:resolved.dateOnly}:old.dateResolution,body,deleted:changes.deleted??old.deleted,...(contentChanged?this.localStatus({...old,text:checked.text,body},resolved?.occurredAt??checked.occurredAt):{})};
-    if(followup)updated.followups=[...(old.followups??[]),{answer:followup.answer,questions:old.analysis?.questions?.length?old.analysis.questions:followup.questions,at:iso(),previousAnalysis:old.analysis?{questions:old.analysis.questions,training:old.analysis.training,sets:old.analysis.sets,run:old.analysis.run}:undefined}].slice(-30);
+    if(followup)updated.followups=[...(old.followups??[]),{answer:followup.answer,questions:old.analysis?.questions?.length?old.analysis.questions:followup.questions,at:iso(),previousAnalysis:structuredClone(old.analysis??old.followups?.at(-1)?.previousAnalysis)}].slice(-30);
     if(contentChanged){updated.analysisError=undefined;updated.analysisAttemptedRevision=undefined;updated.analysisPending=old.kind!=='body'&&(!!followup||updated.status!=='ready'||old.attachments.length>0||!!old.analysis&&old.analysis.engine!=='local');}
     if(contentChanged&&old.analysis?.activityOverrides){
       const overrides=structuredClone(old.analysis.activityOverrides),duration=followup&&old.kind==='training'?strengthDurationMinutes(followup.answer):undefined;
@@ -681,9 +693,9 @@ export class HealthStore {
       if(b.version===1&&settings.goals.kcal!==null)this.energy.importManualTarget(settings.goals.kcal,settings.goals.protein);
       this.energy.syncTarget();this.energy.invalidate();if(profile)this.saveCoachProfile(profile);if(aliases)this.setConfig('exerciseAliases',aliases);
       this.migrateMemoryReliability();if(b.version<4)this.energy.migrateFixedBaselines();this.invalidateMemoryAnswers();
-      this.setConfig('energyParsingV1',false);this.setConfig('trainingNotationParsingV1',false);
+      this.setConfig('energyParsingV1',false);this.setConfig('trainingNotationParsingV1',false);this.setConfig('mealFollowupContextV1',false);
       this.setConfig('conversationStart','');
-    });this.migrateTrainingNotationParsing();this.migrateEnergyParsing(); return safety;
+    });this.migrateTrainingNotationParsing();this.migrateMealFollowupContext();this.migrateEnergyParsing(); return safety;
   }
   exportReadable(dir:string) {
     atomicWrite(path.join(dir,'能量资料与目标.json'),JSON.stringify(this.energy.export(),null,2));

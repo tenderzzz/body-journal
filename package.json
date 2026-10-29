@@ -1,7 +1,7 @@
 {
   "name": "personal-health-assistant",
   "productName": "身体手记",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.cjs",

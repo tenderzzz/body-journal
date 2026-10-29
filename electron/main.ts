@@ -116,8 +116,15 @@ async function start(){
     }catch(e){console.error(JSON.stringify({connectionCheck:'failed',error:readableError(e)}));app.exit(1);return;}
   }
   if(demo&&store.records().length===0){const {seedDemo}=await import('./demo');seedDemo(store);}
-  store.migrate016();store.repairExerciseAliases();store.migrateExerciseRules();store.migrateSeatedPress();store.migrateMemoryTopics();store.migrateTrainingNotationParsing();store.migrateEnergyParsing();store.scanInbox();
+  store.migrate016();store.repairExerciseAliases();store.migrateExerciseRules();store.migrateSeatedPress();store.migrateMemoryTopics();store.migrateTrainingNotationParsing();store.migrateMealFollowupContext();store.migrateEnergyParsing();store.scanInbox();
   store.refreshPersonalization();
+  if(process.argv.includes('--analyze-record')){
+    try{
+      const id=idSchema.parse(process.argv[process.argv.indexOf('--analyze-record')+1]);
+      const result=await assistant.analyze([id]);const record=result.items[0]?.record;
+      console.log(JSON.stringify({recordAnalysis:'completed',status:record?.status,ingredientCount:record?.analysis?.ingredients?.length??0,questionCount:record?.analysis?.questions.length??0}));app.quit();return;
+    }catch(e){console.error(JSON.stringify({recordAnalysis:'failed',error:readableError(e)}));app.exit(1);return;}
+  }
   const profileImport=path.join(app.getPath('userData'),'coach-profile-import.json');if(existsSync(profileImport)){store.saveCoachProfile(JSON.parse(readFileSync(profileImport,'utf8')));renameSync(profileImport,path.join(app.getPath('userData'),'coach-profile-imported.json'));}
   win=new BrowserWindow({width:1300,height:900,minWidth:860,minHeight:650,title:'身体手记',backgroundColor:'#f7faf9',titleBarStyle:'hiddenInset',trafficLightPosition:{x:20,y:20},show:false,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true}});
   win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('will-navigate',(event)=>event.preventDefault());win.webContents.session.setPermissionRequestHandler((_wc,_perm,callback)=>callback(false));
