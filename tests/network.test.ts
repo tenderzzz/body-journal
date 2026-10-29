@@ -107,7 +107,7 @@ test('cancelling an injected inference aborts its signal and never retries',asyn
  const {store}=setup(t);blockGlobalFetch(t);const auth={accessToken:async()=>'synthetic-token'} as unknown as ChatGPTAuth;let calls=0,ready:()=>void=()=>{};
  const started=new Promise<void>(resolve=>{ready=resolve;});
  const service=new AssistantService(store,auth,emptySecrets,()=>{},x=>x,async(_url,init)=>new Promise((_resolve,reject)=>{calls++;const signal=init!.signal!;signal.addEventListener('abort',()=>reject(new DOMException('cancelled','AbortError')),{once:true});ready();}));
- const pending=service.testConnection('synthetic-image');await started;service.cancel();await assert.rejects(()=>pending,/请求已取消或超时/);assert.equal(calls,1);assert.equal(service.isBusy(),false);
+ const pending=service.testConnection('synthetic-image');await started;service.cancel();await assert.rejects(()=>pending,/由你取消/);assert.equal(calls,1);assert.equal(service.isBusy(),false);
 });
 
 test('cancelling while a token is loading prevents an inference request and usage reservation',async t=>{
@@ -117,4 +117,12 @@ test('cancelling while a token is loading prevents an inference request and usag
  const service=new AssistantService(store,auth,emptySecrets,()=>{},x=>x,async()=>{calls++;return sse();});
  const pending=service.testConnection('synthetic-image');service.cancel();resolveToken('synthetic-token');
  await assert.rejects(()=>pending,/尚未发送模型请求/);assert.equal(calls,0);assert.equal(store.db.prepare('SELECT count(*) AS n FROM usage').get()!.n,0);assert.equal(service.isBusy(),false);
+});
+
+
+test('a request deadline is reported as timeout rather than user cancellation',async t=>{
+ const {store}=setup(t);const fallback=setTimeout(()=>{},1000);t.after(()=>clearTimeout(fallback));
+ const svc=new AssistantService(store,{accessToken:async()=> 'synthetic-token'} as unknown as ChatGPTAuth,emptySecrets,()=>{},x=>x,async(_url,init)=>new Promise((_resolve,reject)=>{init!.signal!.addEventListener('abort',()=>reject(init!.signal!.reason),{once:true});}),20);
+ await assert.rejects(()=>svc.testConnection('synthetic-image'),error=>error instanceof Error&&/模型响应超时/.test(error.message)&&!/由你取消/.test(error.message));
+ assert.equal(svc.isBusy(),false);assert.equal(store.db.prepare('SELECT state FROM usage').get()!.state,'uncertain');
 });
