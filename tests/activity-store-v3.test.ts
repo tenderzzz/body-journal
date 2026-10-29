@@ -20,7 +20,7 @@ test('manual corrections and cleared fields survive re-extraction, backup, resta
  assert.equal(r.analysis!.run!.minutes,35);assert.equal(r.analysis!.run!.activeKcal,undefined);assert.equal(r.analysis!.run!.totalKcal,360);
  assert.throws(()=>store.updateActivity({id:r.id,revision:r.revision-1,run:{minutes:2}}),/已变化/);
  assert.throws(()=>store.updateActivity({id:r.id,revision:r.revision,run:{badField:null}}),/字段无效/);
- const bundle=store.exportBundle();assert.equal(bundle.version,3);store.restore(bundle);assert.equal(store.record(r.id).analysis!.run!.totalKcal,360);
+ const bundle=store.exportBundle();assert.equal(bundle.version,4);store.restore(bundle);assert.equal(store.record(r.id).analysis!.run!.totalKcal,360);
  const root=store.root;store.close();store=new HealthStore(root,new FoodCatalog([]),root+'/inbox',false);t.after(()=>{if(store.db.isOpen)store.close();});
  assert.equal(store.record(r.id).analysis!.run!.minutes,35);
  const changed=store.updateActivity({id:r.id,revision:store.record(r.id).revision,run:{minutes:40}});assert.equal(changed.analysis!.run!.minutes,40);
@@ -55,7 +55,7 @@ test('reference steps suggestion needs seven complete historical days and is a m
 test('v2 database is backed up before v3 and v1/v2 backups remain restorable',t=>{
  let store=setup(t);store.energy.saveProfile(profile,now);record(store,'kept-v3-01');const root=store.root;
  store.db.exec('PRAGMA user_version=2');store.close();store=new HealthStore(root,new FoodCatalog([]),root+'/inbox',false);t.after(()=>{if(store.db.isOpen)store.close();});
- assert.equal(store.db.prepare('PRAGMA user_version').get()?.user_version,3);
+ assert.equal(store.db.prepare('PRAGMA user_version').get()?.user_version,4);
  const files=readdirSync(root+'/backups').filter(f=>f.startsWith('before-activity-v3-'));assert.equal(files.length,1);
  const old=JSON.parse(readFileSync(root+'/backups/'+files[0],'utf8'));assert.equal(old.version,2);assert.equal(old.energy.profiles[0].usualSteps,4000);
  store.restore(old);assert.equal(store.record('kept-v3-01').id,'kept-v3-01');assert.equal(store.energy.profiles().length,1);

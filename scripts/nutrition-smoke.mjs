@@ -1,0 +1,52 @@
+import {_electron,expect} from '@playwright/test';
+import electron from 'electron';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+const vault=mkdtempSync(path.join(tmpdir(),'bodyjournal-nutrition-ui-'));
+let app;const errors=[];
+async function launch(){app=await _electron.launch({executablePath:process.env.BODYJOURNAL_APP??electron,args:process.env.BODYJOURNAL_APP?[]:[process.cwd()],env:{...process.env,HEALTH_TEST_VAULT:vault,HEALTH_DEMO:'0'},timeout:30000});const page=await app.firstWindow();page.on('pageerror',e=>errors.push(e.message));await page.getByRole('navigation',{name:'主导航'}).waitFor();return page;}
+try{
+ let page=await launch();
+ await page.getByRole('navigation').getByRole('button',{name:'我的档案',exact:true}).click();
+ await page.getByRole('button',{name:'添加常用食物',exact:true}).click();
+ let modal=page.getByRole('dialog');
+ await modal.getByLabel('名称',{exact:true}).fill('合成饮料');
+ await modal.getByLabel('标签每份数量',{exact:true}).fill('100');
+ await modal.getByLabel('标签单位',{exact:true}).selectOption('ml');
+ for(const [name,value] of [['能量 kcal / 标签份','40'],['蛋白质 g / 标签份','3'],['碳水 g / 标签份','5'],['脂肪 g / 标签份','1']])await modal.getByLabel(name,{exact:true}).fill(value);
+ await modal.getByRole('button',{name:'确认保存',exact:true}).click();await expect(modal).toHaveCount(0);
+ await expect(page.getByText('每份 100ml',{exact:true})).toBeVisible();
+ const fixture=await page.evaluate(async()=>{
+  const r=await window.health.invoke('record:create',{kind:'meal',occurredAt:new Date().toISOString(),text:'合成测试：下午喝了合成饮料',attachmentTokens:[]});
+  const ingredients=[{name:'合成饮料',foodId:null,grams:{low:0,high:0},amount:{low:250,high:250,unit:'ml'},assumption:'合成测试份量'}];
+  await window.health.invoke('record:analyze',{ids:[r.id],revision:r.revision,manualMeal:true,analysis:{summary:'合成测试饮料',questions:[],assumptions:[],ingredients}});return {id:r.id,ingredients};
+ });
+ await page.getByRole('navigation').getByRole('button',{name:'记录',exact:true}).click();
+ await page.getByRole('button',{name:/合成测试：下午喝了合成饮料/}).click();modal=page.getByRole('dialog');
+ await expect(modal.locator('.ingredient-line')).toContainText('250–250 ml');
+ await expect(modal.locator('.ingredient-line')).toContainText('每100ml');
+ await modal.getByRole('button',{name:'补充 / 修正食材和分量',exact:true}).click();
+ await modal.getByLabel('实际吃下的比例',{exact:true}).selectOption('0.5');
+ await modal.getByRole('button',{name:'保存并重新计算',exact:true}).click();
+ await expect.poll(()=>page.evaluate(async id=>(await window.health.invoke('snapshot')).records.find(r=>r.id===id).analysis.macros.kcal.low,fixture.id)).toBe(50);
+ await modal.getByRole('button',{name:'补充 / 修正食材和分量',exact:true}).click();
+ await modal.getByText('修改本餐标签或营养',{exact:true}).click();
+ await modal.getByLabel('能量 kcal / 标签数量',{exact:true}).fill('60');
+ await modal.getByRole('button',{name:'填入本餐修正',exact:true}).click();
+ await modal.getByRole('button',{name:'保存并重新计算',exact:true}).click();
+ await expect.poll(()=>page.evaluate(async id=>(await window.health.invoke('snapshot')).records.find(r=>r.id===id).analysis.macros.kcal.low,fixture.id)).toBe(75);
+ await expect(modal.locator('.ingredient-line')).toContainText('本餐人工修正已保留');
+ await page.setViewportSize({width:1300,height:1000});await page.screenshot({path:'/tmp/bodyjournal-nutrition-wide.png'});
+ await page.setViewportSize({width:860,height:650});
+ await modal.getByRole('button',{name:'补充 / 修正食材和分量',exact:true}).click();
+ const overflow=await modal.evaluate(el=>el.scrollWidth>el.clientWidth+1);if(overflow)throw new Error('Nutrition editor horizontal overflow');
+ await page.screenshot({path:'/tmp/bodyjournal-nutrition-compact.png'});
+ await app.close();page=await launch();
+ const saved=await page.evaluate(async id=>(await window.health.invoke('snapshot')).records.find(r=>r.id===id),fixture.id);
+ if(saved.analysis.ingredients[0].amount.unit!=='ml'||saved.analysis.macros.kcal.low!==75||!saved.analysis.ingredients[0].userCorrected)throw new Error('Nutrition correction did not survive restart');
+ await page.evaluate(async({id,ingredients})=>{const s=await window.health.invoke('snapshot');const r=s.records.find(r=>r.id===id);await window.health.invoke('record:analyze',{ids:[id],revision:r.revision,analysis:{summary:'合成重分析',questions:[],assumptions:[],ingredients}});},fixture);
+ const again=await page.evaluate(async id=>(await window.health.invoke('snapshot')).records.find(r=>r.id===id),fixture.id);if(again.analysis.macros.kcal.low!==75)throw new Error('Reanalysis lost manual meal label');
+ if(errors.length)throw new Error(errors.join('\n'));
+ console.log('Nutrition UI passed: raw ml label, consumption fraction, per-meal label correction, compact layout, restart and reanalysis preservation.');
+}finally{if(app)await app.close().catch(()=>{});rmSync(vault,{recursive:true,force:true});}

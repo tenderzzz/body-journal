@@ -1,0 +1,154 @@
+{
+  "format": "bodyjournal-evaluation",
+  "version": 1,
+  "name": "合成示例：标签、称量与未知参考",
+  "synthetic": true,
+  "comparison": {
+    "baseline": "baseline",
+    "candidate": "candidate"
+  },
+  "samples": [
+    {
+      "id": "synthetic-label",
+      "reference": {
+        "foodIds": [
+          "example-whey-vanilla"
+        ],
+        "kcal": 120,
+        "protein": 24,
+        "source": "label",
+        "evidence": "合成包装标签：每份30g，120kcal、24g蛋白质"
+      },
+      "predictions": [
+        {
+          "label": "baseline",
+          "foodIds": [
+            "example-whey-chocolate"
+          ],
+          "kcal": {
+            "low": 110,
+            "high": 150
+          },
+          "protein": {
+            "low": 20,
+            "high": 25
+          },
+          "questions": 2
+        },
+        {
+          "label": "candidate",
+          "foodIds": [
+            "example-whey-vanilla"
+          ],
+          "kcal": 120,
+          "protein": 24,
+          "questions": 0
+        },
+        {
+          "label": "candidate",
+          "foodIds": [
+            "example-whey-vanilla"
+          ],
+          "kcal": 120,
+          "protein": 24,
+          "questions": 0
+        }
+      ]
+    },
+    {
+      "id": "synthetic-weighed",
+      "reference": {
+        "foodIds": [
+          168878,
+          171477
+        ],
+        "kcal": 450,
+        "protein": 35,
+        "source": "weighed",
+        "evidence": "合成称量与配方数值，不是实际餐食"
+      },
+      "predictions": [
+        {
+          "label": "baseline",
+          "foodIds": [
+            168878
+          ],
+          "kcal": {
+            "low": 300,
+            "high": 400
+          },
+          "protein": {
+            "low": 20,
+            "high": 30
+          },
+          "questions": 2
+        },
+        {
+          "label": "candidate",
+          "foodIds": [
+            168878,
+            171477
+          ],
+          "kcal": {
+            "low": 420,
+            "high": 480
+          },
+          "protein": {
+            "low": 32,
+            "high": 38
+          },
+          "questions": 1
+        },
+        {
+          "label": "candidate",
+          "foodIds": [
+            168878,
+            171477
+          ],
+          "kcal": {
+            "low": 430,
+            "high": 490
+          },
+          "protein": {
+            "low": 33,
+            "high": 39
+          },
+          "questions": 1
+        }
+      ]
+    },
+    {
+      "id": "synthetic-unknown",
+      "reference": {
+        "source": "unknown",
+        "evidence": "没有标签或称量参考；只观察重复波动和追问"
+      },
+      "predictions": [
+        {
+          "label": "candidate",
+          "kcal": {
+            "low": 500,
+            "high": 700
+          },
+          "protein": {
+            "low": 20,
+            "high": 30
+          },
+          "questions": 1
+        },
+        {
+          "label": "candidate",
+          "kcal": {
+            "low": 550,
+            "high": 750
+          },
+          "protein": {
+            "low": 22,
+            "high": 32
+          },
+          "questions": 1
+        }
+      ]
+    }
+  ]
+}

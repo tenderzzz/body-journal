@@ -1,9 +1,9 @@
 import {createHash,randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import type {HealthStore} from './store';
-import type {DailyEnergyInput,EnergyProfile,EnergyTarget,GoalProposal,EnergyReview,EnergyView,EnergyGoal,StepReference} from '../../src/shared/types';
+import type {DailyEnergyInput,EnergyProfile,EnergyTarget,GoalProposal,EnergyReview,EnergyView,EnergyGoal,StepReference,ActivityLevel,EnergyBaselineAnchor,EnergyTrendWeek} from '../../src/shared/types';
 import {localDay} from '../../src/shared/stats';
-import {addDays,dateDistance,estimateDay,initialEnergySuggestion,refs,sameRefs,ENERGY_MODEL_VERSION,isEnergyActivityRecord} from '../../src/shared/energy';
+import {addDays,dateDistance,estimateDay,initialEnergySuggestion,refs,sameRefs,ENERGY_MODEL_VERSION,isEnergyActivityRecord,ACTIVITY_LEVELS,ASSUMED_REFERENCE_STEPS} from '../../src/shared/energy';
 import {daySchema,energyDayInput,energyProfileInput,energyTargetInput,energyBackupSchema,energyGoalSchema} from './energy-validation';
 const TABLES={profiles:'energy_profiles',targets:'energy_targets',days:'energy_days',proposals:'energy_proposals'} as const;
 const digest=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -23,12 +23,12 @@ export class EnergyStore{
   profileAt(date:string){return this.profiles().filter(p=>p.effectiveDate<=date).sort((a,b)=>a.effectiveDate.localeCompare(b.effectiveDate)).at(-1);}
   targetAt(date:string){const t=this.targets().filter(t=>!t.undoneAt&&t.effectiveDate<=date).sort((a,b)=>a.effectiveDate.localeCompare(b.effectiveDate)).at(-1);return t&&!t.cleared?t:null;}
   private inputAt(date:string){return this.days().find(d=>d.date===date&&d.timezone===this.host.getSettings().timezone);}
-  private stepReference(date:string):StepReference|undefined{
-    const records=this.host.records(),zone=this.host.getSettings().timezone,profile=this.profileAt(date);
+  private stepReference(date:string,activityOverride?:ActivityLevel,fallbackProfile?:EnergyProfile):StepReference|undefined{
+    const records=this.host.records(),zone=this.host.getSettings().timezone,profile=this.profileAt(date)??fallbackProfile;
     if(!profile)return;
-    const activity=this.inputAt(date)?.activity??profile.activity;
+    const activity=activityOverride??this.inputAt(date)?.activity??profile.activity;
     const samples=this.days().filter(d=>d.timezone===zone&&d.date<date&&d.date>=addDays(date,-28)&&d.activityComplete).flatMap(input=>{
-      const p=this.profileAt(input.date);if(!p||(input.activity??p.activity)!==activity)return [];
+      const p=this.profileAt(input.date)??fallbackProfile;if(!p||(input.activity??p.activity)!==activity)return [];
       // Call the pure calculation directly: reference extraction must not recursively consume older references.
       const day=estimateDay(input.date,zone,records,p,input,null);
       return day.activityConfirmed&&day.activityComplete&&day.walking?.coverage==='full'&&day.walking.nonTrainingSteps!==undefined&&!day.walking.pending
@@ -38,11 +38,33 @@ export class EnergyStore{
     const steps=Math.round(median(samples.map(s=>s.steps))!);
     return {method:'history',steps:{low:steps,high:steps},dates:samples.map(s=>s.date).sort(),sources:[...new Map(samples.flatMap(s=>s.sources).map(s=>[s.id,s])).values()]};
   }
-  day(date:string){daySchema.parse(date);const profile=this.profileAt(date);return estimateDay(date,this.host.getSettings().timezone,this.host.records(),profile,this.inputAt(date),this.targetAt(date),profile?.usualSteps===undefined?this.stepReference(date):undefined);}
+  day(date:string){
+    daySchema.parse(date);const profile=this.profileAt(date);
+    const estimate=estimateDay(date,this.host.getSettings().timezone,this.host.records(),profile,this.inputAt(date),this.targetAt(date),!profile?.baselineAnchor&&profile?.usualSteps===undefined?this.stepReference(date):undefined);
+    if(profile?.baselineAnchor?.dayEvidence?.some(e=>digest(this.inputAt(e.date)??null)!==e.hash))estimate.assumptions.push('固定参考采用的历史核对资料已有变化；保留原快照，请核对滚动建议并保存新版资料。');
+    return estimate;
+  }
+  private fixedAnchor(profile:EnergyProfile,date:string,now:Date):EnergyBaselineAnchor{
+    const levels=Object.keys(ACTIVITY_LEVELS) as ActivityLevel[];
+    const references=Object.fromEntries(levels.map(activity=>[activity,profile.usualSteps!==undefined
+      ?{method:'manual',steps:{low:profile.usualSteps,high:profile.usualSteps},dates:[],sources:[]}
+      :this.stepReference(date,activity,profile)??{method:'assumed',steps:{...ASSUMED_REFERENCE_STEPS[activity]},dates:[],sources:[]}])) as EnergyBaselineAnchor['references'];
+    const factors=Object.fromEntries(levels.map(activity=>[activity,{...ACTIVITY_LEVELS[activity].factor}])) as EnergyBaselineAnchor['factors'];
+    const dates=[...new Set(Object.values(references).flatMap(r=>r.dates))];
+    return {modelVersion:ENERGY_MODEL_VERSION,capturedAt:now.toISOString(),references,factors,dayEvidence:dates.map(date=>({date,hash:digest(this.inputAt(date)??null)}))};
+  }
+  /** Upgrade at the current date without rewriting an older profile or its historical calculations. */
+  migrateFixedBaselines(now=new Date()){
+    const today=this.today(now),old=this.profileAt(today);if(!old||old.baselineAnchor)return 0;
+    const next:EnergyProfile={...old,id:randomUUID(),createdAt:now.toISOString(),effectiveDate:today,
+      age:old.age+Math.floor(Math.max(0,dateDistance(old.effectiveDate,today))/365.2425),baselineAnchor:this.fixedAnchor(old,today,now)};
+    this.put('profiles',next.id,next);this.invalidate();return 1;
+  }
   private transact<T>(fn:()=>T):T{const db=this.host.db,outer=db.isTransaction;if(!outer)db.exec('BEGIN IMMEDIATE');try{const r=fn();if(!outer)db.exec('COMMIT');return r;}catch(e){if(!outer)db.exec('ROLLBACK');throw e;}}
   saveProfile(value:unknown,now=new Date()){
     const p=energyProfileInput.parse(value);if(p.effectiveDate>this.today(now))throw new Error('计算资料不能在未来生效');
     const profile:EnergyProfile={...p,id:randomUUID(),createdAt:now.toISOString()};
+    profile.baselineAnchor=this.fixedAnchor(profile,p.effectiveDate,now);
     this.put('profiles',profile.id,profile);this.invalidate();return profile;
   }
   saveDay(value:unknown,now=new Date()){
@@ -84,9 +106,13 @@ export class EnergyStore{
   hash(from:string,to:string){
     const zone=this.host.getSettings().timezone,records=this.host.records();
     const selected=records.filter(r=>{const d=localDay(r.occurredAt,zone);return d>=addDays(from,-28)&&d<=to;});
+    const anchors=this.profiles().flatMap(p=>p.baselineAnchor?[p.baselineAnchor]:[]);
+    const anchorIds=new Set(anchors.flatMap(a=>Object.values(a.references).flatMap(r=>r.sources.map(s=>s.id))));
+    const anchorDates=new Set(anchors.flatMap(a=>a.dayEvidence?.map(e=>e.date)??[]));
+    const anchorRecords=records.filter(r=>anchorIds.has(r.id));
     const prior=records.filter(r=>r.kind==='body'&&r.body?.weightKg&&!r.timeSource&&localDay(r.occurredAt,zone)<from).sort((a,b)=>Date.parse(b.occurredAt)-Date.parse(a.occurredAt))[0];
     const priorTraining=refs(records.filter(r=>r.kind==='training'&&localDay(r.occurredAt,zone)<from));
-    return digest({model:ENERGY_MODEL_VERSION,zone,records:[...selected,...(prior?[prior]:[])].sort((a,b)=>a.id.localeCompare(b.id)),priorTraining,profiles:this.profiles(),targets:this.targets(),days:this.days().filter(d=>d.timezone===zone&&d.date>=addDays(from,-28)&&d.date<=to)});
+    return digest({model:ENERGY_MODEL_VERSION,zone,records:[...new Map([...selected,...anchorRecords,...(prior?[prior]:[])].map(r=>[r.id,r])).values()].sort((a,b)=>a.id.localeCompare(b.id)),priorTraining,profiles:this.profiles(),targets:this.targets(),days:this.days().filter(d=>d.timezone===zone&&(anchorDates.has(d.date)||d.date>=addDays(from,-28)&&d.date<=to))});
   }
   invalidate(){for(const m of this.host.messages()){const d=m.energyDependency;if(!m.stale&&d&&this.hash(d.from,d.to)!==d.hash)this.host.putMessage({...m,stale:true});}}
   review(now=new Date()):EnergyReview{
@@ -107,6 +133,18 @@ export class EnergyStore{
     if(adjustment&&dateDistance(adjustment.effectiveDate,this.today(now))<14)reasons.push('距离上一次调整生效尚不足14天');
     if(this.targets().some(t=>!t.undoneAt&&t.effectiveDate>this.today(now)))reasons.push('已有待生效的目标，请先等待生效或撤销');
     return {from,to,eligible:reasons.length===0,reasons,completeDays,weeklyWeights,target};
+  }
+  trendWeeks(date:string):EnergyTrendWeek[]{
+    const records=this.host.records(),zone=this.host.getSettings().timezone;
+    return Array.from({length:4},(_,i)=>{
+      const from=addDays(date,-27+i*7),to=addDays(from,6),days=Array.from({length:7},(_,j)=>this.day(addDays(from,j)));
+      const dailyWeights=new Map<string,number[]>();
+      for(const r of records){const d=localDay(r.occurredAt,zone);if(r.kind==='body'&&r.body?.weightKg&&!r.timeSource&&d>=from&&d<=to)dailyWeights.set(d,[...(dailyWeights.get(d)??[]),r.body.weightKg]);}
+      const complete=days.filter(d=>d.intake.complete&&d.intake.kcal),sources=new Set<string>();
+      for(const d of days){for(const w of d.workouts)sources.add(w.method==='app-active'?'App活动热量':w.method==='app-total'?'App总热量':'MET公式');if(d.walking?.correction)sources.add(`步数参考：${d.walking.reference?.method==='manual'?'手填':d.walking.reference?.method==='history'?'历史快照':'暂定范围'}`);}
+      return {from,to,weightDays:dailyWeights.size,weightMedian:median([...dailyWeights.values()].map(v=>median(v)!)),mealCompleteDays:days.filter(d=>d.intake.complete).length,activityCompleteDays:days.filter(d=>d.activityComplete).length,intakeDays:complete.length,
+        intakeMean:complete.length?{low:complete.reduce((s,d)=>s+d.intake.kcal!.low,0)/complete.length,high:complete.reduce((s,d)=>s+d.intake.kcal!.high,0)/complete.length}:null,activitySources:[...sources]};
+    });
   }
   createProposal(value:unknown,messageId:string,sourceHash:string,now=new Date()){
     const p=z.object({kcal:z.number().int().min(1000).max(6000),reason:z.string().trim().min(1).max(2000)}).parse(value),review=this.review(now);
@@ -145,7 +183,7 @@ export class EnergyStore{
     const initialSuggestion=profile&&current.weight?initialEnergySuggestion({...profile,age:profile.age+Math.floor(Math.max(0,dateDistance(profile.effectiveDate,today))/365.2425)},current.weight,mode):null;
     const review=this.review(now);
     const suggestedUsualSteps=this.stepReference(date)?.steps.low;
-    return {today,currentTarget:this.targetAt(today),selected,days:Array.from({length:p.days},(_,i)=>this.day(addDays(date,i-p.days+1))),profiles:this.profiles(),targets:this.targets(),dayInput:this.inputAt(date)??null,initialSuggestion,review,suggestedUsualSteps,proposals:this.proposals().map(p=>({...p,stale:p.status==='pending'&&(p.to!==today||p.sourceHash!==this.hash(p.from,p.to))})),sourceHash:this.hash(review.from,today)};
+    return {today,currentTarget:this.targetAt(today),selected,days:Array.from({length:p.days},(_,i)=>this.day(addDays(date,i-p.days+1))),profiles:this.profiles(),targets:this.targets(),dayInput:this.inputAt(date)??null,initialSuggestion,review,suggestedUsualSteps,trendWeeks:this.trendWeeks(date),proposals:this.proposals().map(p=>({...p,stale:p.status==='pending'&&(p.to!==today||p.sourceHash!==this.hash(p.from,p.to))})),sourceHash:this.hash(review.from,today)};
   }
   chatContext(question:string,now=new Date()){
     const today=this.today(now),matched=question.match(/\d{4}-\d{2}-\d{2}/)?.[0],parsed=daySchema.safeParse(matched),date=parsed.success&&parsed.data<=today?parsed.data:today;

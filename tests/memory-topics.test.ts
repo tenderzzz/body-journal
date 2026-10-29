@@ -98,7 +98,7 @@ test('analysis automatically saves a labeled supplement and shows the receipt',t
  assert.ok(updated.analysis!.memoryReceipt?.some(x=>/测试蛋白粉/.test(x.text)));
  const ingredient=updated.analysis!.ingredients!.find(i=>i.name==='测试蛋白粉')!;
  assert.equal(ingredient.nutrition!.source,'label');
- assert.deepEqual(ingredient.nutrition!.per100g.kcal,{low:400,high:400});
+ assert.deepEqual(ingredient.nutrition!.per100g!.kcal,{low:400,high:400});
  const bad=store.importEnvelope({version:1,id:'meal-record-auto2',kind:'meal',text:'午餐：米饭',occurredAt:now(),timezone:'Asia/Shanghai'}).record;
  assert.throws(()=>store.applyAnalysis(bad.id,{summary:'午餐',questions:[],assumptions:[],engine:'local',at:now(),ingredients:[],memoryChanges:[{operation:'upsert',key:'nutrition.supplement.bad',kind:'food',text:'不存在的食物',food,evidenceQuote:'原文里没有这句话'}]},'local',bad.revision),/原文/);
 });

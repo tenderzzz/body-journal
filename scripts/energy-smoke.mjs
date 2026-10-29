@@ -69,6 +69,8 @@ try{
   await modal.getByRole('button',{name:'保存计算资料',exact:true}).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.locator('.energy-burn>strong')).not.toHaveText('— kcal');
+  const anchored=await page.evaluate(async()=>(await window.health.invoke('energy:get')).profiles.at(-1));
+  if(anchored.baselineAnchor?.modelVersion!=='mifflin-compendium2024-fixed-steps-v5')throw new Error('New profile did not persist its fixed baseline reference');
   await page.getByRole('button',{name:'设置目标',exact:true}).first().click();
   modal=page.getByRole('dialog');
   await expect(modal.getByRole('button',{name:'填入参考数值',exact:true})).toBeVisible();
@@ -96,6 +98,9 @@ try{
   if(energy.selected.workouts.length!==2||!energy.selected.balance)throw new Error('Energy summary did not include completed workouts and complete intake');
   await page.getByRole('combobox',{name:'能量趋势范围'}).selectOption('30');
   await expect(page.locator('.energy-trend')).toBeVisible();
+  await expect(page.locator('.energy-week-review')).toContainText('近四周核对');
+  await expect(page.locator('.energy-week-review tbody tr')).toHaveCount(4);
+  await page.locator('.energy-week-review').screenshot({path:'/tmp/bodyjournal-energy-week-review.png'});
   await page.getByText('查看计算方法、假设与缺失项',{exact:true}).click();
   await expect(page.getByText(/运动总消耗＝MET/)).toBeVisible();
   await page.evaluate(async r=>window.health.invoke('record:update',{id:r.id,revision:r.revision,text:r.text+'\n感受：今天有点累'}),fixture);
@@ -175,6 +180,8 @@ try{
   await page.setViewportSize({width:860,height:700});
   if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw new Error('Energy page overflow at 860px');
   await page.screenshot({path:'evidence/energy-compact.png'});
+  await page.locator('.energy-week-review').scrollIntoViewIfNeeded();
+  await page.locator('.energy-week-review').screenshot({path:'/tmp/bodyjournal-energy-week-review-compact.png'});
   if(errors.length)throw new Error(errors.join('\n'));
   console.log('Energy UI passed: setup, fixed target, separate exercise durations, completeness, detail/trend, edit invalidation, restart, image-only running and saved activity confirmation, next-day adoption and undo, isolated demo and compact layout.');
 }finally{if(app)await app.close().catch(()=>{});rmSync(vault,{recursive:true,force:true});rmSync(demoVault,{recursive:true,force:true});rmSync(reviewVault,{recursive:true,force:true});rmSync(photoVault,{recursive:true,force:true});}
