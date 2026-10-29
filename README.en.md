@@ -23,7 +23,7 @@ Capture on iPhone with Apple Shortcuts, deliver through an iCloud inbox, and kee
 | AI | On-demand chat and analysis using relevant records and memories; locally validated structured results; explicit acceptance of goal changes. |
 | Data | Revisions, undo, soft deletion and recovery; editable memories; readable exports and full backups. |
 
-**v0.4.0** adds automatic historical or provisional step references, visible running-step deductions, and a reorganized energy page. The [changelog](CHANGELOG.md) also documents the intervening v0.2.3, v0.3.0 and v0.3.1 iterations. See [energy methodology (Chinese)](docs/能量估算说明.md) for assumptions and migration rules.
+**v0.5.0 (local implementation)** adds versioned, time-aware memory with evidence and stale-answer handling; strict product identities; g/ml/serving nutrition labels and persistent meal corrections; fixed step-baseline snapshots; four-week trend review; and an offline accuracy evaluation panel. Backups use v4 and can restore v1–v3. See the [upgrade notes](docs/0.5.0升级说明.md) and [evaluation guide](docs/精度评测.md). Published downloads remain those actually available in Releases.
 
 ## Screenshots
 

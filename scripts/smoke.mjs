@@ -65,11 +65,11 @@ try {
  await page.getByRole('button',{name:'添加常用食物',exact:true}).click();
  const foodDialog=page.getByRole('dialog');
  await foodDialog.getByLabel('名称').fill('乳清蛋白粉');
- await foodDialog.getByLabel('每份克数').fill('30');
- await foodDialog.getByLabel('能量 kcal / 份').fill('120');
- await foodDialog.getByLabel('蛋白质 g / 份').fill('24');
- await foodDialog.getByLabel('碳水 g / 份').fill('3');
- await foodDialog.getByLabel('脂肪 g / 份').fill('1.5');
+ await foodDialog.getByLabel('标签每份数量').fill('30');
+ await foodDialog.getByLabel('能量 kcal / 标签份').fill('120');
+ await foodDialog.getByLabel('蛋白质 g / 标签份').fill('24');
+ await foodDialog.getByLabel('碳水 g / 标签份').fill('3');
+ await foodDialog.getByLabel('脂肪 g / 标签份').fill('1.5');
  await foodDialog.getByRole('button',{name:'确认保存',exact:true}).click();
  await expect(page.getByText('每份 30g',{exact:false})).toBeVisible();
  if(await page.evaluate(()=>typeof window.require)!=='undefined')throw new Error('Renderer unexpectedly has Node');

@@ -2,7 +2,8 @@ import type {ActivityLevel, DailyEnergyEstimate, DailyEnergyInput, EnergyGoal, E
 import {localDay} from './stats';
 import {inferSession,runCompletion} from './exercises';
 
-export const ENERGY_MODEL_VERSION='mifflin-compendium2024-steps-v4';
+export const ENERGY_MODEL_VERSION='mifflin-compendium2024-fixed-steps-v5';
+export const LEGACY_ENERGY_MODEL_VERSION='mifflin-compendium2024-steps-v4';
 export const ACTIVITY_LEVELS:Record<ActivityLevel,{label:string;factor:Range}>={
   seated:{label:'主要久坐',factor:{low:1.20,high:1.35}},
   walking:{label:'日常走动较多',factor:{low:1.35,high:1.55}},
@@ -43,7 +44,7 @@ export function workoutExtra(weight:number,minutes:Range,met:Range,baseline:Rang
 }
 export function initialEnergySuggestion(profile:EnergyProfile,weight:{id:string;kg:number},mode:EnergyGoal){
   if(!profile.generalAdult)return null;
-  const resting=restingEnergy(weight.kg,profile.heightCm,profile.age,profile.sex),factor=ACTIVITY_LEVELS[profile.activity].factor;
+  const resting=restingEnergy(weight.kg,profile.heightCm,profile.age,profile.sex),factor=profile.baselineAnchor?.factors[profile.activity]??ACTIVITY_LEVELS[profile.activity].factor;
   const baseline={low:resting*factor.low,high:resting*factor.high};
   const strength=workoutExtra(weight.kg,profile.strengthMinutes,{low:3.5,high:6},baseline);
   const runMet=runningMET(profile.runPace);if(profile.runPerWeek>0&&!runMet)return null;
@@ -160,9 +161,13 @@ function walkingEstimate(day:HealthRecord[],runs:CompletedRun[],input:DailyEnerg
   if(!profile||!positive(weight))return {walking,unresolved};
   if(distance===undefined&&!nonnegative(steps)){walking.pending='data';walking.basis='尚缺可用的非训练步数或步行距离';missing.push(walking.basis);return {walking,unresolved:true};}
   const stride=profile.strideCm!==undefined?{low:profile.strideCm/100,high:profile.strideCm/100}:{low:profile.heightCm*.35/100,high:profile.heightCm*.45/100};
-  const reference:StepReference=profile.usualSteps!==undefined
+  const activity=input?.activity??profile.activity;
+  const reference:StepReference=profile.baselineAnchor?.references[activity]??(profile.usualSteps!==undefined
     ?{method:'manual',steps:{low:profile.usualSteps,high:profile.usualSteps},dates:[],sources:[]}
-    :historyReference??{method:'assumed',steps:ASSUMED_REFERENCE_STEPS[input?.activity??profile.activity],dates:[],sources:[]};
+    :historyReference??{method:'assumed',steps:ASSUMED_REFERENCE_STEPS[activity],dates:[],sources:[]});
+  if(profile.baselineAnchor){
+    assumptions.push(`步数参考与日常基线配对固定于 ${profile.effectiveDate} 生效的资料；滚动历史仅用于更新建议，不会自动移动计算基准。`);
+  }
   walking.reference=reference;walking.referenceSteps=mid(reference.steps);
   let delta:Range;
   if(distance!==undefined){
@@ -197,7 +202,8 @@ export function estimateDay(date:string,timezone:string,records:HealthRecord[],p
   if(weight&&dateDistance(weight.date,date)>30)assumptions.push(`体重取自 ${weight.date}，已超过30天，请更新测量。`);
   const age=profile?profile.age+Math.floor(Math.max(0,dateDistance(profile.effectiveDate,date))/365.2425):0;
   const resting=profile&&weight?restingEnergy(weight.kg,profile.heightCm,age,profile.sex):null;
-  const factor=ACTIVITY_LEVELS[input?.activity??profile?.activity??'seated'].factor;
+  const activity=input?.activity??profile?.activity??'seated';
+  const factor=profile?.baselineAnchor?.factors[activity]??ACTIVITY_LEVELS[activity].factor;
   const baseline=resting===null?null:{low:resting*factor.low,high:resting*factor.high};
   const workouts:EnergyWorkout[]=[],completedRuns:CompletedRun[]=[];
   const excluded=new Set(input?.excludedWorkoutIds??[]),{duplicates,skip}=activityDuplicates(training,excluded,input?.distinctWorkoutPairs);
@@ -260,10 +266,13 @@ export function estimateDay(date:string,timezone:string,records:HealthRecord[],p
       if(method!=='met'&&appMinutes.high>appMinutes.low)basis+=`；App热量覆盖时长未明，按运动至总时长${appMinutes.low}–${appMinutes.high}分钟范围扣重`;
       const elapsedOnly=!positive(run.minutes)&&!(positive(run.km)&&positive(run.paceSecondsPerKm));
       if(elapsedOnly)basis+='；仅报告总时长，暂作估算时长，运动时长待核对';
-      workouts.push({recordId:r.id,revision:r.revision,kind:'run',minutes:energyMinutes,met,method,extra,assumed:elapsedOnly,basis});
+      const formula=met&&run.terrain!=='hilly'?workoutExtra(weight.kg,{low:minutes,high:minutes},met,baseline):null;
+      const comparison:EnergyWorkout['comparison']=method==='app-active'||method==='app-total'?{app:{method,reportedKcal:method==='app-active'?run.activeKcal!:run.totalKcal!,extra},formula,selected:'app'}:nonnegative(run.reportedKcal)?{app:{method:'app-unknown',reportedKcal:run.reportedKcal,extra:null},formula,selected:'formula'}:undefined;
+      workouts.push({recordId:r.id,revision:r.revision,kind:'run',minutes:energyMinutes,met,method,extra,assumed:elapsedOnly,basis,comparison});
     }
   }
   const {walking,unresolved}=walkingEstimate(day,completedRuns,input,profile,weight?.kg,missing,assumptions,unresolvedRun,historyReference);
+  if(profile?.baselineAnchor&&walking?.reference?.sources.some(s=>!active.some(r=>r.id===s.id&&r.revision===s.revision)))assumptions.push('固定步数参考的来源已有修订或移除；当前保留已确认的参考快照，请核对后保存新版计算资料。');
   unsupported=unsupported||unresolved;
   const tooLong=workouts.reduce((sum,w)=>sum+w.minutes.high,0)>1440;
   if(tooLong){missing.push('当天训练时长合计超过24小时，请核对重复记录或时长');unsupported=true;}
@@ -281,5 +290,5 @@ export function estimateDay(date:string,timezone:string,records:HealthRecord[],p
   if(!activityComplete)missing.push('活动尚未确认记齐，或存在待确认的训练');
   if(profile&&!profile.generalAdult)assumptions.push('当前不属于一般成年健身场景，仅展示记录与估算，不自动提供饮食目标。');
   const protein=sumMacro('protein'),kcal=sumMacro('kcal'),balance=mealComplete&&activityComplete&&kcal&&expenditure?{low:kcal.low-expenditure.high,high:kcal.high-expenditure.low}:null;
-  return {date,timezone,modelVersion:ENERGY_MODEL_VERSION,profileId:profile?.id,weight,resting,baseline,dailyBaseline,expenditure,workouts,walking,duplicates,intake:{kcal,protein,meals:meals.length,estimated:estimated.length,complete:mealComplete},mealConfirmed,activityConfirmed,activityComplete,balance,balanceState:balance?(balance.high<0?'deficit':balance.low>0?'surplus':'uncertain'):'incomplete',target,targetDifference:target&&kcal?{low:target.kcal-kcal.high,high:target.kcal-kcal.low}:null,proteinDifference:target?.protein&&protein?{low:target.protein-protein.high,high:target.protein-protein.low}:null,sources:[...new Map([...refs([...day,...(measured&&!day.some(r=>r.id===measured.id)?[measured]:[])]),...(walking?.reference?.sources??[])].map(r=>[r.id,r])).values()],missing,assumptions};
+  return {date,timezone,modelVersion:profile?.baselineAnchor?.modelVersion??LEGACY_ENERGY_MODEL_VERSION,profileId:profile?.id,weight,resting,baseline,dailyBaseline,expenditure,workouts,walking,duplicates,intake:{kcal,protein,meals:meals.length,estimated:estimated.length,complete:mealComplete},mealConfirmed,activityConfirmed,activityComplete,balance,balanceState:balance?(balance.high<0?'deficit':balance.low>0?'surplus':'uncertain'):'incomplete',target,targetDifference:target&&kcal?{low:target.kcal-kcal.high,high:target.kcal-kcal.low}:null,proteinDifference:target?.protein&&protein?{low:target.protein-protein.high,high:target.protein-protein.low}:null,sources:[...new Map([...refs([...day,...(measured&&!day.some(r=>r.id===measured.id)?[measured]:[])]),...(walking?.reference?.sources??[])].map(r=>[r.id,r])).values()],missing,assumptions};
 }

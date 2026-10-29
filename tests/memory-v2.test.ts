@@ -28,10 +28,10 @@ function sse(output:unknown,usage={input_tokens:10,output_tokens:10}){const even
 
 test('common food presets are stored once and cannot silently duplicate',t=>{
  const store=setup(t);
- const saved=store.saveMemory({kind:'food',text:'测试蛋白粉',food:preset(),startsAt:now(),expiresAt:null,sourceIds:[],active:true,confirmed:true});
+ const saved=store.saveMemory({kind:'food',text:'测试蛋白粉',food:preset(),startsAt:'2026-10-01T00:00:00+08:00',expiresAt:null,sourceIds:[],active:true,confirmed:true});
  assert.equal(saved.kind,'food');
  assert.equal(store.foodPresets().length,1);
- assert.throws(()=>store.saveMemory({kind:'food',text:'另一条',food:preset(),startsAt:now(),expiresAt:null,sourceIds:[],active:true,confirmed:true}),/同名/);
+ assert.throws(()=>store.saveMemory({kind:'food',text:'另一条',food:preset(),startsAt:'2026-10-01T00:00:00+08:00',expiresAt:null,sourceIds:[],active:true,confirmed:true}),/同名/);
  const manual={kind:'fact' as const,text:'我不吃香菜',startsAt:now(),expiresAt:null,sourceIds:[],active:true,confirmed:true};
  store.saveMemory(manual);
  assert.throws(()=>store.saveMemory(manual),/相同内容/);
@@ -39,13 +39,13 @@ test('common food presets are stored once and cannot silently duplicate',t=>{
 
 test('meal analysis uses the label nutrition of a known supplement instead of model estimates',t=>{
  const store=setup(t);
- store.saveMemory({kind:'food',text:'测试蛋白粉',food:preset(),startsAt:now(),expiresAt:null,sourceIds:[],active:true,confirmed:true});
+ store.saveMemory({kind:'food',text:'测试蛋白粉',food:preset(),startsAt:'2026-10-01T00:00:00+08:00',expiresAt:null,sourceIds:[],active:true,confirmed:true});
  const r=meal(store,'训练后：测试蛋白粉一勺，加牛奶200ml');
  const updated=analyzed(store,r.id,[{name:'测试蛋白粉',foodId:null,grams:{low:30,high:30},assumption:'一勺',nutrition:{source:'estimate',basis:'模型猜测',per100g:{kcal:{low:300,high:400},protein:{low:50,high:60},carbs:{low:10,high:20},fat:{low:5,high:10}}}},{name:'牛奶',foodId:null,grams:{low:200,high:200},assumption:'一杯',nutrition:{source:'estimate',basis:'估算',per100g:{kcal:{low:60,high:70},protein:{low:3,high:4},carbs:{low:4,high:5},fat:{low:3,high:4}}}}],r.revision);
  const powder=updated.analysis!.ingredients!.find(i=>i.name==='测试蛋白粉')!;
  assert.equal(powder.nutrition!.source,'label');
- assert.deepEqual(powder.nutrition!.per100g.kcal,{low:400,high:400});
- assert.deepEqual(powder.nutrition!.per100g.protein,{low:80,high:80});
+ assert.deepEqual(powder.nutrition!.per100g!.kcal,{low:400,high:400});
+ assert.deepEqual(powder.nutrition!.per100g!.protein,{low:80,high:80});
  assert.match(powder.nutrition!.basis,/个人常用食物/);
  assert.ok(updated.analysis!.assumptions.some(a=>a.includes('常用食物“测试蛋白粉”')));
  assert.deepEqual(updated.analysis!.macros!.protein,{low:30,high:32});
@@ -67,7 +67,8 @@ test('chat can remember a supplement from explicit label numbers, and rejects in
 test('repeated ingredients become candidates only, are excluded once saved, and brands match labels',t=>{
  const store=setup(t);
  const presetFood={name:'测试蛋白粉',brand:'ExampleWhey 巧克力味',servingGrams:100,perServing:{kcal:380,protein:80,carbs:6,fat:3}};
- assert.ok(matchFoodPreset([presetFood],'ExampleWhey 巧克力味'));
+ assert.equal(matchFoodPreset([presetFood],'ExampleWhey 巧克力味'),undefined);
+ assert.ok(matchFoodPreset([{...presetFood,aliases:['ExampleWhey 巧克力味']}],'ExampleWhey 巧克力味'));
  assert.ok(matchFoodPreset([presetFood],'测试蛋白粉'));
  const add=(date:string,text:string,name:string,source:'label'|'estimate')=>{const r=meal(store,text,date);return analyzed(store,r.id,[{name,foodId:null,grams:{low:100,high:120},assumption:'一份',nutrition:{source,basis:'测试',per100g:{kcal:{low:280,high:300},protein:{low:15,high:16},carbs:{low:20,high:22},fat:{low:14,high:16}}}}],r.revision);};
  add('2026-10-20T12:00:00+08:00','午餐：测试三明治','测试三明治','estimate');
@@ -126,14 +127,14 @@ test('copy-only meal model response copies ingredients and local nutrition witho
  assert.deepEqual(copied.analysis!.macros,sourceDone.analysis!.macros);
  assert.equal(copied.analysis!.copiedFrom!.recordId,source.id);
  assert.deepEqual(store.record(source.id),sourceBefore);
- store.saveMemory({kind:'food',text:'合成测试米饭当前标签',food:{name:'合成测试米饭',servingGrams:100,perServing:{kcal:200,protein:5,carbs:40,fat:2}},startsAt:now(),expiresAt:null,sourceIds:[],active:true,confirmed:true});
+ store.saveMemory({kind:'food',text:'合成测试米饭当前标签',food:{name:'合成测试米饭',servingGrams:100,perServing:{kcal:200,protein:5,carbs:40,fat:2}},startsAt:'2026-10-23T00:00:00+08:00',expiresAt:null,sourceIds:[],active:true,confirmed:true});
  const newerTarget=meal(store,'午餐仍和10月20日那餐一样','2026-10-23T12:00:00+08:00');
  await svc.analyze([newerTarget.id]);
  const withCurrentLabel=store.record(newerTarget.id);
  assert.equal(withCurrentLabel.status,'ready');
  assert.deepEqual(withCurrentLabel.analysis!.ingredients![0].grams,sourceDone.analysis!.ingredients![0].grams);
  assert.equal(withCurrentLabel.analysis!.ingredients![0].nutrition!.source,'label');
- assert.deepEqual(withCurrentLabel.analysis!.ingredients![0].nutrition!.per100g.kcal,{low:200,high:200});
+ assert.deepEqual(withCurrentLabel.analysis!.ingredients![0].nutrition!.per100g!.kcal,{low:200,high:200});
  assert.deepEqual(withCurrentLabel.analysis!.macros,{kcal:{low:300,high:400},protein:{low:7.5,high:10},carbs:{low:60,high:80},fat:{low:3,high:4}});
  assert.equal(withCurrentLabel.analysis!.copiedFrom!.recordId,source.id);
  assert.deepEqual(store.record(source.id),sourceBefore);
@@ -215,7 +216,7 @@ test('supplement and answer fragments are never stored as automatic preferences'
 
 test('meal analysis prompt carries personal foods and recent meal history',async t=>{
  const store=setup(t);store.setSettings({...store.getSettings(),chatgptModel:'test-model',provider:'chatgpt'});
- store.saveMemory({kind:'food',text:'测试蛋白粉',food:preset(),startsAt:now(),expiresAt:null,sourceIds:[],active:true,confirmed:true});
+ store.saveMemory({kind:'food',text:'测试蛋白粉',food:preset(),startsAt:'2026-10-01T00:00:00+08:00',expiresAt:null,sourceIds:[],active:true,confirmed:true});
  const old=meal(store,'10月20日午餐：米饭和鸡肉','2026-10-20T12:00:00+08:00');
  analyzed(store,old.id,[{name:'米饭',foodId:null,grams:{low:150,high:150},assumption:'一碗',nutrition:{source:'estimate',basis:'估算',per100g:{kcal:{low:116,high:116},protein:{low:2.6,high:2.6},carbs:{low:25.9,high:25.9},fat:{low:0.3,high:0.3}}}}],old.revision);
  const target=meal(store,'午餐和10月20日的午餐一样','2026-10-22T12:00:00+08:00');

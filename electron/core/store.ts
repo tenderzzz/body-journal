@@ -11,10 +11,12 @@ import { z } from 'zod';
 import { resolveRecordDate } from './dates';
 import { automaticMemories } from './personalization';
 import { normalizeAnalysis, DEFAULT_SPLIT, inferSession, type ExerciseAlias } from '../../src/shared/exercises';
-import { foodPer100g, foodText, matchFoodPreset, normalizeFoodName } from '../../src/shared/food';
+import { foodPer100g, foodText, matchFoodPreset, normalizeFoodName,prepareMealIngredients,labelBasisOf,foodProductId,ingredientIdentity } from '../../src/shared/food';
 import { mealLabel, mealSlot } from '../../src/shared/meals';
 import { DEFAULT_COACH, weeklyContext } from './coaching';
 import { EnergyStore } from './energy-store';
+import {normalizeModelOutput} from '../ai/model-output';
+import {memoryTopic,memoryRevision,memoryDependency,selectMemories,type MemoryPurpose} from './memory';
 
 export function sha256(data:Buffer|string) { return createHash('sha256').update(data).digest('hex'); }
 export function atomicWrite(file:string,data:string|Buffer) { mkdirSync(path.dirname(file),{recursive:true,mode:0o700}); const tmp=`${file}.${randomUUID()}.tmp`; writeFileSync(tmp,data,{mode:0o600}); renameSync(tmp,file); }
@@ -50,7 +52,7 @@ export class HealthStore {
     this.db=new DatabaseSync(path.join(root,'health.sqlite'));
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
     const version=Number(this.db.prepare('PRAGMA user_version').get()?.user_version??0);
-    if(version>3) throw new Error('档案由更高版本创建，请升级应用后再打开。');
+    if(version>4) throw new Error('档案由更高版本创建，请升级应用后再打开。');
     if(version>0 && version<1) this.db.prepare('VACUUM INTO ?').run(path.join(root,`before-migration-${Date.now()}.sqlite`));
     this.db.exec(`CREATE TABLE IF NOT EXISTS records(id TEXT PRIMARY KEY, doc TEXT NOT NULL, fingerprint TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS revisions(seq INTEGER PRIMARY KEY AUTOINCREMENT, entity TEXT NOT NULL, id TEXT NOT NULL, doc TEXT NOT NULL, at TEXT NOT NULL);
@@ -69,9 +71,11 @@ export class HealthStore {
     if(version===1)this.backup(path.join(root,'backups',`before-energy-v2-${Date.now()}.bodyjournal`));
     this.energy=new EnergyStore(this);
     if(version===2)this.backup(path.join(root,'backups',`before-activity-v3-${Date.now()}.bodyjournal`));
+    if(version===3)this.backup(path.join(root,'backups',`before-reliability-v4-${Date.now()}.bodyjournal`));
     this.transaction(()=>{
       if(version<2&&this.getSettings().goals.kcal!==null)this.energy.importManualTarget(this.getSettings().goals.kcal!,this.getSettings().goals.protein);
-      this.db.exec('PRAGMA user_version=3');});
+      this.migrateMemoryReliability();this.energy.migrateFixedBaselines();
+      this.db.exec('PRAGMA user_version=4');});
     this.energy.syncTarget();this.energy.invalidate();
   }
   close() { this.db.close(); }
@@ -167,6 +171,7 @@ export class HealthStore {
     const contentChanged=checked.text!==old.text||JSON.stringify(body)!==JSON.stringify(old.body);
     const updated={...old,text:checked.text,occurredAt:resolved?.occurredAt??checked.occurredAt,timeSource:manualDate||resolved?undefined:old.timeSource,dateLocked:manualDate?true:old.dateLocked,dateResolution:manualDate?undefined:resolved?{originalAt:old.occurredAt,matchedText:resolved.matchedText,dateOnly:resolved.dateOnly}:old.dateResolution,body,deleted:changes.deleted??old.deleted,...(contentChanged?localRecordStatus({...old,text:checked.text,body}):{})};
     if(contentChanged&&old.analysis?.activityOverrides)updated.analysis=withActivityOverrides(updated.analysis??{...old.analysis,run:undefined,training:undefined,dailyActivity:undefined,sets:undefined},old.analysis.activityOverrides);
+    if(contentChanged&&old.kind==='meal'&&old.analysis?.ingredients?.some(i=>i.userCorrected))updated.analysis={...old.analysis,macros:null,summary:'原文已修改，保留手动食材更正，等待重新分析。',questions:[]};
     return this.commitRevision(old,updated);
   }
   private commitRevision(old:HealthRecord,updated:HealthRecord,options?:{skipInvalidate?:string[]}):HealthRecord {
@@ -175,33 +180,40 @@ export class HealthStore {
     this.refreshAutomaticMemories(); return result;
   }
   undoRecord(id:string) { const old=this.record(id); const row=this.db.prepare("SELECT doc FROM revisions WHERE entity='record' AND id=? ORDER BY seq DESC LIMIT 1").get(id); if(!row) throw new Error('这条记录还没有可撤销的修改'); const prior=parseJSON<HealthRecord>(row.doc);return this.commitRevision(old,{...prior,dateLocked:old.occurredAt!==prior.occurredAt?true:prior.dateLocked}); }
-  applyAnalysis(id:string,value:unknown,engine:Analysis['engine'],expectedRevision:number):HealthRecord {
+  applyAnalysis(id:string,value:unknown,engine:Analysis['engine'],expectedRevision:number,manualMeal=false):HealthRecord {
+    return this.transaction(()=>this.applyAnalysisAtomic(id,value,engine,expectedRevision,manualMeal));
+  }
+  private applyAnalysisAtomic(id:string,value:unknown,engine:Analysis['engine'],expectedRevision:number,manualMeal=false):HealthRecord {
     const old=this.record(id); if(old.revision!==expectedRevision) throw new Error('分析期间记录已修改，本次结果未覆盖新内容，请重新分析。'); if(old.deleted) throw new Error('记录已删除');
     // Earlier meal prompts requested only the source id for an identical meal.
     // Supply the display text locally for that response; ordinary analyses still
     // require their summary, and source/ingredient validation below stays intact.
+    const normalized=engine==='local'?{value,memoryWarnings:[] as string[]}:normalizeModelOutput(value,'analysis');
+    value=normalized.value;
     const result=value&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:undefined;
     const copyResult=old.kind==='meal'&&result?.summary===undefined&&typeof result?.copyFromRecordId==='string';
     let a=withActivityOverrides(analysisSchema.parse(copyResult?{...result,summary:'按历史同款餐食复用'}:value),old.analysis?.activityOverrides);
+    if(engine!=='local')a={...a,memoryWarnings:normalized.memoryWarnings};
     // 分析结果里附带的长期记忆（补剂标签、记法、偏好等）：先校验原文依据与数字，再自动保存。
     const pendingChanges=a.memoryChanges??[];
     if(pendingChanges.length){
       const saved:{id:string;text:string;kind:string}[]=[];
       for(const c of pendingChanges){
+        if(c.operation!=='upsert')throw new Error('记录分析只支持保存明确的记忆；停用或目标修改请通过对话或档案完成。');
         if(c.kind!=='fact'&&c.kind!=='food')throw new Error('分析中的记忆只能提交长期事实或常用食物，本次未保存。');
         if(!old.text.includes(c.evidenceQuote))throw new Error('分析中的记忆缺少原文依据，本次未保存。');
         const quoteNums=(c.evidenceQuote.match(/\d+(?:\.\d+)?/g)??[]).map(Number);
         if(c.kind==='food'){
           if(!c.food)throw new Error('常用食物缺少名称或营养数据，本次未保存。');
-          const values=[c.food.servingGrams,c.food.perServing.kcal,c.food.perServing.protein,c.food.perServing.carbs,c.food.perServing.fat];
+          const values=[labelBasisOf(c.food).quantity,c.food.perServing.kcal,c.food.perServing.protein,c.food.perServing.carbs,c.food.perServing.fat];
           if(values.some(v=>!quoteNums.includes(v)))throw new Error('常用食物的数字必须来自记录原文，本次未保存。');
           if(!normalizeFoodName(c.evidenceQuote).includes(normalizeFoodName(c.food.name)))throw new Error('常用食物的名称必须来自记录原文，本次未保存。');
-          const memory=this.saveMemory({kind:'food',text:foodText(c.food),topicKey:c.key,food:c.food,startsAt:old.occurredAt,expiresAt:null,sourceIds:[id],active:true,confirmed:true});
+          const memory=this.saveMemory({kind:'food',text:foodText(c.food),topicKey:c.key,subject:c.subject,food:c.food,startsAt:old.occurredAt,expiresAt:null,sourceIds:[id],evidence:[{quote:c.evidenceQuote,origin:'record',recordId:id,recordRevision:old.revision+1,at:old.occurredAt}],active:true,confirmed:true});
           saved.push({id:memory.id,text:memory.text,kind:memory.kind});
         }else{
           if(!c.text)throw new Error('分析中的长期事实缺少内容，本次未保存。');
           if((c.text.match(/\d+(?:\.\d+)?/g)??[]).some(n=>!quoteNums.includes(Number(n))))throw new Error('分析中的记忆出现了原文未提供的数字，本次未保存。');
-          const memory=this.saveMemory({kind:'fact',text:c.text,topicKey:c.key,startsAt:old.occurredAt,expiresAt:null,sourceIds:[id],active:true,confirmed:true});
+          const memory=this.saveMemory({kind:'fact',text:c.text,topicKey:c.key,subject:c.subject,startsAt:old.occurredAt,expiresAt:null,sourceIds:[id],evidence:[{quote:c.evidenceQuote,origin:'record',recordId:id,recordRevision:old.revision+1,at:old.occurredAt}],active:true,confirmed:true});
           saved.push({id:memory.id,text:memory.text,kind:memory.kind});
         }
       }
@@ -210,18 +222,24 @@ export class HealthStore {
     // 明确说“和某天哪一餐一样”时，食材与分量整份复制，本地重新计算营养；模型的临时估算不采用。
     if(a.copyFromRecordId){
       let source;try{source=this.record(a.copyFromRecordId);}catch{throw new Error('引用的那餐记录不存在，请换一条或直接描述这餐。');}
+      if(Date.parse(source.occurredAt)>Date.parse(old.occurredAt))throw new Error('不能使用发生日期之后的餐食作历史依据');
       if(source.id===old.id) throw new Error('不能把这条记录设为复制自身');
       if(source.kind!=='meal'||source.deleted||!source.analysis?.ingredients?.length) throw new Error('引用的那餐没有可复制的食材记录，请换一条或直接描述这餐。');
       const label=mealLabel(source.occurredAt,source.timezone);
       a={...a,copyFromRecordId:undefined,ingredients:source.analysis.ingredients.map(i=>({...i,assumption:`${i.assumption}；复制自 ${label}`})),summary:`${a.summary}（按 ${label} 的同款记录复制）`,assumptions:[...a.assumptions,`食材与分量取自 ${label} 的同款记录；如需改动可在记录详情调整。`],copiedFrom:{recordId:source.id,occurredAt:source.occurredAt,slot:mealSlot(source.occurredAt,source.timezone),label}};
     }
     // 常用食物（蛋白粉等）的标签营养由本地强制覆盖，避免模型每次重新估计。
-    const presets=this.foodPresets(),matched=new Set<string>();
-    if(presets.length&&a.ingredients) a={...a,ingredients:a.ingredients.map(i=>{const preset=matchFoodPreset(presets,i.name);if(!preset)return i;matched.add(preset.name);return {...i,foodId:null,nutrition:{source:'label' as const,basis:`个人常用食物：${preset.brand?preset.brand+' ':''}${preset.name}；每份 ${preset.servingGrams}g，按标签折算每100g`,per100g:foodPer100g(preset)}};})};
-    if(matched.size) a={...a,assumptions:[...a.assumptions,...[...matched].map(n=>`营养按常用食物“${n}”的标签数据计算。`)]};
+    if(a.ingredients){
+      const exclusions=new Set(old.analysis?.excludedIngredientIdentities??[]);
+      if(manualMeal){const incoming=new Set(a.ingredients.map(ingredientIdentity));for(const i of old.analysis?.ingredients??[])if(!incoming.has(ingredientIdentity(i)))exclusions.add(ingredientIdentity(i));for(const id of incoming)exclusions.delete(id);}
+      a={...a,excludedIngredientIdentities:[...exclusions],ingredients:prepareMealIngredients(this.catalog.resolveIngredients(a.ingredients),this.foodPresets(new Date(old.occurredAt)),{previous:old.analysis?.ingredients,manual:manualMeal,text:old.text,attachHashes:old.attachments.map(a=>a.sha256)}).filter(i=>!exclusions.has(ingredientIdentity(i)))};
+      const sourceNotes=a.ingredients!.filter(i=>i.nutrition?.provenance==='preset').map(i=>`营养按常用食物“${i.name}”的${i.nutrition?.source==='label'?'标签数据':'已保存的估算数据'}计算。`);
+      a={...a,assumptions:[...new Set([...a.assumptions.filter(note=>!/^营养按常用食物“.*”的(?:标签数据|已保存的估算数据)计算。$/.test(note)),...sourceNotes])].slice(0,20)};
+      if(old.kind==='meal')a={...a,questions:this.catalog.mealQuestions(a.ingredients!,a.questions)};
+    }
     const calc:Partial<ReturnType<FoodCatalog['calculate']>>=a.ingredients?this.catalog.calculate(a.ingredients):{};
     if(old.kind==='meal'&&engine!=='local'&&(!a.ingredients?.length||('unmatched' in calc&&calc.unmatched?.length)))throw new Error('本次分析没有为所有食材提供营养估算，原记录已保留，请重新分析。');
-    const proposed=(a.memories??[]).map(m=>memoryInputSchema.parse({kind:m.kind,text:m.text,startsAt:old.occurredAt,expiresAt:m.kind==='state'?(m.expiresAt??new Date(Date.parse(old.occurredAt)+7*86400000).toISOString()):null,sourceIds:[id],active:true,confirmed:false}));
+    const proposed=(a.memories??[]).map(m=>memoryInputSchema.parse({kind:m.kind,text:m.text,startsAt:old.occurredAt,expiresAt:m.kind==='state'?(m.expiresAt??new Date(Date.parse(old.occurredAt)+7*86400000).toISOString()):null,sourceIds:[id],evidence:[old.text.includes(m.text)?{quote:m.text,origin:'record',recordId:id,recordRevision:old.revision+1,at:old.occurredAt}:{quote:'',origin:'unknown'}],active:true,confirmed:false}));
     const analysis:Analysis=normalizeAnalysis({...a,...calc,engine,at:iso()},old.text,this.exerciseAliases(),this.exerciseRules());
     const r=this.commitRevision(old,{...old,analysis,status:old.kind==='meal'&&(!a.ingredients?.length||('unmatched' in calc&&calc.unmatched?.length))?'pending':a.questions.length?'needs_info':'ready'},{skipInvalidate:analysis.memoryReceipt?.map(m=>m.id)??[]});
     for(const m of proposed) this.saveMemory(m);
@@ -259,24 +277,72 @@ export class HealthStore {
   private invalidate(id:string,skip:Set<string>=new Set()) {
     for(const m of this.messages()) if(m.sources.some(s=>s.id===id)) this.putMessage({...m,stale:true});
     for(const m of this.memories()) if(!skip.has(m.id)&&m.sourceIds.includes(id)) this.db.prepare('UPDATE memories SET doc=? WHERE id=?').run(JSON.stringify({...m,stale:true}),m.id);
+    this.invalidateMemoryAnswers();
   }
   memories():Memory[] { return this.db.prepare('SELECT doc FROM memories').all().map(r=>parseJSON<Memory>(r.doc)); }
+  private migrateMemoryReliability(){
+    const groups=new Map<string,Memory[]>();
+    for(const old of this.memories()){
+      const m:Memory={...old,revision:old.revision??1,topicKey:memoryTopic(old.text,old.topicKey),evidence:old.evidence??[{quote:'',origin:'unknown'}]};
+      this.db.prepare('UPDATE memories SET doc=? WHERE id=?').run(JSON.stringify(m),m.id);
+      if(m.topicKey&&m.active&&!m.stale&&m.kind!=='food'){const key=`${m.kind}:${m.topicKey}:${m.subject??''}`;groups.set(key,[...(groups.get(key)??[]),m]);}
+    }
+    for(const group of groups.values())if(group.length>1){
+      group.sort((a,b)=>b.startsAt.localeCompare(a.startsAt));
+      for(const m of group.slice(1)){
+        this.db.prepare('INSERT INTO revisions(entity,id,doc,at) VALUES(?,?,?,?)').run('memory',m.id,JSON.stringify(m),iso());
+        this.db.prepare('UPDATE memories SET doc=? WHERE id=?').run(JSON.stringify({...m,active:false,autoManaged:false,revision:memoryRevision(m)+1,updatedAt:iso()}),m.id);
+      }
+    }
+  }
+  memoryHistory(id:string){
+    idSchema.parse(id);
+    return this.db.prepare("SELECT doc,at FROM revisions WHERE entity='memory' AND id=? ORDER BY seq DESC LIMIT 100").all(id).map(r=>({at:String(r.at),memory:parseJSON<Memory>(r.doc)}));
+  }
+  memoriesAt(at=new Date()):Memory[]{
+    return this.memories().flatMap(current=>{
+      if(current.stale)return [];
+      if(Math.max(Date.parse(current.startsAt),Date.parse(current.versionStartsAt??current.startsAt))<=+at&&(current.active||!current.updatedAt||Date.parse(current.updatedAt)<=+at))return [current];
+      const previous=this.memoryHistory(current.id).map(h=>h.memory).filter(m=>Math.max(Date.parse(m.startsAt),Date.parse(m.versionStartsAt??m.startsAt))<=+at).sort((a,b)=>memoryRevision(b)-memoryRevision(a))[0];
+      return previous?[previous]:[];
+    });
+  }
+  invalidateMemoryAnswers(changedId?:string){
+    const memories=this.memories(),now=new Date();
+    for(const m of this.messages()){
+      if(m.stale||m.role!=='assistant')continue;
+      const invalid=m.memoryDependency?.some(d=>{const current=memories.find(x=>x.id===d.id);return !current||!validMemory(current,now)||memoryRevision(current)!==d.revision||current.text!==d.text;});
+      const legacy=changedId&&!m.memoryDependency&&m.text.includes(`[记忆:${changedId}]`);
+      if(invalid||legacy)this.putMessage({...m,stale:true});
+    }
+  }
+  retiredMemoryMessageIds(){
+    const retired=new Set<string>();
+    const memories=this.memories(),ids=new Set(memories.map(m=>m.id));
+    for(const m of memories){
+      const current=new Set(validMemory(m)?m.evidence?.flatMap(e=>e.messageId?[e.messageId]:[])??m.sourceMessageIds?.slice(-1)??[]:[]);
+      for(const id of [...(m.sourceMessageIds??[]),...this.memoryHistory(m.id).flatMap(h=>h.memory.sourceMessageIds??[])])if(!current.has(id))retired.add(id);
+    }
+    // Tidy can remove an expired row, but its original conversation must remain retired.
+    for(const row of this.db.prepare("SELECT id,doc FROM revisions WHERE entity='memory'").all())if(!ids.has(String(row.id))){const m=parseJSON<Memory>(row.doc);for(const id of m.sourceMessageIds??[])retired.add(id);}
+    return retired;
+  }
   saveMemory(input:unknown,id?:string):Memory {
-    const p=memoryInputSchema.parse(input); if(p.kind==='fact'&&!p.confirmed) throw new Error('长期事实需要来自你的确认');
+    const p=memoryInputSchema.parse(input);if(p.kind==='fact'&&!p.confirmed)throw new Error('长期事实需要来自你的确认');p.topicKey=memoryTopic(p.text,p.topicKey);if(p.kind==='fact'&&/这周|本周|这几天|暂时/.test(p.text)){p.kind='state';p.expiresAt??=new Date(Date.parse(p.startsAt)+7*86400000).toISOString();} if(p.kind==='fact'&&!p.confirmed) throw new Error('长期事实需要来自你的确认');
     p.sourceIds.forEach(i=>this.record(i));
-    const all=this.memories();const old=id?all.find(m=>m.id===id):(p.topicKey?all.find(m=>m.topicKey===p.topicKey):undefined); if(id&&!old) throw new Error('未找到这条记忆');
+    const all=this.memories();const old=id?all.find(m=>m.id===id):(p.topicKey?all.find(m=>memoryTopic(m.text,m.topicKey)===p.topicKey&&m.subject===p.subject&&m.kind===p.kind):undefined); if(id&&!old) throw new Error('未找到这条记忆');
     if(p.kind==='food'){
       if(!p.food) throw new Error('常用食物需要名称、每份克数和营养数据');
       const name=normalizeFoodName(p.food.name);
-      if(all.some(m=>m.id!==old?.id&&m.kind==='food'&&m.food&&normalizeFoodName(m.food.name)===name)) throw new Error('已有同名常用食物，请直接编辑那一条。');
+      if(all.some(m=>m.id!==old?.id&&m.kind==='food'&&m.food&&foodProductId(m.food)===foodProductId(p.food!))) throw new Error('已有同名常用食物，请直接编辑那一条。');
     } else if(!old){
       const text=normalizeFoodName(p.text);
       if(all.some(m=>m.active&&!m.stale&&m.kind!=='food'&&m.autoManaged!==true&&normalizeFoodName(m.text)===text)) throw new Error('已有相同内容的记忆，无需重复添加。');
     }
     if(old) this.db.prepare('INSERT INTO revisions(entity,id,doc,at) VALUES(?,?,?,?)').run('memory',old.id,JSON.stringify(old),iso());
-    const m:Memory={...old,...p,id:old?.id??randomUUID(),stale:false,...(old?.autoKey?{autoManaged:false}: {})}; this.db.prepare('INSERT INTO memories VALUES(?,?) ON CONFLICT(id) DO UPDATE SET doc=excluded.doc').run(m.id,JSON.stringify(m)); return m;
+    const m:Memory={...old,...p,id:old?.id??randomUUID(),versionStartsAt:old&&p.startsAt===old.startsAt?iso():p.startsAt,revision:old?memoryRevision(old)+1:1,updatedAt:iso(),supersedesRevision:old?memoryRevision(old):undefined,evidence:p.evidence??(old?.text===p.text?old?.evidence:undefined)??[{quote:p.text,origin:'user',at:iso()}],stale:false,...(old?.autoKey?{autoManaged:false}: {})}; this.db.prepare('INSERT INTO memories VALUES(?,?) ON CONFLICT(id) DO UPDATE SET doc=excluded.doc').run(m.id,JSON.stringify(m));this.invalidateMemoryAnswers(m.id); return m;
   }
-  foodPresets():FoodPreset[]{return this.memories().filter(m=>m.kind==='food'&&m.food&&validMemory(m)).map(m=>m.food!);}
+  foodPresets(at=new Date()):FoodPreset[]{return this.memoriesAt(at).filter(m=>m.kind==='food'&&m.food&&validMemory(m,at)).map(m=>m.food!);}
   ignoredFoodCandidates():string[]{return (this.getConfig<string[]>('ignoredFoodCandidates')??[]).filter(x=>typeof x==='string');}
   ignoreFoodCandidate(value:unknown){
     const name=z.string().trim().min(1).max(80).parse(value),ignored=this.ignoredFoodCandidates();
@@ -430,7 +496,7 @@ export class HealthStore {
   }
   repairExerciseAliases(){const aliases=this.exerciseAliases();if(aliases.length)this.reclassifyExercises(aliases);}
   completeChat(reply:Message,changes:MemoryChange[],user:Message,expected:Memory[],expectedGoals:Settings['goals'],energyProposal?:{value:{kcal:number;reason:string};hash:string}) {
-    const updates=changes.map(c=>memoryChangeSchema.parse(c));const current=this.memories();
+    const updates=changes.map(c=>{const p=memoryChangeSchema.parse(c);return {...p,...(p.kind==='fact'&&p.operation==='upsert'&&/这周|本周|这几天|暂时/.test(p.evidenceQuote)?{kind:'state' as const}:{}),key:memoryTopic(p.text??p.evidenceQuote,p.key)!};});const current=this.memories();
     const changed:{id:string;before:Memory|null;after:Memory}[]=[];let goals={...expectedGoals};
     for(const c of updates){
       if(!user.text.includes(c.evidenceQuote))throw new Error('记忆更新缺少你的原话依据，未保存。');
@@ -444,18 +510,18 @@ export class HealthStore {
       if(!explicit&&!durableAuto&&!ephemeral)throw new Error('没有识别到可长期保存的信息或原话依据，未改动档案；可以说“记住：……”或补充更明确的说法。');
       if(c.kind==='food'){
         if(!c.food)throw new Error('常用食物需要名称、每份克数和四项营养，未保存。');
-        const foodNums=[c.food.servingGrams,c.food.perServing.kcal,c.food.perServing.protein,c.food.perServing.carbs,c.food.perServing.fat];
+        const foodNums=[labelBasisOf(c.food).quantity,c.food.perServing.kcal,c.food.perServing.protein,c.food.perServing.carbs,c.food.perServing.fat];
         const quoteNums=(c.evidenceQuote.match(/\d+(?:\.\d+)?/g)??[]).map(Number);
         if(foodNums.some(v=>!quoteNums.includes(v)))throw new Error('常用食物的数字必须来自你的原话，未保存。');
         if(!normalizeFoodName(c.evidenceQuote).includes(normalizeFoodName(c.food.name)))throw new Error('常用食物的名称必须来自你的原话，未保存。');
       }
-      const before=c.targetId?current.find(m=>m.id===c.targetId):(c.kind==='food'&&c.food?current.find(m=>m.kind==='food'&&m.food&&normalizeFoodName(m.food.name)===normalizeFoodName(c.food!.name)):undefined)??current.find(m=>m.topicKey===c.key);
+      const before=c.targetId?current.find(m=>m.id===c.targetId):(c.kind==='food'&&c.food?current.find(m=>m.kind==='food'&&m.food&&foodProductId(m.food)===foodProductId(c.food!)):undefined)??current.find(m=>memoryTopic(m.text,m.topicKey)===c.key&&m.kind===(c.kind??'fact')&&m.subject===c.subject);
       if(c.targetId&&!before)throw new Error('要更新的记忆已不存在。');
       if(before){const snapshot=expected.find(m=>m.id===before.id);if(!snapshot||JSON.stringify(snapshot)!==JSON.stringify(before))throw new Error('记忆在回答期间已变化，本次未覆盖，请重新提出修改。');}
-      if(changed.some(x=>x.id===before?.id||x.after.topicKey===c.key))throw new Error('同一条记忆收到重复更新，未保存。');
+      if(changed.some(x=>x.id===before?.id||x.after.topicKey===c.key&&x.after.subject===c.subject))throw new Error('同一条记忆收到重复更新，未保存。');
       if(c.operation==='deactivate'){
         if(!before)throw new Error('尚未找到要停用的记忆，请明确是哪一条。');
-        changed.push({id:before.id,before,after:{...before,active:false,autoManaged:false,sourceMessageIds:[...(before.sourceMessageIds??[]),user.id]}});continue;
+        changed.push({id:before.id,before,after:{...before,revision:memoryRevision(before)+1,updatedAt:iso(),active:false,autoManaged:false,sourceMessageIds:[...(before.sourceMessageIds??[]),user.id]}});continue;
       }
       if(c.split&&(c.key!=='training.split'||c.kind!=='fact'||!/分化|顺序|轮转|循环/.test(c.evidenceQuote)))throw new Error('训练顺序需要明确的顺序设置，未改动轮转。');
       if(!c.text&&c.kind!=='food')throw new Error('记忆内容为空，未保存。');
@@ -467,29 +533,41 @@ export class HealthStore {
       }
       const startsAt=user.createdAt,expiresAt=c.kind==='state'?(c.expiresAt??new Date(Date.parse(startsAt)+7*86400000).toISOString()):null;
       const checked=memoryInputSchema.parse({kind:c.kind??'fact',text,startsAt,expiresAt,sourceIds:[],active:true,confirmed:c.kind!=='hypothesis',...(c.food?{food:c.food}:{})});
-      const id=before?.id??randomUUID();const after:Memory={...before,...checked,id,topicKey:c.key,sourceMessageIds:[...(before?.sourceMessageIds??[]),user.id].slice(-20),autoManaged:false,stale:false,...(c.split?{policy:{split:c.split}}:{})};
+      const id=before?.id??randomUUID();const after:Memory={...before,...checked,id,subject:c.subject??before?.subject,versionStartsAt:user.createdAt,revision:before?memoryRevision(before)+1:1,updatedAt:iso(),supersedesRevision:before?memoryRevision(before):undefined,evidence:[{quote:c.evidenceQuote,origin:'user',messageId:user.id,at:user.createdAt}],topicKey:c.key,sourceMessageIds:[...(before?.sourceMessageIds??[]),user.id].slice(-20),autoManaged:false,stale:false,...(c.split?{policy:{split:c.split}}:{})};
       changed.push({id,before:before??null,after});
     }
     if(updates.some(c=>c.operation==='set_goal')&&JSON.stringify(this.getSettings().goals)!==JSON.stringify(expectedGoals))throw new Error('目标已在回答期间修改，本次未覆盖。');
     const receipt=changed.length?{changed,...(JSON.stringify(goals)!==JSON.stringify(expectedGoals)?{beforeGoals:expectedGoals,afterGoals:goals}:{})}:undefined;
     return this.transaction(()=>{
       for(const c of changed){if(c.before)this.db.prepare('INSERT INTO revisions(entity,id,doc,at) VALUES(?,?,?,?)').run('memory',c.id,JSON.stringify(c.before),iso());this.db.prepare('INSERT INTO memories VALUES(?,?) ON CONFLICT(id) DO UPDATE SET doc=excluded.doc').run(c.id,JSON.stringify(c.after));}
+      this.invalidateMemoryAnswers();
       if(receipt?.afterGoals)this.setSettings({...this.getSettings(),goals});
       const proposal=energyProposal?this.energy.createProposal(energyProposal.value,reply.id,energyProposal.hash):undefined;
-      const complete={...reply,memoryReceipt:receipt,...(proposal?{goalProposalId:proposal.id}:{})};this.putMessage(complete);return complete;
+      const complete={...reply,memoryDependency:reply.memoryDependency?.map(d=>{const updated=changed.find(c=>c.id===d.id);return updated?memoryDependency(updated.after):d;}),memoryReceipt:receipt,...(proposal?{goalProposalId:proposal.id}:{})};this.putMessage(complete);return complete;
     });
   }
   undoChatMemory(messageId:string){
     const message=this.messages().find(m=>m.id===messageId),receipt=message?.memoryReceipt;if(!message||!receipt||receipt.undone)throw new Error('这次记忆更新已撤销或不存在。');
-    for(const c of receipt.changed){const current=this.memories().find(m=>m.id===c.id);if(JSON.stringify(current)!==JSON.stringify(c.after))throw new Error('记忆已被后续更新，请在我的档案中修改，避免覆盖新内容。');}
+    for(const c of receipt.changed){const current=this.memories().find(m=>m.id===c.id);const effective=(value:Memory|undefined)=>{if(!value)return '';const {revision,updatedAt,supersedesRevision,versionStartsAt,...rest}=value;return JSON.stringify(rest);};if(effective(current)!==effective(c.after))throw new Error('记忆已被后续更新，请在我的档案中修改，避免覆盖新内容。');}
     if(receipt.afterGoals&&JSON.stringify(this.getSettings().goals)!==JSON.stringify(receipt.afterGoals))throw new Error('目标已有后续变化，请在我的档案中调整。');
-    return this.transaction(()=>{for(const c of receipt.changed){const restored=c.before??{...c.after,active:false};this.db.prepare('INSERT INTO revisions(entity,id,doc,at) VALUES(?,?,?,?)').run('memory',c.id,JSON.stringify(c.after),iso());this.db.prepare('UPDATE memories SET doc=? WHERE id=?').run(JSON.stringify(restored),c.id);}if(receipt.beforeGoals)this.setSettings({...this.getSettings(),goals:receipt.beforeGoals});this.putMessage({...message,memoryReceipt:{...receipt,undone:true}});});
+    return this.transaction(()=>{for(const c of receipt.changed){const restored={...(c.before??{...c.after,active:false}),revision:memoryRevision(c.after)+1,updatedAt:iso()};this.db.prepare('INSERT INTO revisions(entity,id,doc,at) VALUES(?,?,?,?)').run('memory',c.id,JSON.stringify(c.after),iso());this.db.prepare('UPDATE memories SET doc=? WHERE id=?').run(JSON.stringify(restored),c.id);}if(receipt.beforeGoals)this.setSettings({...this.getSettings(),goals:receipt.beforeGoals});this.invalidateMemoryAnswers();this.putMessage({...message,memoryReceipt:{...receipt,undone:true}});});
   }
   refreshAutomaticMemories() {
     const existing=this.memories(),drafts=automaticMemories(this.records()),keys=new Set(drafts.map(m=>m.autoKey));
-    const write=(m:Memory,old?:Memory)=>{if(old)this.db.prepare('INSERT INTO revisions(entity,id,doc,at) VALUES(?,?,?,?)').run('memory',old.id,JSON.stringify(old),iso());this.db.prepare('INSERT INTO memories VALUES(?,?) ON CONFLICT(id) DO UPDATE SET doc=excluded.doc').run(m.id,JSON.stringify(m));};
-    for(const draft of drafts){const old=existing.find(m=>m.autoKey===draft.autoKey);if(old&&old.autoManaged===false)continue;const next:Memory={...draft,id:old?.id??randomUUID(),stale:false};if(JSON.stringify(old)!==JSON.stringify(next))write(next,old);}
-    for(const old of existing)if(old.autoKey&&old.autoManaged!==false&&!keys.has(old.autoKey)&&!old.stale)write({...old,stale:true},old);
+    this.transaction(()=>{
+      for(const draft of drafts){
+        const old=this.memories().find(m=>m.autoKey===draft.autoKey)||(draft.topicKey?this.memories().find(m=>memoryTopic(m.text,m.topicKey)===draft.topicKey&&m.kind===draft.kind&&m.subject===draft.subject):undefined);
+        if(old&&old.autoManaged===false&&!(old.active&&draft.autoCategory==='preference'&&Date.parse(draft.startsAt)>Date.parse(old.versionStartsAt??old.startsAt)))continue;
+        const content={...old,...draft,id:old?.id??randomUUID(),stale:false};
+        const comparable=(m:Memory)=>{const {revision,updatedAt,supersedesRevision,...rest}=m;return rest;};
+        if(old&&JSON.stringify(comparable(old))===JSON.stringify(comparable(content)))continue;
+        if(old)this.db.prepare('INSERT INTO revisions(entity,id,doc,at) VALUES(?,?,?,?)').run('memory',old.id,JSON.stringify(old),iso());
+        const next:Memory={...content,revision:old?memoryRevision(old)+1:1,updatedAt:iso(),supersedesRevision:old?memoryRevision(old):undefined};
+        this.db.prepare('INSERT INTO memories VALUES(?,?) ON CONFLICT(id) DO UPDATE SET doc=excluded.doc').run(next.id,JSON.stringify(next));
+      }
+      for(const old of existing)if(old.autoKey&&old.autoManaged!==false&&!keys.has(old.autoKey)&&!old.stale){this.db.prepare('INSERT INTO revisions(entity,id,doc,at) VALUES(?,?,?,?)').run('memory',old.id,JSON.stringify(old),iso());this.db.prepare('UPDATE memories SET doc=? WHERE id=?').run(JSON.stringify({...old,stale:true,revision:memoryRevision(old)+1,updatedAt:iso()}),old.id);}
+      this.invalidateMemoryAnswers();
+    });
   }
   refreshPersonalization() {
     const corrections=this.records().filter(r=>!r.dateLocked&&!r.dateResolution).map(r=>({r,date:resolveRecordDate(r.text,r.capturedAt??r.occurredAt,r.timezone)})).filter(x=>x.date&&(x.date.dateOnly?localDay(x.date.occurredAt,x.r.timezone)!==localDay(x.r.occurredAt,x.r.timezone):x.date.occurredAt!==x.r.occurredAt));
@@ -512,50 +590,14 @@ export class HealthStore {
   finishUsage(id:string,input:number,output:number,cost:number,state='complete') { this.db.prepare('UPDATE usage SET input=?,output=?,cost=?,state=? WHERE id=?').run(input,output,cost,state,id); }
   failUsage(id:string) { this.db.prepare("UPDATE usage SET state='uncertain' WHERE id=?").run(id); }
   // 检索分层：只把与用途/问题相关的记忆带进模型上下文；长期事实永远保留。
-  memoryContext(purpose:'chat'|'weekly'|'memory'|'meal'|'training',query:string){
-    const all=this.memories().filter(m=>validMemory(m));
-    const facts=all.filter(m=>m.kind==='fact'),states=all.filter(m=>m.kind==='state'),foods=all.filter(m=>m.kind==='food'),refs=all.filter(m=>m.autoCategory==='training'),templates=all.filter(m=>m.autoCategory==='meal');
-    const compact=(s:string)=>s.replace(/[^\p{L}\p{N}]+/gu,''),grams=(s:string)=>{const c=compact(s),out=new Set<string>();for(const n of [2,3,4])for(let i=0;i+n<=c.length;i++)out.add(c.slice(i,i+n));return [...out];};
-    const queryGrams=grams(query),hits=(text:string)=>queryGrams.some(g=>compact(text).includes(g));
-    const exerciseName=(text:string)=>text.split('：')[0].trim(),latestDate=(text:string)=>(text.match(/20\d{2}-\d{2}-\d{2}/g)??[]).sort().at(-1)??'';
-    const picked:{m:Memory;reason:string}[]=[],add=(m:Memory,reason:string)=>{if(!picked.some(p=>p.m.id===m.id))picked.push({m,reason});};
-    const budget=purpose==='weekly'?1600:purpose==='meal'?1200:purpose==='training'?2000:purpose==='memory'?2400:800;
-    if(purpose==='meal'){
-      for(const f of facts)if(/吃|餐|食|蛋白|补剂/.test(f.text)||/^(eating|profile\.eating|recording)\./.test(f.topicKey??''))add(f,'饮食相关长期事实');
-      for(const f of foods)add(f,'常用食物');
-      for(const t of templates)if(t.mealTemplate?.some(i=>hits(i.name)))add(t,'命中常吃餐食');
-    }else if(purpose==='training'){
-      for(const f of facts)if(!/吃|餐|食/.test(f.text))add(f,'长期事实');
-      for(const r of refs){const name=exerciseName(r.text);if(hits(name))add(r,'命中动作参照');}
-    }else if(purpose==='weekly'){
-      for(const f of facts)add(f,'长期事实');
-      const weekStart=new Date(Date.now()-7*86400000).toISOString().slice(0,10);
-      for(const r of refs)if(latestDate(r.text)>=weekStart)add(r,'本周练过的动作');
-      for(const s of states.slice(-2))add(s,'近期状态');
-    }else{
-      for(const f of facts)add(f,'长期事实');
-      for(const f of foods)if(hits(`${f.food?.name??''} ${f.food?.brand??''}`))add(f,'命中常用食物');
-      const exactRefs=refs.filter(r=>query.includes(exerciseName(r.text))||compact(query).includes(compact(exerciseName(r.text))));
-      for(const r of exactRefs)add(r,'精确命中动作');
-      // 宽泛动作词（如“卧推”）不把三头类复合动作带进来，避免回答被无关动作干扰。
-      const tricepsQuery=/窄距|碎颅|臂屈伸|三头/.test(query);
-      const weakRefs=refs.filter(r=>!exactRefs.includes(r)&&!exerciseName(r.text).includes('接')&&(tricepsQuery||!/窄距|碎颅|臂屈伸|三头/.test(exerciseName(r.text)))&&hits(exerciseName(r.text))).sort((a,b)=>latestDate(b.text).localeCompare(latestDate(a.text))).slice(0,3);
-      for(const r of weakRefs)add(r,'相关动作参照');
-      // 明确问“训练/参照/练得怎么样”但没点名具体动作时，带上最近几次训练参照。
-      const trainingIntent=/训练|动作|重量|参照|组次|练|健身|进步|退步|RPE|RIR/.test(query);
-      if(!exactRefs.length&&!weakRefs.length&&trainingIntent)for(const r of [...refs].sort((a,b)=>latestDate(b.text).localeCompare(latestDate(a.text))).slice(0,4))add(r,'训练意图相关参照');
-      const stateish=/睡|累|精力|状态|感觉|饿|饱|吃|餐/.test(query);
-      for(const s of states){const t=s.text;if(stateish&&(/睡/.test(t)||/餐|吃|饱/.test(t)||/精力|累/.test(t)))add(s,'与问题相关的近期状态');}
-    }
-    const ordered=[...picked.filter(p=>/长期事实|饮食相关/.test(p.reason)),...picked.filter(p=>!/长期事实|饮食相关/.test(p.reason))];
-    const items:Memory[]=[];let chars=0,omitted=0,omittedChars=0;
-    for(const {m,reason} of ordered){const size=(m.text??'').length,always=/长期事实|饮食相关/.test(reason);if(chars+size>budget&&!always){omitted++;omittedChars+=size;continue;}items.push(m);chars+=size;}
-    return {items,chars,omitted,omittedChars,budget};
+  memoryContext(purpose:MemoryPurpose,query:string,at=new Date()){
+    return selectMemories(this.memoriesAt(at),purpose,query,at);
   }
   context(question:string,purpose:'chat'|'weekly'|'memory'='chat') {
     const all=this.records(); const now=Date.now(); const long=/全部|所有|历史|长期|半年|一年/.test(question);
     const days=/月/.test(question)?90:35; const keywords=question.split(/[，。！？\s]+/).filter(s=>s.length>1);
-    const selection=this.memoryContext(purpose,question),memories=selection.items,memoryIds=new Set([...memories.flatMap(m=>m.sourceIds),...[...question.matchAll(/\[记录:([a-zA-Z0-9_-]+)\]/g)].map(m=>m[1])]);
+    const dated=question.match(/\b20\d{2}-\d{2}-\d{2}\b/)?.[0],requestedAt=dated?new Date(dated+'T12:00:00+08:00'):new Date();
+    const selection=this.memoryContext(purpose,question,Number.isFinite(+requestedAt)&&+requestedAt<=now?requestedAt:new Date()),memories=selection.items,memoryIds=new Set([...memories.flatMap(m=>m.sourceIds),...[...question.matchAll(/\[记录:([a-zA-Z0-9_-]+)\]/g)].map(m=>m[1])]);
     const recent=all.filter(r=>long||Date.parse(r.occurredAt)>=now-days*86400000||keywords.some(k=>r.text.includes(k)));
     const relevant=[...new Map([...all.filter(r=>memoryIds.has(r.id)).slice(0,60),...recent].map(r=>[r.id,r])).values()].slice(0,160).sort((a,b)=>Date.parse(b.occurredAt)-Date.parse(a.occurredAt));
     return {goals:this.getSettings().goals,memories,weekly:weeklyContext(all,this.getSettings().timezone,new Date(),this.trainingSplit()),stats:computeStats(relevant,this.getSettings().timezone,{rules:this.exerciseRules()}),records:relevant.map(r=>({id:r.id,revision:r.revision,kind:r.kind,occurredAt:r.occurredAt,timeSource:r.timeSource,dateResolution:r.dateResolution,text:r.text.slice(0,4000),body:r.body,status:r.status,analysis:r.analysis})),coverage:{allRecords:all.length,included:relevant.length,earliest:relevant.at(-1)?.occurredAt,latest:relevant[0]?.occurredAt,scope:long?'历史记录（最多 160 条）':`最近 ${days} 天及关键词匹配记录（最多 160 条）`},memoryCoverage:{included:selection.items.length,omitted:selection.omitted,chars:selection.chars,budget:selection.budget}};
@@ -565,11 +607,11 @@ export class HealthStore {
     const tables:Record<string,unknown[]>={}; for(const name of ['records','revisions','memories','messages','usage']) tables[name]=this.db.prepare(`SELECT * FROM ${name}`).all();
     const files:{path:string;sha256:string;base64:string}[]=[];
     for(const r of this.records(true)) { for(const a of r.attachments) { const data=readFileSync(safePath(this.root,a.file)); files.push({path:a.file,sha256:sha256(data),base64:data.toString('base64')}); } const raw=`raw/${r.id}.json`; if(existsSync(safePath(this.root,raw))) {const data=readFileSync(safePath(this.root,raw));files.push({path:raw,sha256:sha256(data),base64:data.toString('base64')});} }
-    return {format:'bodyjournal-backup',version:this.energy?(Number(this.db.prepare('PRAGMA user_version').get()?.user_version)===2?2:3):1,createdAt:iso(),coachProfile:this.coachProfile(),exerciseAliases:this.exerciseAliases(),settings:this.getSettings(),tables,files,energy:this.energy?.export()};
+    return {format:'bodyjournal-backup',version:this.energy?(Number(this.db.prepare('PRAGMA user_version').get()?.user_version)===2?2:Number(this.db.prepare('PRAGMA user_version').get()?.user_version)>=4?4:3):1,createdAt:iso(),coachProfile:this.coachProfile(),exerciseAliases:this.exerciseAliases(),settings:this.getSettings(),tables,files,energy:this.energy?.export()};
   }
   backup(file:string) { const data=JSON.stringify(this.exportBundle());if(Buffer.byteLength(data)>512*1024*1024)throw new Error('此档案超过首版完整备份的 512 MB 上限，请使用可读导出保存资料。');atomicWrite(file,data); }
   restore(bundle:unknown) {
-    const b=bundle as ReturnType<HealthStore['exportBundle']>; if(!b||b.format!=='bodyjournal-backup'||![1,2,3].includes(b.version)||!Array.isArray(b.files)||!b.tables) throw new Error('备份格式不支持');
+    const b=bundle as ReturnType<HealthStore['exportBundle']>; if(!b||b.format!=='bodyjournal-backup'||![1,2,3,4].includes(b.version)||!Array.isArray(b.files)||!b.tables) throw new Error('备份格式不支持');
     const energyData=this.energy.validateBackup(b.version>=2?b.energy:{profiles:[],targets:[],days:[],proposals:[]});
     const profile=b.coachProfile?coachProfileSchema.parse(b.coachProfile):undefined;const aliases=b.exerciseAliases?z.array(z.object({raw:z.string().max(200),name:z.string().min(1).max(100)})).max(1000).parse(b.exerciseAliases):undefined;
     const settings=settingsSchema.parse(b.settings); settings.inbox=this.getSettings().inbox;
@@ -582,7 +624,7 @@ export class HealthStore {
     const rows=b.tables.records as {id:string;doc:string;fingerprint:string}[];
     if(!Array.isArray(rows)||rows.length>100000) throw new Error('备份记录无效');
     for(const row of rows) { const r=parseJSON<HealthRecord>(row.doc); if(r.id!==row.id||!Number.isInteger(r.revision)||r.revision<1) throw new Error('备份记录不一致'); envelopeSchema.parse({version:1,...r,body:r.body??undefined,attachments:[]}); if(r.analysis) analysisSchema.parse(r.analysis); for(const a of r.attachments) {const f=files.get(a.file);if(!f||sha256(f.data)!==a.sha256) throw new Error('备份缺少附件');sniffImage(f.data);} }
-    for(const row of b.tables.memories as {id:string;doc:string}[]) { const m=parseJSON<Memory>(row.doc); idSchema.parse(m.id); memoryInputSchema.parse(m); }
+    for(const row of b.tables.memories as {id:string;doc:string}[]) { const m=parseJSON<Memory>(row.doc); idSchema.parse(m.id);if(m.id!==row.id)throw new Error('备份记忆编号不一致'); memoryInputSchema.parse(m); }
     for(const row of b.tables.messages as {id:string;doc:string}[]) { const m=parseJSON<Message>(row.doc); idSchema.parse(m.id); if(!['user','assistant'].includes(m.role)||!Array.isArray(m.sources)||typeof m.text!=='string') throw new Error('备份对话损坏'); }
     const safety=path.join(this.root,'backups',`before-restore-${Date.now()}.bodyjournal`); this.backup(safety);
     for(const s of staged) atomicWrite(s.file,s.data);
@@ -595,6 +637,7 @@ export class HealthStore {
       this.energy.restore(energyData);this.energy.mirroring=true;try{this.setSettings(settings);}finally{this.energy.mirroring=false;}
       if(b.version===1&&settings.goals.kcal!==null)this.energy.importManualTarget(settings.goals.kcal,settings.goals.protein);
       this.energy.syncTarget();this.energy.invalidate();if(profile)this.saveCoachProfile(profile);if(aliases)this.setConfig('exerciseAliases',aliases);
+      this.migrateMemoryReliability();if(b.version<4)this.energy.migrateFixedBaselines();this.invalidateMemoryAnswers();
       this.setConfig('energyParsingV1',false);
       this.setConfig('conversationStart','');
     });this.migrateEnergyParsing(); return safety;

@@ -51,6 +51,17 @@ try{
   },today);
   await expect.poll(()=>page.evaluate(async()=>(await window.health.invoke('energy:get')).selected.workouts[0]?.method)).toBe('app-active');
   await expect(page.locator('.energy-breakdown').getByText('App 报告',{exact:true})).toBeVisible();
+  await page.getByText('运动来源对照',{exact:true}).click();
+  await expect(page.locator('.energy-source-comparison')).toContainText('采用：App 扣重后');
+  await expect(page.locator('.energy-source-comparison')).toContainText('对照：平地 MET 公式');
+  const compared=await page.evaluate(async()=>(await window.health.invoke('energy:get')).selected.workouts[0]);
+  if(compared.comparison?.selected!=='app'||!compared.comparison.formula)throw new Error('App and formula comparison was missing');
+  await page.locator('.energy-source-comparison').screenshot({path:'/tmp/bodyjournal-energy-source-comparison.png'});
+  await page.setViewportSize({width:860,height:700});
+  await page.locator('.energy-source-comparison').scrollIntoViewIfNeeded();
+  if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw new Error('Source comparison overflows at 860px');
+  await page.locator('.energy-source-comparison').screenshot({path:'/tmp/bodyjournal-energy-source-comparison-compact.png'});
+  await page.setViewportSize({width:1300,height:900});
   await page.locator('.energy-breakdown').getByRole('button',{name:'跑步',exact:true}).click();
   modal=page.getByRole('dialog');
   await modal.getByRole('button',{name:'核对 / 更正活动数据',exact:true}).click();
@@ -67,6 +78,8 @@ try{
   await modal.getByRole('button',{name:'关闭',exact:true}).click();
   await expect.poll(()=>page.evaluate(async()=>(await window.health.invoke('energy:get')).selected.workouts[0]?.method)).toBe('met');
   await expect(page.locator('.energy-breakdown').getByText('公式估算',{exact:true})).toBeVisible();
+  await expect(page.locator('.energy-source-comparison')).toContainText('采用：平地 MET 公式');
+  await expect(page.locator('.energy-source-comparison')).toContainText('口径未知，不能计算');
 
   const duplicateId=await page.evaluate(async date=>{
     const r=await window.health.invoke('record:create',{kind:'training',text:'合成测试疑似重复跑步',occurredAt:date+'T18:01:00+08:00',dateLocked:true,attachmentTokens:[]});
@@ -122,7 +135,7 @@ try{
   if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw new Error('Energy v3 page overflows at 860px');
   await page.screenshot({path:'/tmp/bodyjournal-energy-v3-compact.png'});
   if(errors.length)throw new Error(errors.join('\n'));
-  console.log('Energy v3 UI passed: reference/stride setup, duration-only strength correction, signed step correction, partial-day fallback, App/unknown calorie fields, persistent manual corrections, duplicate exclusion/distinct-session confirmation, and extraction failure retry without duplicate creation.');
+  console.log('Energy activity UI passed: reference/stride setup, duration-only strength correction, signed step correction, partial-day fallback, App/formula comparison and unknown-label source selection, compact comparison layout, persistent manual corrections, duplicate exclusion/distinct-session confirmation, and extraction failure retry without duplicate creation.');
 }finally{
   if(app)await app.close().catch(()=>{});
   rmSync(vault,{recursive:true,force:true});

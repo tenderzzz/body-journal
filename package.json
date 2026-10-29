@@ -1,7 +1,7 @@
 {
   "name": "personal-health-assistant",
   "productName": "身体手记",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.cjs",
@@ -21,11 +21,14 @@
     "build": "tsc --noEmit && vite build && node scripts/build.mjs",
     "start": "electron .",
     "test": "node --import tsx --test tests/*.test.ts",
+    "evaluate": "node scripts/evaluate.mjs",
     "test:ui": "node scripts/smoke.mjs",
     "package": "npm run build && node scripts/package.mjs",
     "test:energy-ui": "node scripts/energy-smoke.mjs",
     "test:activity-ui": "node scripts/activity-energy-smoke.mjs",
-    "test:steps-ui": "node scripts/steps-confirmation-smoke.mjs"
+    "test:steps-ui": "node scripts/steps-confirmation-smoke.mjs",
+    "test:nutrition-ui": "node scripts/nutrition-smoke.mjs",
+    "test:v05-ui": "node scripts/v05-smoke.mjs"
   },
   "dependencies": {
     "jose": "^6.1.0",

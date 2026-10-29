@@ -39,23 +39,28 @@ test('reported running steps win; conflicting moving time cannot be used for cad
  const d=save(s,10000);assert.equal(d.walking?.pending,'overlap');assert.equal(d.walking?.correction,null);
  assert.equal(d.activityComplete,false);
 });
-test('seven preceding confirmed days supply a reference, no future leakage, and history edits invalidate answers',t=>{
+test('seven preceding confirmed days suggest a reference, explicit profile save fixes it, and history edits invalidate answers',t=>{
  const s=setup(t);let sourceId='';
  for(let i=0;i<7;i++){
   const day=`2026-10-${20+i}`;
   if(i===3){const r=s.importEnvelope({version:1,id:'historical-steps',kind:'note',occurredAt:day+'T21:00:00+08:00',timezone:'Asia/Shanghai',text:'全天步数 4000步'}).record;sourceId=r.id;s.energy.saveDay({date:day,mealComplete:false,activityComplete:true},now);}
   else save(s,[1000,2000,3000,4000,5000,6000,10000][i],day);
  }
- const d=save(s,12000);assert.equal(d.walking?.reference?.method,'history');assert.equal(d.walking?.referenceSteps,4000);
+ assert.equal(s.energy.view({date},now).suggestedUsualSteps,4000);
+ assert.equal(save(s,12000).walking?.reference?.method,'assumed');
+ s.energy.saveProfile({...profile,effectiveDate:date},now);
+ const d=s.energy.day(date);assert.equal(d.walking?.reference?.method,'history');assert.equal(d.walking?.referenceSteps,4000);
  assert.equal(d.walking?.reference?.dates.length,7);assert.ok(d.sources.some(r=>r.id===sourceId));
  assert.equal(s.energy.day('2026-10-26').walking?.reference?.method,'assumed');
  const dependency={from:date,to:date,hash:s.energy.hash(date,date)};
  s.putMessage({id:'history-answer',role:'assistant',text:'合成回答',createdAt:now.toISOString(),status:'complete',sources:[],provider:'local',stale:false,energyDependency:dependency});
  s.updateActivity({id:sourceId,revision:s.record(sourceId).revision,dailyActivity:{steps:4500}});
- assert.equal(s.energy.day(date).walking?.reference?.method,'assumed');
+ assert.equal(s.energy.day(date).walking?.referenceSteps,4000);
+ assert.match(s.energy.day(date).assumptions.join(' '),/来源已有修订/);
  assert.equal(s.messages().find(m=>m.id==='history-answer')?.stale,true);
  s.energy.saveDay({date:'2026-10-23',mealComplete:false,activityComplete:true},now);
- assert.equal(s.energy.day(date).walking?.referenceSteps,4500);
- s.energy.saveProfile({...profile,usualSteps:7000},now);
+ assert.equal(s.energy.day(date).walking?.referenceSteps,4000);
+ assert.equal(s.energy.view({date},now).suggestedUsualSteps,4500);
+ s.energy.saveProfile({...profile,effectiveDate:date,usualSteps:7000},now);
  assert.equal(s.energy.day(date).walking?.reference?.method,'manual');assert.equal(s.energy.day(date).walking?.referenceSteps,7000);
 });

@@ -7,7 +7,7 @@ export const kindNames={meal:'记一餐',training:'记训练',body:'记身体',n
 export const fmtDate=(iso:string,detail=false)=>new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',month:'numeric',day:'numeric',...(detail?{hour:'2-digit',minute:'2-digit'} as const:{})}).format(new Date(iso));
 export const localInput=(date=new Date())=>{const d=new Date(date.valueOf()-date.getTimezoneOffset()*60000);return d.toISOString().slice(0,16);};
 export const range=(v:{low:number;high:number}|null|undefined,precision=0)=>v?`${v.low.toFixed(precision)}–${v.high.toFixed(precision)}`:'未估算';
-export const nutritionSource=(i:Ingredient)=>i.nutrition?(i.nutrition.source==='label'?'包装标示':'估算已计入'):i.foodId?`食材库 FDC ${i.foodId}`:'待补全估算';
+export const nutritionSource=(i:Ingredient)=>i.excludedFromTotal?'已在整道菜中计入':i.nutrition?(i.nutrition.source==='label'?'包装标示': '同类食物估算'):i.foodId?`食材库 FDC ${i.foodId}`:'待补全估算';
 export function IconBadge({kind}:{kind:RecordKind}){const {Icon,className}=kinds[kind];return <span className={`icon-badge ${className}`}><Icon size={18}/></span>;}
 export function Status({record:r}:{record:HealthRecord}){return <span className={`status ${r.deleted?'muted':r.status}`}>{r.deleted?'已移除':r.status==='pending'?'待分析':r.status==='needs_info'?'待补充':'已整理'}</span>;}
 export function Modal({title,children,onClose,wide=false}:{title:string;children:ReactNode;onClose:()=>void;wide?:boolean}){
