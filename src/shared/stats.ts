@@ -21,7 +21,7 @@ export function computeStats(records:HealthRecord[], zone='Asia/Shanghai', optio
   return { trainingParts:byPart,trainingDetails:completed.map(r=>({id:r.id,date:localDay(r.occurredAt,zone),...r.analysis?.training,workSets:workSetCount(r.analysis?.sets??[]),totalReps:(r.analysis?.sets??[]).filter(s=>s.setType!=='warmup').reduce((n,s)=>n+s.sets*s.reps,0)})),measurements, exercises:Object.fromEntries(exercises), nutrition:[...daily.values()], recordCount:active.length, pending:active.filter(r=>r.status!=='ready').length, trainingSessions:active.filter(r=>r.kind==='training'&&(r.analysis?.sets?.length??0)>0&&(r.analysis?.training??inferSession(r.text,r.analysis?.sets)).completion==='completed').length, runs:active.filter(r=>r.analysis?.run&&runCompletion(r)==='completed').map(r=>({id:r.id,date:localDay(r.occurredAt,zone),...r.analysis!.run!})) };
 }
 
-export function needsAnalysis(r:HealthRecord){return r.status==='pending'||(r.kind==='meal'&&!!r.analysis?.unmatched?.length);}
+export function needsAnalysis(r:HealthRecord){return !r.deleted&&r.kind!=='body'&&(!!r.analysisPending||r.status==='pending'||(r.kind==='meal'&&!!r.analysis?.unmatched?.length)||(r.status==='needs_info'&&r.analysis?.engine==='local'&&r.analysisPending===undefined));}
 
 export function recentRecordDays(records:HealthRecord[],zone='Asia/Shanghai',now=new Date()) {
  const today=localDay(now.toISOString(),zone);

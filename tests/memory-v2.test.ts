@@ -8,9 +8,10 @@ import { HealthStore } from '../electron/core/store';
 import { FoodCatalog } from '../electron/core/nutrition';
 import { AssistantService } from '../electron/ai/service';
 import type { ChatGPTAuth, SecretStorage } from '../electron/ai/auth';
-import type { Analysis } from '../src/shared/types';
+import type { Analysis, HealthRecord } from '../src/shared/types';
 import { matchFoodPreset } from '../src/shared/food';
 
+function withoutAnalysisJob(record:HealthRecord){const {analysisPending,analysisError,analysisAttemptedRevision,...content}=record;return content;}
 const now=()=>new Date().toISOString();
 const preset=(over:Record<string,unknown>={})=>({name:'测试蛋白粉',brand:'ExampleWhey 巧克力味',servingGrams:30,perServing:{kcal:120,protein:24,carbs:3,fat:1.5},...over});
 function setup(t:test.TestContext){
@@ -147,7 +148,7 @@ test('ordinary meal model response without summary remains rejected and leaves t
  for(const summary of [undefined,null,42]){
   globalThis.fetch=async()=>sse({summary,ingredients:syntheticCopyIngredients(),questions:[],assumptions:[]});
   await assert.rejects(()=>svc.analyze([target.id]),error=>error instanceof Error&&/summary/.test(error.message));
-  assert.deepEqual(store.record(target.id),before);assert.equal(store.history(target.id).length,0);assert.equal(target.status,'pending');
+  assert.deepEqual(withoutAnalysisJob(store.record(target.id)),withoutAnalysisJob(before));assert.equal(store.record(target.id).analysisPending,true);assert.match(store.record(target.id).analysisError??'',/summary/);assert.equal(store.history(target.id).length,0);assert.equal(target.status,'pending');
  }
 });
 
@@ -162,7 +163,7 @@ test('invalid copy-only meal references are rejected without changing the pendin
  globalThis.fetch=async()=>sse({copyFromRecordId:sourceId});
  for(const [label,id] of [['malformed','bad?'],['missing','missing-record-id'],['self',target.id],['non-meal',training.id],['deleted',removed.id],['unanalyzed',unanalyzed.id]]){
   sourceId=id;await assert.rejects(()=>svc.analyze([target.id]));
-  assert.deepEqual(store.record(target.id),before,label);assert.equal(store.history(target.id).length,0,label);
+  assert.deepEqual(withoutAnalysisJob(store.record(target.id)),withoutAnalysisJob(before),label);assert.equal(store.record(target.id).analysisPending,true);assert.ok(store.record(target.id).analysisError);assert.equal(store.history(target.id).length,0,label);
  }
 });
 

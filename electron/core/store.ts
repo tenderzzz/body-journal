@@ -10,12 +10,13 @@ import { computeStats, validMemory, localDay } from '../../src/shared/stats';
 import { z } from 'zod';
 import { resolveRecordDate } from './dates';
 import { automaticMemories } from './personalization';
-import { normalizeAnalysis, DEFAULT_SPLIT, inferSession, type ExerciseAlias } from '../../src/shared/exercises';
+import { normalizeAnalysis, DEFAULT_SPLIT, inferSession, strengthDurationMinutes, type ExerciseAlias } from '../../src/shared/exercises';
 import { foodPer100g, foodText, matchFoodPreset, normalizeFoodName,prepareMealIngredients,labelBasisOf,foodProductId,ingredientIdentity } from '../../src/shared/food';
 import { mealLabel, mealSlot } from '../../src/shared/meals';
 import { DEFAULT_COACH, weeklyContext } from './coaching';
 import { EnergyStore } from './energy-store';
 import {normalizeModelOutput} from '../ai/model-output';
+import {detectTrainingNotation,mergeTrainingNotation,type TrainingNotation} from './training-notation';
 import {memoryTopic,memoryRevision,memoryDependency,selectMemories,type MemoryPurpose} from './memory';
 
 export function sha256(data:Buffer|string) { return createHash('sha256').update(data).digest('hex'); }
@@ -43,6 +44,7 @@ function withActivityOverrides<T extends Pick<Analysis,'run'|'training'|'dailyAc
   }
   return next;
 }
+const recordProgressSchema=z.object({analysisPending:z.boolean().optional(),analysisError:z.string().max(2000).optional(),analysisAttemptedRevision:z.number().int().positive().optional(),followups:z.array(z.object({answer:z.string().min(1).max(10000),questions:z.array(z.string().max(500)).max(2),at:z.iso.datetime({offset:true}),previousAnalysis:analysisSchema.pick({questions:true,training:true,sets:true,run:true}).optional()})).max(30).optional()});
 export class HealthStore {
   db: DatabaseSync;
   energy!:EnergyStore;
@@ -79,6 +81,32 @@ export class HealthStore {
     this.energy.syncTarget();this.energy.invalidate();
   }
   close() { this.db.close(); }
+  private trainingNotation(text:string,at:string):TrainingNotation{
+    const remembered=this.memoriesAt(new Date(at)).filter(m=>m.kind==='fact'&&m.confirmed&&validMemory(m,new Date(at))&&/^recording\./.test(m.topicKey??''))
+      .sort((a,b)=>a.startsAt.localeCompare(b.startsAt)).reduce((result,m)=>({...result,...detectTrainingNotation(m.text)}),{} as TrainingNotation);
+    return {...remembered,...detectTrainingNotation(text)};
+  }
+  private localStatus(record:Pick<HealthRecord,'kind'|'text'|'body'>,at:string){return localRecordStatus(record,this.trainingNotation(record.text,at));}
+  markAnalysisStarted(id:string,sourceRevision:number){
+    const r=this.record(id);if(r.deleted||r.revision!==sourceRevision)return;
+    this.db.prepare('UPDATE records SET doc=? WHERE id=?').run(JSON.stringify({...r,analysisPending:true,analysisError:undefined,analysisAttemptedRevision:sourceRevision}),id);
+  }
+  markAnalysisFailure(id:string,sourceRevision:number,error:string){
+    const r=this.record(id);if(r.deleted||r.revision!==sourceRevision)return;
+    this.db.prepare('UPDATE records SET doc=? WHERE id=?').run(JSON.stringify({...r,analysisPending:true,analysisError:error.slice(0,2000),analysisAttemptedRevision:sourceRevision}),id);
+  }
+  migrateTrainingNotationParsing(){
+    if(this.getConfig<boolean>('trainingNotationParsingV1'))return 0;
+    this.refreshAutomaticMemories();
+    const changes=this.records().filter(r=>r.kind==='training'&&r.status==='needs_info'&&r.analysis?.engine==='local').flatMap(r=>{
+      const notation=this.trainingNotation(r.text,r.occurredAt);if(!Object.keys(notation).length)return [];
+      const parsed=this.localStatus(r,r.occurredAt);
+      return parsed.analysis&&((parsed.analysis.questions.length<(r.analysis?.questions.length??0))||(parsed.analysis.sets?.length??0)>(r.analysis?.sets?.length??0))?[{r,parsed}]:[];
+    });
+    if(changes.length)this.backup(path.join(this.root,'backups',`before-training-notation-${Date.now()}.bodyjournal`));
+    this.transaction(()=>{for(const {r,parsed} of changes)this.commitRevision(r,{...r,analysis:parsed.analysis,status:parsed.status,analysisPending:parsed.status!=='ready',analysisError:undefined});this.setConfig('trainingNotationParsingV1',true);});
+    return changes.length;
+  }
   migrateEnergyParsing(){
     if(this.getConfig<boolean>('energyParsingV1'))return 0;
     const corrections=this.records().flatMap(r=>{
@@ -124,10 +152,10 @@ export class HealthStore {
       prepared.push({attachment:{name:path.basename(img.name),mime,sha256:hash,file},data});
     }
     let body=e.body??(e.kind==='body'?parseBody(e.text):null); if(body) body=bodySchema.parse(body);
-    const parsed=localRecordStatus({kind:e.kind,text:e.text,body});if(parsed.analysis)parsed.analysis=normalizeAnalysis(parsed.analysis,e.text,this.exerciseAliases(),this.exerciseRules());
+    const parsed=this.localStatus({kind:e.kind,text:e.text,body},e.occurredAt);if(parsed.analysis)parsed.analysis=normalizeAnalysis(parsed.analysis,e.text,this.exerciseAliases(),this.exerciseRules());
     if(parsed.analysis) analysisSchema.parse(parsed.analysis);
     const resolved=e.dateLocked?null:resolveRecordDate(e.text,e.occurredAt,e.timezone);
-    const r:HealthRecord={id:e.id,kind:e.kind,occurredAt:resolved?.occurredAt??e.occurredAt,capturedAt:e.occurredAt,dateLocked:e.dateLocked,...(resolved?{dateResolution:{originalAt:e.occurredAt,matchedText:resolved.matchedText,dateOnly:resolved.dateOnly}}:{}),...(recoveredTime&&!resolved?{timeSource:'file_modified' as const}:{}),timezone:e.timezone,text:e.text,attachments:prepared.map(p=>p.attachment),body,analysis:parsed.analysis,status:parsed.status,revision:1,createdAt:iso(),updatedAt:iso(),deleted:false,source};
+    const r:HealthRecord={id:e.id,kind:e.kind,occurredAt:resolved?.occurredAt??e.occurredAt,capturedAt:e.occurredAt,dateLocked:e.dateLocked,...(resolved?{dateResolution:{originalAt:e.occurredAt,matchedText:resolved.matchedText,dateOnly:resolved.dateOnly}}:{}),...(recoveredTime&&!resolved?{timeSource:'file_modified' as const}:{}),timezone:e.timezone,text:e.text,attachments:prepared.map(p=>p.attachment),body,analysis:parsed.analysis,status:parsed.status,analysisPending:e.kind!=='body'&&(parsed.status!=='ready'||prepared.length>0),revision:1,createdAt:iso(),updatedAt:iso(),deleted:false,source};
     for(const p of prepared) atomicWrite(safePath(this.root,p.attachment.file),p.data);
     atomicWrite(path.join(this.root,'raw',`${e.id}.json`),JSON.stringify({...e,...(recoveredTime?{occurredAt:'',timeRecovery:{source:'file_modified',usedAt:recoveredTime}}:{}),attachments:r.attachments,imageBase64:undefined},null,2));
     this.putRecord(r,fp); this.refreshAutomaticMemories(); return {record:r,duplicate:false};
@@ -155,22 +183,30 @@ export class HealthStore {
     }
     this.syncState={...result,errors:result.errors.slice(0,20)}; return this.syncState;
   }
-  revise(id:string,changes:Partial<Pick<HealthRecord,'text'|'occurredAt'|'body'|'deleted'>>,expectedRevision:number) {
+  revise(id:string,changes:Partial<Pick<HealthRecord,'text'|'occurredAt'|'body'|'deleted'>>&{followup?:{answer:string;questions:string[]}},expectedRevision:number) {
     if(changes.deleted!==undefined) z.boolean().parse(changes.deleted);
     const old=this.record(id); if(old.revision!==expectedRevision) throw new Error('记录已变化，请刷新后再修改。');
-    const checked=envelopeSchema.parse({version:1,id:old.id,kind:old.kind,occurredAt:changes.occurredAt??old.occurredAt,timezone:old.timezone,text:changes.text??old.text,body:changes.body===null?undefined:changes.body??old.body??undefined});
+    const followup=changes.followup?z.object({answer:z.string().trim().min(1).max(10000),questions:z.array(z.string().max(500)).max(2)}).parse(changes.followup):undefined;
+    const newText=followup?old.text+'\n\n补充：'+followup.answer:changes.text??old.text;
+    const checked=envelopeSchema.parse({version:1,id:old.id,kind:old.kind,occurredAt:changes.occurredAt??old.occurredAt,timezone:old.timezone,text:newText,body:changes.body===null?undefined:changes.body??old.body??undefined});
     const body=checked.body??(old.kind==='body'?parseBody(checked.text):null);
     const manualDate=changes.occurredAt!==undefined;
     let resolved=null;
-    if(!manualDate&&!old.dateLocked&&changes.text!==undefined&&checked.text!==old.text){
+    if(!manualDate&&!old.dateLocked&&(changes.text!==undefined||!!followup)&&checked.text!==old.text){
       const fragment=checked.text.startsWith(old.text)?checked.text.slice(old.text.length):checked.text;
       resolved=resolveRecordDate(fragment,iso(),old.timezone);
       const original=resolveRecordDate(old.text,old.capturedAt??old.occurredAt,old.timezone);
       if(resolved&&original?.matchedText===resolved.matchedText)resolved=null;
     }
     const contentChanged=checked.text!==old.text||JSON.stringify(body)!==JSON.stringify(old.body);
-    const updated={...old,text:checked.text,occurredAt:resolved?.occurredAt??checked.occurredAt,timeSource:manualDate||resolved?undefined:old.timeSource,dateLocked:manualDate?true:old.dateLocked,dateResolution:manualDate?undefined:resolved?{originalAt:old.occurredAt,matchedText:resolved.matchedText,dateOnly:resolved.dateOnly}:old.dateResolution,body,deleted:changes.deleted??old.deleted,...(contentChanged?localRecordStatus({...old,text:checked.text,body}):{})};
-    if(contentChanged&&old.analysis?.activityOverrides)updated.analysis=withActivityOverrides(updated.analysis??{...old.analysis,run:undefined,training:undefined,dailyActivity:undefined,sets:undefined},old.analysis.activityOverrides);
+    const updated={...old,text:checked.text,occurredAt:resolved?.occurredAt??checked.occurredAt,timeSource:manualDate||resolved?undefined:old.timeSource,dateLocked:manualDate?true:old.dateLocked,dateResolution:manualDate?undefined:resolved?{originalAt:old.occurredAt,matchedText:resolved.matchedText,dateOnly:resolved.dateOnly}:old.dateResolution,body,deleted:changes.deleted??old.deleted,...(contentChanged?this.localStatus({...old,text:checked.text,body},resolved?.occurredAt??checked.occurredAt):{})};
+    if(followup)updated.followups=[...(old.followups??[]),{answer:followup.answer,questions:old.analysis?.questions?.length?old.analysis.questions:followup.questions,at:iso(),previousAnalysis:old.analysis?{questions:old.analysis.questions,training:old.analysis.training,sets:old.analysis.sets,run:old.analysis.run}:undefined}].slice(-30);
+    if(contentChanged){updated.analysisError=undefined;updated.analysisAttemptedRevision=undefined;updated.analysisPending=old.kind!=='body'&&(!!followup||updated.status!=='ready'||old.attachments.length>0||!!old.analysis&&old.analysis.engine!=='local');}
+    if(contentChanged&&old.analysis?.activityOverrides){
+      const overrides=structuredClone(old.analysis.activityOverrides),duration=followup&&old.kind==='training'?strengthDurationMinutes(followup.answer):undefined;
+      if(duration!==undefined){overrides.training={...overrides.training,durationMinutes:duration};overrides.cleared=overrides.cleared?.filter(field=>field!=='training.durationMinutes');}
+      updated.analysis=withActivityOverrides(updated.analysis??{...old.analysis,run:undefined,training:undefined,dailyActivity:undefined,sets:undefined},overrides);
+    }
     if(contentChanged&&old.kind==='meal'&&old.analysis?.ingredients?.some(i=>i.userCorrected))updated.analysis={...old.analysis,macros:null,summary:'原文已修改，保留手动食材更正，等待重新分析。',questions:[]};
     return this.commitRevision(old,updated);
   }
@@ -213,7 +249,11 @@ export class HealthStore {
         }else{
           if(!c.text)throw new Error('分析中的长期事实缺少内容，本次未保存。');
           if((c.text.match(/\d+(?:\.\d+)?/g)??[]).some(n=>!quoteNums.includes(Number(n))))throw new Error('分析中的记忆出现了原文未提供的数字，本次未保存。');
-          const memory=this.saveMemory({kind:'fact',text:c.text,topicKey:c.key,subject:c.subject,startsAt:old.occurredAt,expiresAt:null,sourceIds:[id],evidence:[{quote:c.evidenceQuote,origin:'record',recordId:id,recordRevision:old.revision+1,at:old.occurredAt}],active:true,confirmed:true});
+          const evidence:NonNullable<Memory['evidence']>=[{quote:c.evidenceQuote,origin:'record',recordId:id,recordRevision:old.revision+1,at:old.occurredAt}];
+          const topic=memoryTopic(c.text,c.key),prior=this.memoriesAt(new Date(old.occurredAt)).find(m=>m.topicKey===topic&&m.subject===c.subject&&m.kind==='fact');
+          if(topic==='recording.training_notation'&&!Object.keys(detectTrainingNotation(c.evidenceQuote)).length)throw new Error('记法更新缺少明确的原话依据，未保存。');
+          const content=topic==='recording.training_notation'?mergeTrainingNotation(prior,{text:c.evidenceQuote,evidence}):{text:c.text,evidence};
+          const memory=this.saveMemory({kind:'fact',...content,topicKey:topic,subject:c.subject,startsAt:old.occurredAt,expiresAt:null,sourceIds:[...new Set([id,...content.evidence.flatMap(e=>e.recordId?[e.recordId]:[])])],active:true,confirmed:true});
           saved.push({id:memory.id,text:memory.text,kind:memory.kind});
         }
       }
@@ -241,7 +281,7 @@ export class HealthStore {
     if(old.kind==='meal'&&engine!=='local'&&(!a.ingredients?.length||('unmatched' in calc&&calc.unmatched?.length)))throw new Error('本次分析没有为所有食材提供营养估算，原记录已保留，请重新分析。');
     const proposed=(a.memories??[]).map(m=>memoryInputSchema.parse({kind:m.kind,text:m.text,startsAt:old.occurredAt,expiresAt:m.kind==='state'?(m.expiresAt??new Date(Date.parse(old.occurredAt)+7*86400000).toISOString()):null,sourceIds:[id],evidence:[old.text.includes(m.text)?{quote:m.text,origin:'record',recordId:id,recordRevision:old.revision+1,at:old.occurredAt}:{quote:'',origin:'unknown'}],active:true,confirmed:false}));
     const analysis:Analysis=normalizeAnalysis({...a,...calc,engine,at:iso()},old.text,this.exerciseAliases(),this.exerciseRules());
-    const r=this.commitRevision(old,{...old,analysis,status:old.kind==='meal'&&(!a.ingredients?.length||('unmatched' in calc&&calc.unmatched?.length))?'pending':a.questions.length?'needs_info':'ready'},{skipInvalidate:analysis.memoryReceipt?.map(m=>m.id)??[]});
+    const r=this.commitRevision(old,{...old,analysis,analysisPending:false,analysisError:undefined,analysisAttemptedRevision:old.revision+1,status:old.kind==='meal'&&(!a.ingredients?.length||('unmatched' in calc&&calc.unmatched?.length))?'pending':a.questions.length?'needs_info':'ready'},{skipInvalidate:analysis.memoryReceipt?.map(m=>m.id)??[]});
     for(const m of proposed) this.saveMemory(m);
     return r;
   }
@@ -532,8 +572,11 @@ export class HealthStore {
         if(c.key==='goals.goal')goals.goal=text;else if(c.key==='goals.training')goals.training=text;else throw new Error('这类目标请在我的档案中设置。');
       }
       const startsAt=user.createdAt,expiresAt=c.kind==='state'?(c.expiresAt??new Date(Date.parse(startsAt)+7*86400000).toISOString()):null;
-      const checked=memoryInputSchema.parse({kind:c.kind??'fact',text,startsAt,expiresAt,sourceIds:[],active:true,confirmed:c.kind!=='hypothesis',...(c.food?{food:c.food}:{})});
-      const id=before?.id??randomUUID();const after:Memory={...before,...checked,id,subject:c.subject??before?.subject,versionStartsAt:user.createdAt,revision:before?memoryRevision(before)+1:1,updatedAt:iso(),supersedesRevision:before?memoryRevision(before):undefined,evidence:[{quote:c.evidenceQuote,origin:'user',messageId:user.id,at:user.createdAt}],topicKey:c.key,sourceMessageIds:[...(before?.sourceMessageIds??[]),user.id].slice(-20),autoManaged:false,stale:false,...(c.split?{policy:{split:c.split}}:{})};
+      const evidence:NonNullable<Memory['evidence']>=[{quote:c.evidenceQuote,origin:'user',messageId:user.id,at:user.createdAt}];
+      if(c.key==='recording.training_notation'&&!Object.keys(detectTrainingNotation(c.evidenceQuote)).length)throw new Error('记法更新缺少明确的原话依据，未保存。');
+      const content=c.key==='recording.training_notation'?mergeTrainingNotation(before,{text:c.evidenceQuote,evidence}):{text,evidence};
+      const checked=memoryInputSchema.parse({kind:c.kind??'fact',text:content.text,startsAt,expiresAt,sourceIds:[...new Set(content.evidence.flatMap(e=>e.recordId?[e.recordId]:[]))],active:true,confirmed:c.kind!=='hypothesis',...(c.food?{food:c.food}:{})});
+      const id=before?.id??randomUUID();const after:Memory={...before,...checked,id,subject:c.subject??before?.subject,versionStartsAt:user.createdAt,revision:before?memoryRevision(before)+1:1,updatedAt:iso(),supersedesRevision:before?memoryRevision(before):undefined,evidence:content.evidence,topicKey:c.key,sourceMessageIds:[...(before?.sourceMessageIds??[]),user.id].slice(-20),autoManaged:false,stale:false,...(c.split?{policy:{split:c.split}}:{})};
       changed.push({id,before:before??null,after});
     }
     if(updates.some(c=>c.operation==='set_goal')&&JSON.stringify(this.getSettings().goals)!==JSON.stringify(expectedGoals))throw new Error('目标已在回答期间修改，本次未覆盖。');
@@ -553,7 +596,7 @@ export class HealthStore {
     return this.transaction(()=>{for(const c of receipt.changed){const restored={...(c.before??{...c.after,active:false}),revision:memoryRevision(c.after)+1,updatedAt:iso()};this.db.prepare('INSERT INTO revisions(entity,id,doc,at) VALUES(?,?,?,?)').run('memory',c.id,JSON.stringify(c.after),iso());this.db.prepare('UPDATE memories SET doc=? WHERE id=?').run(JSON.stringify(restored),c.id);}if(receipt.beforeGoals)this.setSettings({...this.getSettings(),goals:receipt.beforeGoals});this.invalidateMemoryAnswers();this.putMessage({...message,memoryReceipt:{...receipt,undone:true}});});
   }
   refreshAutomaticMemories() {
-    const existing=this.memories(),drafts=automaticMemories(this.records()),keys=new Set(drafts.map(m=>m.autoKey));
+    const existing=this.memories(),drafts=automaticMemories(this.records(),existing),keys=new Set(drafts.map(m=>m.autoKey));
     this.transaction(()=>{
       for(const draft of drafts){
         const old=this.memories().find(m=>m.autoKey===draft.autoKey)||(draft.topicKey?this.memories().find(m=>memoryTopic(m.text,m.topicKey)===draft.topicKey&&m.kind===draft.kind&&m.subject===draft.subject):undefined);
@@ -616,14 +659,14 @@ export class HealthStore {
     const profile=b.coachProfile?coachProfileSchema.parse(b.coachProfile):undefined;const aliases=b.exerciseAliases?z.array(z.object({raw:z.string().max(200),name:z.string().min(1).max(100)})).max(1000).parse(b.exerciseAliases):undefined;
     const settings=settingsSchema.parse(b.settings); settings.inbox=this.getSettings().inbox;
     const revisionRows=z.array(z.object({seq:z.number().int().positive(),entity:z.enum(['record','memory']),id:idSchema,doc:z.string(),at:z.iso.datetime({offset:true})})).max(1000000).parse(b.tables.revisions);
-    for(const row of revisionRows){const value=JSON.parse(row.doc);if(value.id!==row.id)throw new Error('备份修订的编号不一致');if(row.entity==='memory')memoryInputSchema.parse(value);else {envelopeSchema.parse({version:1,...value,body:value.body??undefined,attachments:[]});if(value.analysis)analysisSchema.parse(value.analysis);if(!Number.isInteger(value.revision)||value.revision<1)throw new Error('备份修订版本无效');}}
+    for(const row of revisionRows){const value=JSON.parse(row.doc);if(value.id!==row.id)throw new Error('备份修订的编号不一致');if(row.entity==='memory')memoryInputSchema.parse(value);else {envelopeSchema.parse({version:1,...value,body:value.body??undefined,attachments:[]});if(value.analysis)analysisSchema.parse(value.analysis);recordProgressSchema.parse(value);if(!Number.isInteger(value.revision)||value.revision<1)throw new Error('备份修订版本无效');}}
     const usageRows=z.array(z.object({id:idSchema,month:z.string().regex(/^\d{4}-\d{2}$/),provider:z.enum(['chatgpt','deepseek']),input:z.number().int().nonnegative(),output:z.number().int().nonnegative(),cost:z.number().finite().nonnegative(),state:z.enum(['reserved','uncertain','complete']),at:z.iso.datetime({offset:true})})).parse(b.tables.usage);
     for(const table of ['records','revisions','memories','messages','usage']) {const rows=b.tables[table];if(!Array.isArray(rows))throw new Error('备份缺少必要的数据表');const keys=rows.map(r=>table==='revisions'?(r as {seq:number}).seq:(r as {id:string}).id);if(new Set(keys).size!==keys.length)throw new Error('备份包含重复编号');}
     const staged=b.files.map(f=>{ if(!/^(attachments\/[a-zA-Z0-9_-]+\/[a-f0-9]{64}\.(jpeg|png|webp|gif)|raw\/[a-zA-Z0-9_-]+\.json)$/.test(f.path)) throw new Error('备份包含无效文件路径'); const data=Buffer.from(f.base64,'base64'); if(sha256(data)!==f.sha256) throw new Error('备份文件校验失败'); return {file:safePath(this.root,f.path),data,relative:f.path}; });
     const files=new Map(staged.map(s=>[s.relative,s]));
     const rows=b.tables.records as {id:string;doc:string;fingerprint:string}[];
     if(!Array.isArray(rows)||rows.length>100000) throw new Error('备份记录无效');
-    for(const row of rows) { const r=parseJSON<HealthRecord>(row.doc); if(r.id!==row.id||!Number.isInteger(r.revision)||r.revision<1) throw new Error('备份记录不一致'); envelopeSchema.parse({version:1,...r,body:r.body??undefined,attachments:[]}); if(r.analysis) analysisSchema.parse(r.analysis); for(const a of r.attachments) {const f=files.get(a.file);if(!f||sha256(f.data)!==a.sha256) throw new Error('备份缺少附件');sniffImage(f.data);} }
+    for(const row of rows) { const r=parseJSON<HealthRecord>(row.doc); if(r.id!==row.id||!Number.isInteger(r.revision)||r.revision<1) throw new Error('备份记录不一致'); envelopeSchema.parse({version:1,...r,body:r.body??undefined,attachments:[]}); if(r.analysis) analysisSchema.parse(r.analysis);recordProgressSchema.parse(r); for(const a of r.attachments) {const f=files.get(a.file);if(!f||sha256(f.data)!==a.sha256) throw new Error('备份缺少附件');sniffImage(f.data);} }
     for(const row of b.tables.memories as {id:string;doc:string}[]) { const m=parseJSON<Memory>(row.doc); idSchema.parse(m.id);if(m.id!==row.id)throw new Error('备份记忆编号不一致'); memoryInputSchema.parse(m); }
     for(const row of b.tables.messages as {id:string;doc:string}[]) { const m=parseJSON<Message>(row.doc); idSchema.parse(m.id); if(!['user','assistant'].includes(m.role)||!Array.isArray(m.sources)||typeof m.text!=='string') throw new Error('备份对话损坏'); }
     const safety=path.join(this.root,'backups',`before-restore-${Date.now()}.bodyjournal`); this.backup(safety);
@@ -638,9 +681,9 @@ export class HealthStore {
       if(b.version===1&&settings.goals.kcal!==null)this.energy.importManualTarget(settings.goals.kcal,settings.goals.protein);
       this.energy.syncTarget();this.energy.invalidate();if(profile)this.saveCoachProfile(profile);if(aliases)this.setConfig('exerciseAliases',aliases);
       this.migrateMemoryReliability();if(b.version<4)this.energy.migrateFixedBaselines();this.invalidateMemoryAnswers();
-      this.setConfig('energyParsingV1',false);
+      this.setConfig('energyParsingV1',false);this.setConfig('trainingNotationParsingV1',false);
       this.setConfig('conversationStart','');
-    });this.migrateEnergyParsing(); return safety;
+    });this.migrateTrainingNotationParsing();this.migrateEnergyParsing(); return safety;
   }
   exportReadable(dir:string) {
     atomicWrite(path.join(dir,'能量资料与目标.json'),JSON.stringify(this.energy.export(),null,2));

@@ -1,7 +1,7 @@
 {
   "name": "personal-health-assistant",
   "productName": "身体手记",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.cjs",
@@ -28,7 +28,8 @@
     "test:activity-ui": "node scripts/activity-energy-smoke.mjs",
     "test:steps-ui": "node scripts/steps-confirmation-smoke.mjs",
     "test:nutrition-ui": "node scripts/nutrition-smoke.mjs",
-    "test:v05-ui": "node scripts/v05-smoke.mjs"
+    "test:v05-ui": "node scripts/v05-smoke.mjs",
+    "test:analysis-ui": "node scripts/analysis-smoke.mjs"
   },
   "dependencies": {
     "jose": "^6.1.0",

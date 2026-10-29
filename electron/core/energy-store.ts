@@ -112,7 +112,7 @@ export class EnergyStore{
     const anchorRecords=records.filter(r=>anchorIds.has(r.id));
     const prior=records.filter(r=>r.kind==='body'&&r.body?.weightKg&&!r.timeSource&&localDay(r.occurredAt,zone)<from).sort((a,b)=>Date.parse(b.occurredAt)-Date.parse(a.occurredAt))[0];
     const priorTraining=refs(records.filter(r=>r.kind==='training'&&localDay(r.occurredAt,zone)<from));
-    return digest({model:ENERGY_MODEL_VERSION,zone,records:[...new Map([...selected,...anchorRecords,...(prior?[prior]:[])].map(r=>[r.id,r])).values()].sort((a,b)=>a.id.localeCompare(b.id)),priorTraining,profiles:this.profiles(),targets:this.targets(),days:this.days().filter(d=>d.timezone===zone&&(anchorDates.has(d.date)||d.date>=addDays(from,-28)&&d.date<=to))});
+    return digest({model:ENERGY_MODEL_VERSION,zone,records:[...new Map([...selected,...anchorRecords,...(prior?[prior]:[])].map(r=>[r.id,r])).values()].sort((a,b)=>a.id.localeCompare(b.id)).map(r=>{const {analysisPending,analysisError,analysisAttemptedRevision,...evidence}=r;return evidence;}),priorTraining,profiles:this.profiles(),targets:this.targets(),days:this.days().filter(d=>d.timezone===zone&&(anchorDates.has(d.date)||d.date>=addDays(from,-28)&&d.date<=to))});
   }
   invalidate(){for(const m of this.host.messages()){const d=m.energyDependency;if(!m.stale&&d&&this.hash(d.from,d.to)!==d.hash)this.host.putMessage({...m,stale:true});}}
   review(now=new Date()):EnergyReview{

@@ -20,7 +20,7 @@ export function resolveRecordDate(text:string,referenceAt:string,zone:string):Re
   const relative=absolute||short?null:/(今天|今日|昨天|昨日|前天)(?=\s|[的，,：:]|训练|练|跑|午餐|晚餐|早餐|早饭|午饭|晚饭|吃|体重|测量)/.exec(line);
   const match=absolute??short??relative;if(!match)continue;
   const prefix=line.slice(0,match.index);
-  if(prefix.trim()&&!/^(?:(?:补记|补录|补充|更正|纠正|日期|时间|记录日期|实际日期|发生日期|实际|这次|这条|这顿|其实|是|在|的|训练|记录|餐食|吃饭|测量|[：:,，\s]){1,18})$/.test(prefix))continue;
+  if(prefix.trim()&&!/^(?:(?:补记|补录|补充|更正|纠正|日期|时间|记录日期|实际日期|发生日期|实际|这次|这条|这顿|这是|其实|是|在|的|训练|记录|餐食|吃饭|测量|[：:,，\s]){1,18})$/.test(prefix))continue;
   let day:string|null=null;
   if(absolute)day=validDay(+absolute[1],+absolute[2],+absolute[3]);
   else if(short){day=validDay(year,+short[1],+short[2]);if(day&&day>today&&+short[1]>=11&&Number(today.slice(5,7))<=2)day=validDay(year-1,+short[1],+short[2]);}
