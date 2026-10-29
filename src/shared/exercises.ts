@@ -101,6 +101,24 @@ export function normalizeSet(input:SetEntry,custom:ExerciseAlias[]=[],options:{r
 }
 export function baselineKey(s:SetEntry){return [s.equipmentId??s.equipment??'器械未注明',s.loadBasis,s.position??'姿势按原记录'].join('|');}
 export function baselineLabel(s:SetEntry){return [s.equipmentId??s.equipment,s.loadBasis==='per_hand'?'单只重量':s.loadBasis==='total'?'报告总重':s.loadBasis==='bodyweight'?'自重':s.loadBasis==='unknown'?'重量口径待确认':'器械标重',s.position==='seated'?'坐姿':s.position==='standing'?'站姿':undefined].filter(Boolean).join(' · ');}
+/** A later explicit correction supersedes an earlier strength duration, without borrowing running time. */
+export function strengthDurationMinutes(text:string,hasStrengthSets=false):number|undefined {
+ let first:number|undefined,correction:number|undefined;
+ for(const line of text.split(/\n|[；;。]/)){
+  const explicit=/(?:补充|更正|纠正|修正|实际|改为|改成|应为)/.test(line);
+  const future=/(?:明天|下次|计划|打算|预计|准备)/.test(line)&&!/(?:本次|这次|实际|已经)/.test(line);
+  if(future)continue;
+  const values=[...line.matchAll(/(?:力量训练|训练用时|训练时长|力量时长|力量用时)\s*[:：]?\s*(?:实际(?:为|是)?\s*)?(\d+(?:\.\d+)?)\s*(?:分钟|min)/gi)];
+  if(values.length){
+   if(first===undefined)first=+values[0][1];
+   if(explicit&&!future)correction=+values.at(-1)![1];
+  }else if(explicit&&!future&&!/跑步|跑步机|慢跑|配速|运动时长|总时长/.test(line)&&(first!==undefined||hasStrengthSets)){
+   const short=line.match(/(?:补充|更正|纠正|修正)\s*[:：]?\s*(?:实际(?:是|为)?|(?:力量)?时长(?:改为|改成|是|为)?|改为|改成)\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(?:分钟|min)/i);
+   if(short)correction=+short[1];
+  }
+ }
+ return correction??first;
+}
 export function inferSession(text:string,sets:SetEntry[]=[]):TrainingSession {
  const parts:TrainingPart[]=[];for(const [p,word] of [['chest','胸'],['back','背'],['shoulders','肩'],['legs','腿']] as const)if(new RegExp(`(?:^|\\n)\\s*${word}(?:部|日|训练)?\\s*[：:]?\\s*(?:$|\\n)`,'m').test(text))parts.push(p);
  const sessionText=sets.length||/力量训练\s*[:：]?\s*\d+(?:\.\d+)?\s*(?:分钟|min)/i.test(text)?text.split(/\n|[；;]/).map(line=>{const before=line.replace(/(?:跑步机|跑步|慢跑|跑了).*$/,'');return before===line||/力量|正式组|热身|\d+(?:\.\d+)?\s*(?:kg|公斤|千克|lb|磅|组|[x×*])/i.test(before)?before:'';}).join('\n'):text;
@@ -108,8 +126,8 @@ export function inferSession(text:string,sets:SetEntry[]=[]):TrainingSession {
  const cancelled=/(?:未|没(?:有)?)(?:完成|练完|跑步|慢跑)|取消.{0,8}(?:训练|跑步)|未训练/.test(sessionText);
  const hasData=sets.length>0||/\d+\s*(?:kg|公斤|千克).*\d+\s*[*x×]/i.test(sessionText)||/(?:跑步(?:机)?|慢跑|跑了)?\s*\d+(?:\.\d+)?\s*(?:km|公里)/i.test(sessionText)||/力量训练\s*[:：]?\s*\d+(?:\.\d+)?\s*(?:分钟|min)/i.test(sessionText);
  const completion=cancelled?'unknown':planned?'planned':hasData||/已完成|练完|训练结束/.test(sessionText)?'completed':'unknown';
- const duration=text.match(/(?:力量训练|训练用时|训练时长)\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(?:分钟|min)/i);
- return {part:parts.length>1?'mixed':parts[0]??'unknown',completion,...(duration?{durationMinutes:+duration[1]}:{})};
+ const duration=strengthDurationMinutes(text,sets.length>0);
+ return {part:parts.length>1?'mixed':parts[0]??'unknown',completion,...(duration!==undefined?{durationMinutes:duration}:{})};
 }
 export function extractRunText(text:string){return text.split(/\n|[；;]/).filter(line=>/跑步|跑步机|慢跑|跑了/.test(line)||/^\s*(?:训练)?计划\s*[:：]?\s*$/.test(line)||(/^\s*\d+(?:\.\d+)?\s*(?:km|公里)/i.test(line)&&!/步行|走路|骑车|骑行|游泳/.test(line))).join('\n').replace(/(?:力量训练|训练用时|训练时长)\s*[:：]?\s*\d+(?:\.\d+)?\s*(?:分钟|min)/gi,'');}
 /** Resolve reported running independently of strength; image evidence need not be repeated in the caption. */
