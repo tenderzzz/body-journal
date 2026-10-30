@@ -6,6 +6,7 @@ import type { Analysis, Attachment, Envelope, HealthRecord, Memory, Message, Set
 import { analysisSchema, bodySchema, envelopeSchema, idSchema, memoryInputSchema, settingsSchema, readableError, coachProfileSchema, memoryChangeSchema, runSchema, dailyActivitySchema } from './validation';
 import { localRecordStatus, parseBody, parseTraining } from './parser';
 import { FoodCatalog } from './nutrition';
+import {sameMealDescription} from './meal-edit';
 import { computeStats, validMemory, localDay } from '../../src/shared/stats';
 import { z } from 'zod';
 import { resolveRecordDate } from './dates';
@@ -119,6 +120,16 @@ export class HealthStore {
     this.transaction(()=>{for(const {r,followups} of changes)this.commitRevision(r,{...r,followups});this.setConfig('mealFollowupContextV1',true);});
     return changes.length;
   }
+  migrateMealFormattingEdits(){
+    if(this.getConfig<boolean>('mealFormattingEditsV1'))return 0;
+    const changes=this.records().filter(r=>r.kind==='meal'&&!r.analysis&&!r.followups?.length).flatMap(r=>{
+      const prior=this.history(r.id).map(h=>h.record as HealthRecord).find(p=>p.status==='ready'&&p.analysis?.ingredients?.length&&p.analysis.macros&&!p.analysis.unmatched?.length&&Date.parse(p.occurredAt)===Date.parse(r.occurredAt)&&JSON.stringify(p.body)===JSON.stringify(r.body)&&p.attachments.map(a=>a.sha256).join()===r.attachments.map(a=>a.sha256).join()&&sameMealDescription(p.text,r.text));
+      return prior?.analysis?[{r,analysis:prior.analysis}]:[];
+    });
+    if(changes.length)this.backup(path.join(this.root,'backups',`before-meal-formatting-${Date.now()}.bodyjournal`));
+    this.transaction(()=>{for(const {r,analysis} of changes)this.commitRevision(r,{...r,analysis,status:'ready',analysisPending:false,analysisError:undefined,analysisAttemptedRevision:undefined});this.setConfig('mealFormattingEditsV1',true);});
+    return changes.length;
+  }
   migrateEnergyParsing(){
     if(this.getConfig<boolean>('energyParsingV1'))return 0;
     const corrections=this.records().flatMap(r=>{
@@ -211,6 +222,7 @@ export class HealthStore {
       if(resolved&&original?.matchedText===resolved.matchedText)resolved=null;
     }
     const contentChanged=checked.text!==old.text||JSON.stringify(body)!==JSON.stringify(old.body);
+    const formattingOnly=contentChanged&&old.kind==='meal'&&!followup&&old.status==='ready'&&!!old.analysis?.ingredients?.length&&!!old.analysis.macros&&!old.analysis.unmatched?.length&&JSON.stringify(body)===JSON.stringify(old.body)&&!resolved&&Date.parse(checked.occurredAt)===Date.parse(old.occurredAt)&&sameMealDescription(old.text,checked.text);
     const updated={...old,text:checked.text,occurredAt:resolved?.occurredAt??checked.occurredAt,timeSource:manualDate||resolved?undefined:old.timeSource,dateLocked:manualDate?true:old.dateLocked,dateResolution:manualDate?undefined:resolved?{originalAt:old.occurredAt,matchedText:resolved.matchedText,dateOnly:resolved.dateOnly}:old.dateResolution,body,deleted:changes.deleted??old.deleted,...(contentChanged?this.localStatus({...old,text:checked.text,body},resolved?.occurredAt??checked.occurredAt):{})};
     if(followup)updated.followups=[...(old.followups??[]),{answer:followup.answer,questions:old.analysis?.questions?.length?old.analysis.questions:followup.questions,at:iso(),previousAnalysis:structuredClone(old.analysis??old.followups?.at(-1)?.previousAnalysis)}].slice(-30);
     if(contentChanged){updated.analysisError=undefined;updated.analysisAttemptedRevision=undefined;updated.analysisPending=old.kind!=='body'&&(!!followup||updated.status!=='ready'||old.attachments.length>0||!!old.analysis&&old.analysis.engine!=='local');}
@@ -220,6 +232,7 @@ export class HealthStore {
       updated.analysis=withActivityOverrides(updated.analysis??{...old.analysis,run:undefined,training:undefined,dailyActivity:undefined,sets:undefined},overrides);
     }
     if(contentChanged&&old.kind==='meal'&&old.analysis?.ingredients?.some(i=>i.userCorrected))updated.analysis={...old.analysis,macros:null,summary:'原文已修改，保留手动食材更正，等待重新分析。',questions:[]};
+    if(formattingOnly){updated.analysis=old.analysis;updated.status='ready';updated.analysisPending=false;updated.analysisError=undefined;updated.analysisAttemptedRevision=undefined;}
     return this.commitRevision(old,updated);
   }
   private commitRevision(old:HealthRecord,updated:HealthRecord,options?:{skipInvalidate?:string[]}):HealthRecord {
@@ -290,7 +303,7 @@ export class HealthStore {
       if(old.kind==='meal')a={...a,questions:this.catalog.mealQuestions(a.ingredients!,a.questions)};
     }
     const calc:Partial<ReturnType<FoodCatalog['calculate']>>=a.ingredients?this.catalog.calculate(a.ingredients):{};
-    if(old.kind==='meal'&&engine!=='local'&&(!a.ingredients?.length||('unmatched' in calc&&calc.unmatched?.length)))throw new Error('本次分析没有为所有食材提供营养估算，原记录已保留，请重新分析。');
+    if(old.kind==='meal'&&engine!=='local'&&(!a.ingredients?.length||('unmatched' in calc&&calc.unmatched?.length))){const detail=calc.unmatched?.slice(0,6).join('、')||'模型未返回可计算的食材';throw new Error(`食材暂时不能合计：${detail}。原记录已保留，请核对计量单位或营养估算依据。`);}
     const proposed=(a.memories??[]).map(m=>memoryInputSchema.parse({kind:m.kind,text:m.text,startsAt:old.occurredAt,expiresAt:m.kind==='state'?(m.expiresAt??new Date(Date.parse(old.occurredAt)+7*86400000).toISOString()):null,sourceIds:[id],evidence:[old.text.includes(m.text)?{quote:m.text,origin:'record',recordId:id,recordRevision:old.revision+1,at:old.occurredAt}:{quote:'',origin:'unknown'}],active:true,confirmed:false}));
     const analysis:Analysis=normalizeAnalysis({...a,...calc,engine,at:iso()},old.text,this.exerciseAliases(),this.exerciseRules());
     const r=this.commitRevision(old,{...old,analysis,analysisPending:false,analysisError:undefined,analysisAttemptedRevision:old.revision+1,status:old.kind==='meal'&&(!a.ingredients?.length||('unmatched' in calc&&calc.unmatched?.length))?'pending':a.questions.length?'needs_info':'ready'},{skipInvalidate:analysis.memoryReceipt?.map(m=>m.id)??[]});
@@ -693,9 +706,9 @@ export class HealthStore {
       if(b.version===1&&settings.goals.kcal!==null)this.energy.importManualTarget(settings.goals.kcal,settings.goals.protein);
       this.energy.syncTarget();this.energy.invalidate();if(profile)this.saveCoachProfile(profile);if(aliases)this.setConfig('exerciseAliases',aliases);
       this.migrateMemoryReliability();if(b.version<4)this.energy.migrateFixedBaselines();this.invalidateMemoryAnswers();
-      this.setConfig('energyParsingV1',false);this.setConfig('trainingNotationParsingV1',false);this.setConfig('mealFollowupContextV1',false);
+      this.setConfig('energyParsingV1',false);this.setConfig('trainingNotationParsingV1',false);this.setConfig('mealFollowupContextV1',false);this.setConfig('mealFormattingEditsV1',false);
       this.setConfig('conversationStart','');
-    });this.migrateTrainingNotationParsing();this.migrateMealFollowupContext();this.migrateEnergyParsing(); return safety;
+    });this.migrateTrainingNotationParsing();this.migrateMealFollowupContext();this.migrateMealFormattingEdits();this.migrateEnergyParsing(); return safety;
   }
   exportReadable(dir:string) {
     atomicWrite(path.join(dir,'能量资料与目标.json'),JSON.stringify(this.energy.export(),null,2));

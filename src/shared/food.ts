@@ -90,6 +90,9 @@ export function ingredientScale(item:Ingredient):Range|null {
  if(amount.unit!==basis.unit){
   const density=n?.densityGramsPerMl;
   if(amount.unit==='serving'&&n?.provenance==='preset')quantity={low:quantity.low*basis.quantity,high:quantity.high*basis.quantity};
+  // The separate gram range describes the entire counted portion, not one item.
+  // It can support a mass-based estimate while the original count remains intact.
+  else if(amount.unit==='serving'&&basis.unit==='g'&&amount.low>0&&amount.high>0&&Number.isFinite(item.grams.low)&&Number.isFinite(item.grams.high)&&item.grams.low>0&&item.grams.high>=item.grams.low)quantity={...item.grams};
   else if(amount.unit==='ml'&&basis.unit==='g'&&density)quantity={low:quantity.low*density,high:quantity.high*density};
   else if(amount.unit==='g'&&basis.unit==='ml'&&density)quantity={low:quantity.low/density,high:quantity.high/density};
   else return null;

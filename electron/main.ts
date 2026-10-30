@@ -116,7 +116,7 @@ async function start(){
     }catch(e){console.error(JSON.stringify({connectionCheck:'failed',error:readableError(e)}));app.exit(1);return;}
   }
   if(demo&&store.records().length===0){const {seedDemo}=await import('./demo');seedDemo(store);}
-  store.migrate016();store.repairExerciseAliases();store.migrateExerciseRules();store.migrateSeatedPress();store.migrateMemoryTopics();store.migrateTrainingNotationParsing();store.migrateMealFollowupContext();store.migrateEnergyParsing();store.scanInbox();
+  store.migrate016();store.repairExerciseAliases();store.migrateExerciseRules();store.migrateSeatedPress();store.migrateMemoryTopics();store.migrateTrainingNotationParsing();store.migrateMealFollowupContext();store.migrateMealFormattingEdits();store.migrateEnergyParsing();store.scanInbox();
   store.refreshPersonalization();
   if(process.argv.includes('--analyze-record')){
     try{
