@@ -50,7 +50,11 @@ export class FoodCatalog {
     const exact=candidates.find(f=>[f.zh,f.description].some(name=>name&&normalizeFoodName(name)===normalizeFoodName(item.name)||name&&!!item.catalogQuery&&normalizeFoodName(name)===normalizeFoodName(item.catalogQuery)));
     if(!exact)return item;
     const state=stateOf(exact.description);if(item.foodState&&item.foodState!=='unknown'&&state&&item.foodState!==state)return item;
-    return {...item,foodId:exact.id,nutrition:undefined,assumption:`${item.assumption}；匹配食材库：${exact.zh??exact.description}`};
+    const resolved={...item,foodId:exact.id,nutrition:undefined,assumption:`${item.assumption}；匹配食材库：${exact.zh??exact.description}`};
+    // A per100g catalogue entry cannot replace valid per-ml/per-serving nutrition
+    // when the original quantity cannot be expressed in grams.
+    if(!ingredientScale(resolved)||[exact.kcal,exact.protein,exact.carbs,exact.fat].some(value=>value===null||!Number.isFinite(value)||value<0))return item;
+    return resolved;
   });}
   calculate(ingredients: Ingredient[]): { macros: Macro | null; unmatched: string[]; estimatedFoods:string[] } {
     const empty = (): Range => ({ low:0, high:0 });
