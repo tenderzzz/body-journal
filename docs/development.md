@@ -145,3 +145,5 @@ git push origin main v0.4.1
 `BodyJournal --analyze-record <record-id>` 会使用当前已选模型分析指定的真实本地记录（包括其照片和本次筛选上下文），保存结果后退出；须先退出正在运行的应用并备份档案。它不是无个人数据的连接自检，不应放入后台任务或自动重试。
 
 `npm run test:dishes-ui` 验证同款餐食自动归组、整餐仅显示一次、明细折叠、名称与别名、停用恢复和重启。v4 备份增加可选 dishDefinitions；旧备份缺失此项时清空显式关联并从名称重新推导，不继承恢复前的无关关联。`BodyJournal --import-dishes <json-file>` 只在本地原子导入明确的餐食关联，先备份，不发起模型请求。
+
+`npm run test:training-baseline-ui` 使用临时合成档案核对反向飞鸟的统计口径、训练参照、记录详情与重启，不发起模型请求。
