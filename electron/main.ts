@@ -26,7 +26,7 @@ const modelNetwork:NetworkFetch=(url,init)=>net.fetch(url,init);
 let win:BrowserWindow;let store:HealthStore;let auth:ChatGPTAuth;let assistant:AssistantService;let secrets:SecretStorage;let timer:NodeJS.Timeout;let securityError='';
 const attachments=new Map<string,{name:string;mime:string;base64:string}>();
 function emit(event:Record<string,unknown>){if(win&&!win.isDestroyed())win.webContents.send('health:event',event);}
-async function snapshot():Promise<Snapshot&{demo:boolean}> {store.energy.syncTarget();store.energy.invalidate();store.invalidateMemoryAnswers();const secretState=await secrets.read().catch(()=>({} as Record<string,unknown>));return {records:store.records(true),memories:store.memories(),messages:store.messages(),settings:store.getSettings(),connection:{...auth.status(),hasDeepSeek:!!secretState.deepseekKey,error:securityError||auth.status().error},sync:store.syncState,usage:store.usage(),vault:root,version:app.getVersion(),demo,coachProfile:store.coachProfile(),exerciseAliases:store.exerciseAliases(),exerciseRules:store.exerciseRules(),foodCandidates:store.foodCandidates(),conversationStart:store.getConfig<string>('conversationStart')};}
+async function snapshot():Promise<Snapshot&{demo:boolean}> {store.energy.syncTarget();store.energy.invalidate();store.invalidateMemoryAnswers();const secretState=await secrets.read().catch(()=>({} as Record<string,unknown>));return {records:store.recordsWithDishes(true),commonDishes:store.commonDishes(),memories:store.memories(),messages:store.messages(),settings:store.getSettings(),connection:{...auth.status(),hasDeepSeek:!!secretState.deepseekKey,error:securityError||auth.status().error},sync:store.syncState,usage:store.usage(),vault:root,version:app.getVersion(),demo,coachProfile:store.coachProfile(),exerciseAliases:store.exerciseAliases(),exerciseRules:store.exerciseRules(),foodCandidates:store.foodCandidates(false),conversationStart:store.getConfig<string>('conversationStart')};}
 function assertAvailable(){if(assistant.isBusy())throw new Error('分析进行中，请完成或取消后再进行此操作。');}
 async function chooseImages(){const picked=await dialog.showOpenDialog(win,{title:'选择餐食照片或训练截图',properties:['openFile','multiSelections'],filters:[{name:'图片',extensions:['jpg','jpeg','png','webp','gif']}]});if(picked.canceled)return [];const result=[];for(const file of picked.filePaths.slice(0,8)){if(statSync(file).size>20*1024*1024)throw new Error('单张图片不能超过 20 MB');const data=readFileSync(file);const mime=sniffImage(data);const token=randomUUID();attachments.set(token,{name:path.basename(file),mime,base64:data.toString('base64')});result.push({token,name:path.basename(file),preview:`data:${mime};base64,${data.toString('base64')}`});}return result;}
 async function invoke(action:string,payload:any) {
@@ -95,6 +95,7 @@ async function invoke(action:string,payload:any) {
       if(selected.canceled||!selected.filePath)return null;
       atomicWrite(selected.filePath,JSON.stringify(EVALUATION_EXAMPLE,null,2));return path.basename(selected.filePath);
     }
+    case 'dish:save':{assertAvailable();const result=store.saveDish(payload);emit({type:'changed'});return result;}
     case 'food:search':return store.catalog.search(z.string().max(150).parse(payload.query));
     default:throw new Error('不支持的操作');
   }
@@ -118,6 +119,15 @@ async function start(){
   if(demo&&store.records().length===0){const {seedDemo}=await import('./demo');seedDemo(store);}
   store.migrate016();store.repairExerciseAliases();store.migrateExerciseRules();store.migrateSeatedPress();store.migrateMemoryTopics();store.migrateTrainingNotationParsing();store.migrateMealFollowupContext();store.migrateMealFormattingEdits();store.migrateEnergyParsing();store.scanInbox();
   store.refreshPersonalization();
+  if(process.argv.includes('--import-dishes')){
+    try{
+      const file=process.argv[process.argv.indexOf('--import-dishes')+1];if(!file||statSync(file).size>1024*1024)throw new Error('请选择不超过1 MB的餐食分组文件');
+      const groups=z.array(z.unknown()).min(1).max(100).parse(JSON.parse(readFileSync(file,'utf8')));
+      store.backup(path.join(root,'backups',`before-dish-import-${Date.now()}.bodyjournal`));
+      store.saveDishes(groups);
+      console.log(JSON.stringify({dishImport:'completed',groups:groups.length}));app.quit();return;
+    }catch(e){console.error(JSON.stringify({dishImport:'failed',error:readableError(e)}));app.exit(1);return;}
+  }
   if(process.argv.includes('--analyze-record')){
     try{
       const id=idSchema.parse(process.argv[process.argv.indexOf('--analyze-record')+1]);

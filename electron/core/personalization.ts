@@ -4,6 +4,7 @@ import { normalizeSet,baselineKey,baselineLabel,inferSession } from '../../src/s
 import {memoryTopic} from './memory';
 import {detectTrainingNotation,isTrainingNotationLine,mergeTrainingNotation} from './training-notation';
 import { localDay } from '../../src/shared/stats';
+import {groupDishRecords,type DishDefinition} from '../../src/shared/dishes';
 import {ingredientIdentity,ingredientAmount,FOOD_UNIT_NAMES} from '../../src/shared/food';
 type Draft=Omit<Memory,'id'|'stale'>;
 const key=(s:string)=>createHash('sha256').update(s).digest('hex').slice(0,24);
@@ -22,13 +23,14 @@ function preferenceStatement(raw:string):string|undefined {
  }
  return /[？?]/.test(sentence)?undefined:sentence.replace(/[。！!]$/, '').trim();
 }
-export function automaticMemories(records:HealthRecord[],existing:Memory[]=[]):Draft[] {
+export function automaticMemories(records:HealthRecord[],existing:Memory[]=[],dishDefinitions:DishDefinition[]=[]):Draft[] {
  const active=records.filter(r=>!r.deleted).sort((a,b)=>Date.parse(a.occurredAt)-Date.parse(b.occurredAt));
+ const namedMeals=groupDishRecords(active,dishDefinitions),namedIds=new Set(namedMeals.flatMap(g=>g.records.map(r=>r.id)));
  const drafts:Draft[]=[],training=new Map<string,HealthRecord[]>(),meals=new Map<string,HealthRecord[]>(),preferences=new Map<string,HealthRecord[]>();
  const notationStatements:{record:HealthRecord;text:string}[]=[];
  for(const r of active){
   for(const s of r.kind==='training'&&(r.analysis?.training??inferSession(r.text,r.analysis?.sets)).completion==='completed'?(r.analysis?.sets??[]).map(x=>normalizeSet(x)):[])if(s.confirmed&&s.setType!=='warmup'&&!s.classificationNeeded){const k=`${s.exerciseId}:${baselineKey(s)}`;const list=training.get(k)??[];if(!list.includes(r))list.push(r);training.set(k,list);}
-  if(r.kind==='meal'&&r.analysis?.ingredients?.length&&!r.analysis.unmatched?.length){const k=r.analysis.ingredients.map(ingredientIdentity).sort().join('|');const list=meals.get(k)??[];list.push(r);meals.set(k,list);}
+  if(r.kind==='meal'&&!namedIds.has(r.id)&&r.analysis?.ingredients?.length&&!r.analysis.unmatched?.length){const k=r.analysis.ingredients.map(ingredientIdentity).sort().join('|');const list=meals.get(k)??[];list.push(r);meals.set(k,list);}
   for(const rawSentence of sentences(r.text)) {
    const sentence=preferenceStatement(rawSentence);if(!sentence)continue;
    if(isTrainingNotationLine(sentence)){notationStatements.push({record:r,text:sentence});continue;}
@@ -56,6 +58,12 @@ export function automaticMemories(records:HealthRecord[],existing:Memory[]=[]):D
  for(const [k,all] of training){const refs=all.slice(-5),latest=refs.at(-1)!;const sets=latest.analysis!.sets!.map(s=>normalizeSet(s)).filter(s=>s.confirmed&&`${s.exerciseId}:${baselineKey(s)}`===k);const name=sets[0].exercise;
   const detail=sets.map(s=>`${s.kg===null?'重量未填':s.kg+'kg'} × ${s.reps}次 × ${s.sets}组`).join('；');
   drafts.push(make(refs,`training:${key(k)}`,'training',`${name}：${baselineLabel(sets[0])}；最近一次已记录 ${detail}（${localDay(latest.occurredAt,latest.timezone)}）。参考最近 ${refs.length} 次记录，随训练更新，不是固定目标。`));
+ }
+ for(const group of namedMeals){
+  const all=group.records.filter(r=>r.status==='ready'&&r.analysis?.ingredients?.length&&r.analysis.macros&&!r.analysis.unmatched?.length);
+  if(new Set(all.map(r=>localDay(r.occurredAt,r.timezone))).size<2)continue;
+  const refs=all.slice(-5),latest=refs.at(-1)!,macros=latest.analysis!.macros!;
+  drafts.push(make(refs,`meal:${group.id}`,'meal',`常吃餐食：${group.name}。已在${new Set(all.map(r=>localDay(r.occurredAt,r.timezone))).size}天的记录中出现；最近一餐的整份估算：能量${macros.kcal.low}–${macros.kcal.high} kcal，蛋白质${macros.protein.low}–${macros.protein.high}g。按整餐归组，实际分量和配菜仍以本次记录为准，重复记录不提高估算可信程度。`,{mealTemplate:latest.analysis!.ingredients,active:group.definition?.active!==false,topicKey:'eating.common_dish',subject:group.id,evidence:refs.map(r=>({quote:r.text.split('\n')[0].slice(0,3000),origin:'record',recordId:r.id,recordRevision:r.revision,at:r.occurredAt}))}));
  }
  for(const [k,all] of meals){if(new Set(all.map(r=>localDay(r.occurredAt,r.timezone))).size<2)continue;const distinct=new Map(all.map(r=>[localDay(r.occurredAt,r.timezone),r]));const refs=[...distinct.values()].slice(-5),latest=refs.at(-1)!,items=latest.analysis!.ingredients!;
   drafts.push(make(refs,`meal:${key(k)}`,'meal',`重复记录的餐食：${items.map(i=>i.name).join('、')}。最近 ${refs.length} 天的记录中重复出现；最近分量：${items.map(i=>{const amount=ingredientAmount(i);return `${i.name} ${amount.low}–${amount.high}${FOOD_UNIT_NAMES[amount.unit]}（${i.portionSource==='measured'?'有称量依据':i.portionSource==='reported'?'用户报告':'估计分量'}）`;}).join('，')}。仅作下次估算参照，实际分量仍以新记录为准。`,{mealTemplate:items}));
