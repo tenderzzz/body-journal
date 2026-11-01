@@ -34,7 +34,12 @@ export function normalizeModelOutput(value:unknown,purpose:'analysis'|'chat'):{v
   if(Array.isArray(next.sets))next.sets=next.sets.map(item=>optionalNulls(item,setFields));
   if(Array.isArray(next.ingredients))next.ingredients=next.ingredients.map(item=>{
    const i=optionalNulls(item,['nutrition','productId','amount','consumedFraction','portionSource','portionEvidence','userCorrected','foodState','catalogQuery','compositionGroup','role','includesAddedFat','excludedFromTotal']);
-   if(object(i))i.nutrition=optionalNulls(i.nutrition,['per100g','labelBasis','perBasis','densityGramsPerMl','provenance','labelEvidence','labelAttachmentSha256','productId']);return i;
+   if(object(i)){
+    // A custom estimate or personal label need not refer to a catalogue row.
+    // Preserve supplied ids (including invalid ones for strict validation).
+    if(i.foodId===undefined)i.foodId=null;
+    i.nutrition=optionalNulls(i.nutrition,['per100g','labelBasis','perBasis','densityGramsPerMl','provenance','labelEvidence','labelAttachmentSha256','productId']);
+   }return i;
   });
   if(Array.isArray(next.memories))next.memories=next.memories.map(item=>optionalNulls(item,['expiresAt']));
  }
