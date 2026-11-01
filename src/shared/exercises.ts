@@ -99,8 +99,16 @@ export function normalizeSet(input:SetEntry,custom:ExerciseAlias[]=[],options:{r
  if(bodyweight)metadata.kg=null;
  return {...input,...metadata,setType:metadata.setType??input.setType??'work'};
 }
-export function baselineKey(s:SetEntry){return [s.equipmentId??s.equipment??'器械未注明',s.loadBasis,s.position??'姿势按原记录'].join('|');}
-export function baselineLabel(s:SetEntry){return [s.equipmentId??s.equipment,s.loadBasis==='per_hand'?'单只重量':s.loadBasis==='total'?'报告总重':s.loadBasis==='bodyweight'?'自重':s.loadBasis==='unknown'?'重量口径待确认':'器械标重',s.position==='seated'?'坐姿':s.position==='standing'?'站姿':undefined].filter(Boolean).join(' · ');}
+function baselineEquipment(s:SetEntry){
+ if(s.equipmentId!==undefined)return s.equipmentId;
+ const equipment=s.equipment?.trim();
+ // This action's generic machine label refers to the reverse butterfly machine.
+ // Keep raw equipment evidence and explicitly identified machines unchanged.
+ if(normalizeExerciseName(s.exercise)==='器械反向飞鸟'&&(!equipment||equipment==='器械'||equipment==='蝴蝶机'))return '蝴蝶机';
+ return s.equipment;
+}
+export function baselineKey(s:SetEntry){return [baselineEquipment(s)??'器械未注明',s.loadBasis,s.position??'姿势按原记录'].join('|');}
+export function baselineLabel(s:SetEntry){return [baselineEquipment(s),s.loadBasis==='per_hand'?'单只重量':s.loadBasis==='total'?'报告总重':s.loadBasis==='bodyweight'?'自重':s.loadBasis==='unknown'?'重量口径待确认':'器械标重',s.position==='seated'?'坐姿':s.position==='standing'?'站姿':undefined].filter(Boolean).join(' · ');}
 /** A later explicit correction supersedes an earlier strength duration, without borrowing running time. */
 export function strengthDurationMinutes(text:string,hasStrengthSets=false):number|undefined {
  let first:number|undefined,correction:number|undefined;

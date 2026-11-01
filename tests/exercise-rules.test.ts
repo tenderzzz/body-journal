@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { HealthStore } from '../electron/core/store';
 import { FoodCatalog } from '../electron/core/nutrition';
-import { normalizeSet, EMPTY_RULES, exercisePart } from '../src/shared/exercises';
+import { normalizeSet, EMPTY_RULES, exercisePart, baselineKey, baselineLabel } from '../src/shared/exercises';
 import { computeStats } from '../src/shared/stats';
 import type { SetEntry } from '../src/shared/types';
 
@@ -57,6 +57,29 @@ test('reverse fly splits into dumbbell, barbell and machine names',()=>{
  assert.equal(rebased({exercise:'反向飞鸟',kg:30,loadBasis:'total'}).loadBasis,'machine');
  assert.equal(rebased({exercise:'杠铃反向飞鸟',kg:40,loadBasis:'total'}).exercise,'杠铃反向飞鸟');
  assert.equal(rebased({exercise:'杠铃反向飞鸟',kg:40,loadBasis:'total'}).loadBasis,'total');
+});
+
+test('machine reverse fly shares the butterfly baseline while explicit equipment and load distinctions remain',()=>{
+ const generic:SetEntry={...base,exercise:'器械反向飞鸟',equipment:'器械',loadBasis:'machine',confirmed:true},before=JSON.stringify(generic);
+ const butterfly={...generic,exercise:'蝴蝶机反向飞鸟',equipment:'蝴蝶机'};
+ assert.equal(baselineKey(generic),baselineKey(butterfly));assert.equal(baselineLabel(generic),'蝴蝶机 · 器械标重');assert.equal(baselineLabel(butterfly),baselineLabel(generic));
+ assert.equal(baselineKey({...generic,equipment:undefined}),baselineKey(generic));assert.equal(JSON.stringify(generic),before);
+ for(const other of [{...generic,equipmentId:'合成器械A'},{...generic,equipment:'绳索'},{...generic,position:'seated' as const},{...generic,loadBasis:'total' as const}])assert.notEqual(baselineKey(other),baselineKey(generic));
+ assert.notEqual(baselineKey({...generic,equipmentId:'合成器械A'}),baselineKey({...generic,equipmentId:'合成器械B'}));
+ assert.notEqual(baselineKey({...generic,exercise:'器械推胸'}),baselineKey({...generic,exercise:'器械推胸',equipment:'蝴蝶机'}));
+});
+
+test('historical machine and butterfly reverse fly rows share statistics and one training reference without rewriting records',t=>{
+ const {store}=setup(t),ids=[];
+ for(const [date,equipment,kg,sets] of [['2026-10-20','器械',20,2],['2026-10-21','蝴蝶机',25,3]] as const){
+  const r=record(store,`肩：\n器械反向飞鸟 ${kg}kg ${sets}x10`,date);ids.push(r.id);
+  store.applyAnalysis(r.id,{summary:'合成反向飞鸟记录',questions:[],training:{part:'shoulders',completion:'completed'},sets:[{...base,exercise:'器械反向飞鸟',equipment,kg,sets,reps:10,loadBasis:'machine',confirmed:true}]},'chatgpt',r.revision);
+ }
+ const original=JSON.stringify(store.records()),rows=computeStats(store.records()).exercises['器械反向飞鸟'];
+ assert.equal(new Set(rows.map(r=>r.baseline)).size,1);assert.ok(rows.every(r=>r.baselineLabel==='蝴蝶机 · 器械标重'));assert.equal(rows.reduce((n,r)=>n+r.sets,0),5);assert.equal(rows.reduce((n,r)=>n+(r.volume??0),0),1150);
+ const refs=store.memories().filter(m=>m.autoCategory==='training'&&m.active&&!m.stale&&m.text.startsWith('器械反向飞鸟：'));assert.equal(refs.length,1);assert.deepEqual(new Set(refs[0].sourceIds),new Set(ids));assert.match(refs[0].text,/蝴蝶机 · 器械标重/);
+ store.refreshAutomaticMemories();assert.equal(JSON.stringify(store.records()),original);
+ const restored=setup(t).store;restored.restore(store.exportBundle());assert.equal(new Set(computeStats(restored.records()).exercises['器械反向飞鸟'].map(r=>r.baseline)).size,1);assert.equal(JSON.stringify(restored.records()),original);
 });
 
 test('lateral raise merges into dumbbell fly and stats show a single baseline',t=>{
