@@ -35,7 +35,8 @@ try{
    if(r.kind==='meal'&&state.failMeal){state.failMeal=false;throw new TypeError('fetch failed');}
    const invalid=r.id==='synthetic-batch-06'&&state.failOne;
    if(invalid)state.failOne=false;
-   const output=invalid?{questions:[]}:{summary:`合成分析完成：${r.id}`,questions:[],assumptions:[],...(r.kind==='training'?{training:{part:'chest',completion:'completed'},sets:[]}: {}),...(r.kind==='meal'?{ingredients:[meal]}:{})};
+   const modelMeal={...meal};delete modelMeal.foodId;
+   const output=invalid?{questions:[]}:{summary:`合成分析完成：${r.id}`,questions:[],assumptions:[],...(r.kind==='training'?{training:{part:'chest',completion:'completed'},sets:[]}: {}),...(r.kind==='meal'?{ingredients:[modelMeal]}:{})};
    return new Response([
     {choices:[{delta:{content:JSON.stringify(output)}}]},
     {choices:[{delta:{},finish_reason:'stop'}],usage:{prompt_tokens:10,completion_tokens:10}}
@@ -107,6 +108,6 @@ try{
  await page.setViewportSize({width:860,height:650});
  if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw new Error('Analysis UI overflows narrow window');
  if(errors.length)throw new Error(errors.join('\n'));
- console.log('Isolated analysis UI passed: 13-item queue, per-item failure and retry, saved followup after network failure, prior meal estimate preserved and labelled, one-shot retry without duplication, cancellation and narrow layout. No model requests sent.');
+ console.log('Isolated analysis UI passed: 13-item queue, per-item failure and retry, saved followup after network failure, prior meal estimate preserved and labelled, omitted meal catalogue id, one-shot retry without duplication, cancellation and narrow layout. No model requests sent.');
 }catch(error){if(app){const page=await app.firstWindow();await page.screenshot({path:path.join(tmpdir(),'bodyjournal-analysis-failure.png')}).catch(()=>{});console.error('Analysis UI failure:',errors,await page.locator('[role="dialog"]').allTextContents());}throw error;}
 finally{if(app)await app.close().catch(()=>{});rmSync(vault,{recursive:true,force:true});}
