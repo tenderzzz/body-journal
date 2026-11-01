@@ -2,11 +2,13 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, statSync, lstatSync, realpathSync, copyFileSync } from 'node:fs';
 import path from 'node:path';
-import type { Analysis, Attachment, Envelope, HealthRecord, Memory, Message, Settings, CoachProfile, MemoryChange, ExerciseRules, FoodPreset, FoodCandidate } from '../../src/shared/types';
+import type { Analysis, Attachment, Envelope, HealthRecord, Memory, Message, Settings, CoachProfile, MemoryChange, ExerciseRules, FoodPreset, FoodCandidate, CommonDish, DishDefinition } from '../../src/shared/types';
 import { analysisSchema, bodySchema, envelopeSchema, idSchema, memoryInputSchema, settingsSchema, readableError, coachProfileSchema, memoryChangeSchema, runSchema, dailyActivitySchema } from './validation';
 import { localRecordStatus, parseBody, parseTraining } from './parser';
 import { FoodCatalog } from './nutrition';
 import {sameMealDescription} from './meal-edit';
+import {groupDishRecords,primaryDishName,stableDishId,dishRecordKey,matchDish} from '../../src/shared/dishes';
+import {dishInputSchema,dishDefinitionsSchema} from './dish-validation';
 import { computeStats, validMemory, localDay } from '../../src/shared/stats';
 import { z } from 'zod';
 import { resolveRecordDate } from './dates';
@@ -408,6 +410,33 @@ export class HealthStore {
     const m:Memory={...old,...p,id:old?.id??randomUUID(),versionStartsAt:old&&p.startsAt===old.startsAt?iso():p.startsAt,revision:old?memoryRevision(old)+1:1,updatedAt:iso(),supersedesRevision:old?memoryRevision(old):undefined,evidence:p.evidence??(old?.text===p.text?old?.evidence:undefined)??[{quote:p.text,origin:'user',at:iso()}],stale:false,...(old?.autoKey?{autoManaged:false}: {})}; this.db.prepare('INSERT INTO memories VALUES(?,?) ON CONFLICT(id) DO UPDATE SET doc=excluded.doc').run(m.id,JSON.stringify(m));this.invalidateMemoryAnswers(m.id); return m;
   }
   foodPresets(at=new Date()):FoodPreset[]{return this.memoriesAt(at).filter(m=>m.kind==='food'&&m.food&&validMemory(m,at)).map(m=>m.food!);}
+  dishDefinitions():DishDefinition[]{return this.getConfig<DishDefinition[]>('dishDefinitions')??[];}
+  commonDishes(at?:Date):CommonDish[]{
+    const records=this.records().filter(r=>r.kind==='meal'&&r.status==='ready'&&r.analysis?.ingredients?.length&&r.analysis.macros&&!r.analysis.unmatched?.length&&(!at||Date.parse(r.occurredAt)<=+at));
+    return groupDishRecords(records,this.dishDefinitions()).flatMap(group=>{
+      const days=new Set(group.records.map(r=>localDay(r.occurredAt,r.timezone))).size;
+      if(!group.definition&&days<2)return [];
+      const latest=group.records.at(-1)!;
+      return [{id:group.id,name:group.name,aliases:[...new Set([...(group.definition?.aliases??[]),...group.records.map(r=>primaryDishName(r.text)).filter((v):v is string=>!!v)])],recordIds:group.records.map(r=>r.id),days,latestAt:latest.occurredAt,latestRecordId:latest.id,template:structuredClone(latest.analysis!.ingredients!),macros:structuredClone(latest.analysis!.macros!),active:group.definition?.active!==false,auto:!group.definition}];
+    }).sort((a,b)=>b.latestAt.localeCompare(a.latestAt));
+  }
+  recordsWithDishes(includeDeleted=false):HealthRecord[]{
+    const dishes=this.commonDishes(),ids=new Map(dishes.flatMap(d=>d.recordIds.map(id=>[id,d.id] as const)));
+    return this.records(includeDeleted).map(r=>({...r,...(ids.has(r.id)?{dishId:ids.get(r.id)}:{})}));
+  }
+  saveDishes(values:unknown[]){return this.transaction(()=>values.map(value=>this.saveDish(value)));}
+  saveDish(value:unknown){
+    const p=dishInputSchema.parse(value),definitions=this.dishDefinitions(),derived=this.commonDishes();
+    const wantedId=p.id??(p.name?stableDishId(p.name):undefined),base=wantedId?definitions.find(d=>d.id===wantedId)??derived.find(d=>d.id===wantedId):undefined;
+    if(p.id&&!base)throw new Error('未找到这组餐食，请刷新后重试。');
+    const name=p.name??base?.name;if(!name)throw new Error('请填写这款餐食的名称。');
+    const id=p.id??stableDishId(name),recordIds=[...new Set(p.recordIds??base?.recordIds??[])];if(!recordIds.length)throw new Error('至少需要一条已有餐食记录作为依据。');
+    const records=recordIds.map(id=>this.record(id));if(records.some(r=>r.kind!=='meal'))throw new Error('只有饮食记录可归为同款餐食。');
+    const aliases=[...new Set(p.aliases??[...(base?.aliases??[]),...(base?.name&&base.name!==name?[base.name]:[]),...records.map(r=>primaryDishName(r.text)).filter((v):v is string=>!!v)])];
+    const next:DishDefinition={id,name,aliases,recordIds,recordKeys:Object.fromEntries(records.map(r=>[r.id,dishRecordKey(r)])),active:p.active??base?.active??true};
+    const checked=dishDefinitionsSchema.parse([...definitions.filter(d=>d.id!==id),next]);
+    return this.transaction(()=>{this.setConfig('dishDefinitions',checked);this.refreshAutomaticMemories();return this.commonDishes().find(d=>d.id===id)??next;});
+  }
   ignoredFoodCandidates():string[]{return (this.getConfig<string[]>('ignoredFoodCandidates')??[]).filter(x=>typeof x==='string');}
   ignoreFoodCandidate(value:unknown){
     const name=z.string().trim().min(1).max(80).parse(value),ignored=this.ignoredFoodCandidates();
@@ -415,9 +444,9 @@ export class HealthStore {
     return {ignored:this.ignoredFoodCandidates()};
   }
   // 反复出现的食材只作为“可加入常用食物”的候选，不自动写入；用户确认后才成为标签数据。
-  foodCandidates():FoodCandidate[]{
-    const presets=this.foodPresets(),ignored=new Set(this.ignoredFoodCandidates()),groups=new Map<string,{name:string;meals:Set<string>;days:Set<string>;latestAt:string;grams:Set<string>;per100g:FoodCandidate['per100g']|null;source:FoodCandidate['source']}>();
-    for(const r of this.records().filter(x=>!x.deleted&&x.kind==='meal')){
+  foodCandidates(includeDishComponents=true):FoodCandidate[]{
+    const presets=this.foodPresets(),ignored=new Set(this.ignoredFoodCandidates()),wholeRecords=new Set(this.commonDishes().filter(d=>d.active).flatMap(d=>d.recordIds)),groups=new Map<string,{name:string;meals:Set<string>;days:Set<string>;latestAt:string;grams:Set<string>;per100g:FoodCandidate['per100g']|null;source:FoodCandidate['source']}>();
+    for(const r of this.records().filter(x=>!x.deleted&&x.kind==='meal'&&(includeDishComponents||!wholeRecords.has(x.id)))){
       for(const ing of r.analysis?.ingredients??[]){
         if(!ing.nutrition&&ing.foodId===null)continue;
         const key=normalizeFoodName(ing.name);if(!key||ignored.has(ing.name))continue;
@@ -621,7 +650,7 @@ export class HealthStore {
     return this.transaction(()=>{for(const c of receipt.changed){const restored={...(c.before??{...c.after,active:false}),revision:memoryRevision(c.after)+1,updatedAt:iso()};this.db.prepare('INSERT INTO revisions(entity,id,doc,at) VALUES(?,?,?,?)').run('memory',c.id,JSON.stringify(c.after),iso());this.db.prepare('UPDATE memories SET doc=? WHERE id=?').run(JSON.stringify(restored),c.id);}if(receipt.beforeGoals)this.setSettings({...this.getSettings(),goals:receipt.beforeGoals});this.invalidateMemoryAnswers();this.putMessage({...message,memoryReceipt:{...receipt,undone:true}});});
   }
   refreshAutomaticMemories() {
-    const existing=this.memories(),drafts=automaticMemories(this.records(),existing),keys=new Set(drafts.map(m=>m.autoKey));
+    const existing=this.memories(),drafts=automaticMemories(this.records(),existing,this.dishDefinitions()),keys=new Set(drafts.map(m=>m.autoKey));
     this.transaction(()=>{
       for(const draft of drafts){
         const old=this.memories().find(m=>m.autoKey===draft.autoKey)||(draft.topicKey?this.memories().find(m=>memoryTopic(m.text,m.topicKey)===draft.topicKey&&m.kind===draft.kind&&m.subject===draft.subject):undefined);
@@ -675,11 +704,12 @@ export class HealthStore {
     const tables:Record<string,unknown[]>={}; for(const name of ['records','revisions','memories','messages','usage']) tables[name]=this.db.prepare(`SELECT * FROM ${name}`).all();
     const files:{path:string;sha256:string;base64:string}[]=[];
     for(const r of this.records(true)) { for(const a of r.attachments) { const data=readFileSync(safePath(this.root,a.file)); files.push({path:a.file,sha256:sha256(data),base64:data.toString('base64')}); } const raw=`raw/${r.id}.json`; if(existsSync(safePath(this.root,raw))) {const data=readFileSync(safePath(this.root,raw));files.push({path:raw,sha256:sha256(data),base64:data.toString('base64')});} }
-    return {format:'bodyjournal-backup',version:this.energy?(Number(this.db.prepare('PRAGMA user_version').get()?.user_version)===2?2:Number(this.db.prepare('PRAGMA user_version').get()?.user_version)>=4?4:3):1,createdAt:iso(),coachProfile:this.coachProfile(),exerciseAliases:this.exerciseAliases(),settings:this.getSettings(),tables,files,energy:this.energy?.export()};
+    return {format:'bodyjournal-backup',version:this.energy?(Number(this.db.prepare('PRAGMA user_version').get()?.user_version)===2?2:Number(this.db.prepare('PRAGMA user_version').get()?.user_version)>=4?4:3):1,createdAt:iso(),coachProfile:this.coachProfile(),exerciseAliases:this.exerciseAliases(),settings:this.getSettings(),dishDefinitions:this.dishDefinitions(),tables,files,energy:this.energy?.export()};
   }
   backup(file:string) { const data=JSON.stringify(this.exportBundle());if(Buffer.byteLength(data)>512*1024*1024)throw new Error('此档案超过首版完整备份的 512 MB 上限，请使用可读导出保存资料。');atomicWrite(file,data); }
   restore(bundle:unknown) {
     const b=bundle as ReturnType<HealthStore['exportBundle']>; if(!b||b.format!=='bodyjournal-backup'||![1,2,3,4].includes(b.version)||!Array.isArray(b.files)||!b.tables) throw new Error('备份格式不支持');
+    const dishDefinitions=dishDefinitionsSchema.parse(b.dishDefinitions??[]);
     const energyData=this.energy.validateBackup(b.version>=2?b.energy:{profiles:[],targets:[],days:[],proposals:[]});
     const profile=b.coachProfile?coachProfileSchema.parse(b.coachProfile):undefined;const aliases=b.exerciseAliases?z.array(z.object({raw:z.string().max(200),name:z.string().min(1).max(100)})).max(1000).parse(b.exerciseAliases):undefined;
     const settings=settingsSchema.parse(b.settings); settings.inbox=this.getSettings().inbox;
@@ -692,6 +722,7 @@ export class HealthStore {
     const rows=b.tables.records as {id:string;doc:string;fingerprint:string}[];
     if(!Array.isArray(rows)||rows.length>100000) throw new Error('备份记录无效');
     for(const row of rows) { const r=parseJSON<HealthRecord>(row.doc); if(r.id!==row.id||!Number.isInteger(r.revision)||r.revision<1) throw new Error('备份记录不一致'); envelopeSchema.parse({version:1,...r,body:r.body??undefined,attachments:[]}); if(r.analysis) analysisSchema.parse(r.analysis);recordProgressSchema.parse(r); for(const a of r.attachments) {const f=files.get(a.file);if(!f||sha256(f.data)!==a.sha256) throw new Error('备份缺少附件');sniffImage(f.data);} }
+    const mealIds=new Set(rows.filter(row=>parseJSON<HealthRecord>(row.doc).kind==='meal').map(row=>row.id));if(dishDefinitions.some(d=>d.recordIds.some(id=>!mealIds.has(id))))throw new Error('餐食分组引用了不存在的饮食记录');
     for(const row of b.tables.memories as {id:string;doc:string}[]) { const m=parseJSON<Memory>(row.doc); idSchema.parse(m.id);if(m.id!==row.id)throw new Error('备份记忆编号不一致'); memoryInputSchema.parse(m); }
     for(const row of b.tables.messages as {id:string;doc:string}[]) { const m=parseJSON<Message>(row.doc); idSchema.parse(m.id); if(!['user','assistant'].includes(m.role)||!Array.isArray(m.sources)||typeof m.text!=='string') throw new Error('备份对话损坏'); }
     const safety=path.join(this.root,'backups',`before-restore-${Date.now()}.bodyjournal`); this.backup(safety);
@@ -705,12 +736,13 @@ export class HealthStore {
       this.energy.restore(energyData);this.energy.mirroring=true;try{this.setSettings(settings);}finally{this.energy.mirroring=false;}
       if(b.version===1&&settings.goals.kcal!==null)this.energy.importManualTarget(settings.goals.kcal,settings.goals.protein);
       this.energy.syncTarget();this.energy.invalidate();if(profile)this.saveCoachProfile(profile);if(aliases)this.setConfig('exerciseAliases',aliases);
-      this.migrateMemoryReliability();if(b.version<4)this.energy.migrateFixedBaselines();this.invalidateMemoryAnswers();
+      this.setConfig('dishDefinitions',dishDefinitions);this.migrateMemoryReliability();if(b.version<4)this.energy.migrateFixedBaselines();this.invalidateMemoryAnswers();
       this.setConfig('energyParsingV1',false);this.setConfig('trainingNotationParsingV1',false);this.setConfig('mealFollowupContextV1',false);this.setConfig('mealFormattingEditsV1',false);
       this.setConfig('conversationStart','');
     });this.migrateTrainingNotationParsing();this.migrateMealFollowupContext();this.migrateMealFormattingEdits();this.migrateEnergyParsing(); return safety;
   }
   exportReadable(dir:string) {
+    atomicWrite(path.join(dir,'常吃餐食.json'),JSON.stringify({definitions:this.dishDefinitions(),dishes:this.commonDishes()},null,2));
     atomicWrite(path.join(dir,'能量资料与目标.json'),JSON.stringify(this.energy.export(),null,2));
     mkdirSync(dir,{recursive:true,mode:0o700});
     const records=this.records(true);atomicWrite(path.join(dir,'个人执行规则.json'),JSON.stringify(this.coachProfile(),null,2));atomicWrite(path.join(dir,'个人执行规则.md'),this.coachProfile().originalText);atomicWrite(path.join(dir,'动作别名.json'),JSON.stringify(this.exerciseAliases(),null,2)); atomicWrite(path.join(dir,'records.json'),JSON.stringify(records,null,2)); atomicWrite(path.join(dir,'memories.json'),JSON.stringify(this.memories(),null,2)); atomicWrite(path.join(dir,'conversations.json'),JSON.stringify(this.messages(),null,2)); atomicWrite(path.join(dir,'goals.json'),JSON.stringify(this.getSettings().goals,null,2));
