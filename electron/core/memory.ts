@@ -21,11 +21,14 @@ const health=(m:Memory)=>/^health\./.test(m.topicKey??'')||/疼|痛|不适|受�
 function hits(query:string,text:string){const q=compact(query),t=compact(text);let n=0;for(let i=0;i<q.length-1;i++)if(t.includes(q.slice(i,i+2)))n++;return n;}
 export function selectMemories(memories:Memory[],purpose:MemoryPurpose,query:string,now=new Date()) {
  const budget=purpose==='weekly'?1600:purpose==='meal'?1200:purpose==='training'?2000:purpose==='memory'?2400:800;
- const active=memories.filter(m=>validMemory(m,now)),train=purpose==='training'||purpose==='weekly'||trainingIntent(query),diet=purpose==='meal'||/吃|餐|食|饿|饱|蛋白|补剂|奶/.test(query);
+ const historical=/以前|当时|上次|那周|那天|曾经|过去|历史|参照|平时的训练/.test(query);
+ const scopedTopics=new Set(memories.filter(m=>m.kind==='state'&&m.confirmed&&validMemory(m,now)&&m.topicKey).map(m=>m.topicKey+'|'+(m.subject??'')));
+ const active=memories.filter(m=>validMemory(m,now)&&!(m.kind==='fact'&&scopedTopics.has(m.topicKey+'|'+(m.subject??'')))&&(!m.autoCategory||historical||+now-Date.parse(m.startsAt)<=90*86400000)),train=purpose==='training'||purpose==='weekly'||trainingIntent(query),diet=purpose==='meal'||/吃|餐|食|饿|饱|蛋白|补剂|奶/.test(query);
  const exactActions=active.filter(m=>m.autoCategory==='training'&&compact(query).includes(compact(m.text.split('：')[0])));
  const scored=active.map(m=>{
   const h=hits(query,`${m.text} ${m.topicKey??''} ${m.food?.name??''} ${m.food?.brand??''}`),topic=m.topicKey??'';
   let score=0;
+  if(m.subject==='study_busy'&&!/赶课|考试|期中|期末|课程紧/.test(query))return {m,score:0};
   if(train&&health(m))score=1000+h;
   else if(m.kind==='food'&&h)score=800+h;
   else if(m.autoCategory==='training'){
@@ -35,8 +38,9 @@ export function selectMemories(memories:Memory[],purpose:MemoryPurpose,query:str
    score=exactActions.includes(m)?750+h:h?450+h:exactActions.length?0:200;
   }else if(m.autoCategory==='meal')score=diet&&h?500+h:0;
   else if(m.kind==='fact')score=/^(communication|recording)\./.test(topic)?600+h:h?650+h:(diet&&/^eating\./.test(topic)||train&&/^training\./.test(topic))?550:purpose==='memory'?100:20;
-  else if(m.kind==='state')score=h?550+h:purpose==='weekly'?250:0;
+  else if(m.kind==='state')score=h?550+h:train&&/^training\./.test(topic)?550:purpose==='weekly'?250:0;
   else if(m.kind==='hypothesis')score=h?50+h:0;
+  if(m.autoCategory)score*=Math.pow(2,-Math.max(0,(+now-Date.parse(m.startsAt))/86400000)/30);
   return {m,score};
  }).filter(x=>x.score>0).sort((a,b)=>b.score-a.score||b.m.startsAt.localeCompare(a.m.startsAt)||a.m.id.localeCompare(b.m.id));
  const items:Memory[]=[];let chars=0,omitted=0,omittedChars=0;

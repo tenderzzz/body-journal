@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync,readdirSync,readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
+import {verifyArchive} from '../electron/core/archive';
 import {HealthStore} from '../electron/core/store';
 import {FoodCatalog} from '../electron/core/nutrition';
 const day='2026-10-27',now=new Date(day+'T12:00:00+08:00');
@@ -53,11 +54,11 @@ test('reference steps suggestion needs seven complete historical days and is a m
 });
 
 test('v2 database is backed up before v3 and v1/v2 backups remain restorable',t=>{
- let store=setup(t);store.energy.saveProfile(profile,now);record(store,'kept-v3-01');const root=store.root;
+ let store=setup(t);store.energy.saveProfile(profile,now);record(store,'kept-v3-01');const root=store.root;const old={...store.exportBundle(),version:2};
  store.db.exec('PRAGMA user_version=2');store.close();store=new HealthStore(root,new FoodCatalog([]),root+'/inbox',false);t.after(()=>{if(store.db.isOpen)store.close();});
- assert.equal(store.db.prepare('PRAGMA user_version').get()?.user_version,4);
+ assert.equal(store.db.prepare('PRAGMA user_version').get()?.user_version,5);
  const files=readdirSync(root+'/backups').filter(f=>f.startsWith('before-activity-v3-'));assert.equal(files.length,1);
- const old=JSON.parse(readFileSync(root+'/backups/'+files[0],'utf8'));assert.equal(old.version,2);assert.equal(old.energy.profiles[0].usualSteps,4000);
+ assert.equal(verifyArchive(root+'/backups/'+files[0]),2);assert.equal(old.energy!.profiles[0].usualSteps,4000);
  store.restore(old);assert.equal(store.record('kept-v3-01').id,'kept-v3-01');assert.equal(store.energy.profiles().length,1);
  store.restore({...old,version:1,energy:undefined});assert.equal(store.energy.profiles().length,0);assert.equal(store.record('kept-v3-01').id,'kept-v3-01');
 });

@@ -4,6 +4,7 @@ import {mkdtempSync,rmSync,readdirSync,readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
+import {verifyArchive} from '../electron/core/archive';
 import {HealthStore} from '../electron/core/store';
 import {FoodCatalog} from '../electron/core/nutrition';
 import {parseTraining} from '../electron/core/parser';
@@ -216,8 +217,8 @@ test('v1 migration creates a pre-upgrade backup; v3 backup round-trip and v1 res
   store.restore({...bundle,version:1,energy:undefined});assert.deepEqual(store.energy.export(),{profiles:[],targets:[],days:[],proposals:[]});
   const root=store.root;store.db.exec('PRAGMA user_version=1');store.close();
   store=new HealthStore(root,new FoodCatalog([]),path.join(root,'inbox'),false);
-  const files=readdirSync(path.join(root,'backups')).filter(f=>f.startsWith('before-energy-v2-'));assert.equal(files.length,1);assert.equal(JSON.parse(readFileSync(path.join(root,'backups',files[0]),'utf8')).version,1);
-  assert.equal(store.db.prepare('PRAGMA user_version').get()?.user_version,4);store.close();
+  const files=readdirSync(path.join(root,'backups')).filter(f=>f.startsWith('before-energy-v2-'));assert.equal(files.length,1);assert.equal(verifyArchive(path.join(root,'backups',files[0])),1);
+  assert.equal(store.db.prepare('PRAGMA user_version').get()?.user_version,5);store.close();
 });
 
 function sse(value:unknown,complete=true){const text=JSON.stringify(value);return new Response(`data: ${JSON.stringify({type:'response.output_text.delta',delta:text})}\n\n`+(complete?`data: ${JSON.stringify({type:'response.completed',response:{usage:{input_tokens:20,output_tokens:30}}})}\n\n`:''),{headers:{'Content-Type':'text/event-stream'}});}

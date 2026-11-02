@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, statSync, lstatSync, realpathSync, copyFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, statSync, lstatSync, realpathSync, copyFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import type { Analysis, Attachment, Envelope, HealthRecord, Memory, Message, Settings, CoachProfile, MemoryChange, ExerciseRules, FoodPreset, FoodCandidate, CommonDish, DishDefinition } from '../../src/shared/types';
 import { analysisSchema, bodySchema, envelopeSchema, idSchema, memoryInputSchema, settingsSchema, readableError, coachProfileSchema, memoryChangeSchema, runSchema, dailyActivitySchema } from './validation';
@@ -21,6 +21,8 @@ import { EnergyStore } from './energy-store';
 import {normalizeModelOutput} from '../ai/model-output';
 import {detectTrainingNotation,mergeTrainingNotation,type TrainingNotation} from './training-notation';
 import {memoryTopic,memoryRevision,memoryDependency,selectMemories,type MemoryPurpose} from './memory';
+import {createRecordIndex,queryPeriod,periodBounds,queryKind,episodeFrom,topicOf,temporalScope,sanitizeSource,memoryEvidenceSources,habitFamiliarity,RECALL_VERSION,type Episode} from './recall';
+import {beforeUpgrade,recoverSwap,writeArchive,extractArchive,isArchive,switchVault} from './archive';
 
 export function sha256(data:Buffer|string) { return createHash('sha256').update(data).digest('hex'); }
 export function atomicWrite(file:string,data:string|Buffer) { mkdirSync(path.dirname(file),{recursive:true,mode:0o700}); const tmp=`${file}.${randomUUID()}.tmp`; writeFileSync(tmp,data,{mode:0o600}); renameSync(tmp,file); }
@@ -53,11 +55,13 @@ export class HealthStore {
   energy!:EnergyStore;
   syncState: { imported:number;pending:number;errors:string[];at?:string }={imported:0,pending:0,errors:[]};
   constructor(public root:string,public catalog:FoodCatalog,defaultInbox:string,seed=true) {
+    recoverSwap(root);
+    beforeUpgrade(root);
     mkdirSync(root,{recursive:true,mode:0o700});
     this.db=new DatabaseSync(path.join(root,'health.sqlite'));
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
     const version=Number(this.db.prepare('PRAGMA user_version').get()?.user_version??0);
-    if(version>4) throw new Error('档案由更高版本创建，请升级应用后再打开。');
+    if(version>5) throw new Error('档案由更高版本创建，请升级应用后再打开。');
     if(version>0 && version<1) this.db.prepare('VACUUM INTO ?').run(path.join(root,`before-migration-${Date.now()}.sqlite`));
     this.db.exec(`CREATE TABLE IF NOT EXISTS records(id TEXT PRIMARY KEY, doc TEXT NOT NULL, fingerprint TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS revisions(seq INTEGER PRIMARY KEY AUTOINCREMENT, entity TEXT NOT NULL, id TEXT NOT NULL, doc TEXT NOT NULL, at TEXT NOT NULL);
@@ -80,10 +84,12 @@ export class HealthStore {
     this.transaction(()=>{
       if(version<2&&this.getSettings().goals.kcal!==null)this.energy.importManualTarget(this.getSettings().goals.kcal!,this.getSettings().goals.protein);
       this.migrateMemoryReliability();this.energy.migrateFixedBaselines();
-      this.db.exec('PRAGMA user_version=4');});
+      this.db.exec('CREATE TABLE IF NOT EXISTS memory_episodes(id TEXT PRIMARY KEY,doc TEXT NOT NULL); PRAGMA user_version=5');});
+    createRecordIndex(this.db);
+    this.backfillEpisodes();
     this.energy.syncTarget();this.energy.invalidate();
   }
-  close() { this.db.close(); }
+  close() { if(this.db.isOpen)this.db.close(); }
   private trainingNotation(text:string,at:string):TrainingNotation{
     const remembered=this.memoriesAt(new Date(at)).filter(m=>m.kind==='fact'&&m.confirmed&&validMemory(m,new Date(at))&&/^recording\./.test(m.topicKey??''))
       .sort((a,b)=>a.startsAt.localeCompare(b.startsAt)).reduce((result,m)=>({...result,...detectTrainingNotation(m.text)}),{} as TrainingNotation);
@@ -183,7 +189,7 @@ export class HealthStore {
     const r:HealthRecord={id:e.id,kind:e.kind,occurredAt:resolved?.occurredAt??e.occurredAt,capturedAt:e.occurredAt,dateLocked:e.dateLocked,...(resolved?{dateResolution:{originalAt:e.occurredAt,matchedText:resolved.matchedText,dateOnly:resolved.dateOnly}}:{}),...(recoveredTime&&!resolved?{timeSource:'file_modified' as const}:{}),timezone:e.timezone,text:e.text,attachments:prepared.map(p=>p.attachment),body,analysis:parsed.analysis,status:parsed.status,analysisPending:e.kind!=='body'&&(parsed.status!=='ready'||prepared.length>0),revision:1,createdAt:iso(),updatedAt:iso(),deleted:false,source};
     for(const p of prepared) atomicWrite(safePath(this.root,p.attachment.file),p.data);
     atomicWrite(path.join(this.root,'raw',`${e.id}.json`),JSON.stringify({...e,...(recoveredTime?{occurredAt:'',timeRecovery:{source:'file_modified',usedAt:recoveredTime}}:{}),attachments:r.attachments,imageBase64:undefined},null,2));
-    this.putRecord(r,fp); this.refreshAutomaticMemories(); return {record:r,duplicate:false};
+    this.putRecord(r,fp);this.saveEpisode(r.text,r.occurredAt,{recordId:r.id,recordRevision:r.revision}); this.refreshAutomaticMemories(); return {record:r,duplicate:false};
   }
   importMany(envelopes:unknown[],source='历史笔记'):HealthRecord[] {
     envelopes.forEach(e=>envelopeSchema.parse(e));
@@ -240,6 +246,7 @@ export class HealthStore {
   private commitRevision(old:HealthRecord,updated:HealthRecord,options?:{skipInvalidate?:string[]}):HealthRecord {
     const next={...updated,...(updated.analysis?{analysis:withActivityOverrides(normalizeAnalysis(updated.analysis,updated.text,this.exerciseAliases(),this.exerciseRules()),updated.analysis.activityOverrides)}:{}),revision:old.revision+1,updatedAt:iso()};
     const result=this.transaction(()=>{ this.db.prepare('INSERT INTO revisions(entity,id,doc,at) VALUES(?,?,?,?)').run('record',old.id,JSON.stringify(old),iso()); this.putRecord(next); this.invalidate(old.id,new Set(options?.skipInvalidate??[])); return next; });
+    this.db.prepare("DELETE FROM memory_episodes WHERE json_extract(doc,'$.recordId')=?").run(old.id);if(!updated.deleted)this.saveEpisode(updated.text,updated.occurredAt,{recordId:old.id,recordRevision:next.revision});
     this.refreshAutomaticMemories(); return result;
   }
   undoRecord(id:string) { const old=this.record(id); const row=this.db.prepare("SELECT doc FROM revisions WHERE entity='record' AND id=? ORDER BY seq DESC LIMIT 1").get(id); if(!row) throw new Error('这条记录还没有可撤销的修改'); const prior=parseJSON<HealthRecord>(row.doc);return this.commitRevision(old,{...prior,dateLocked:old.occurredAt!==prior.occurredAt?true:prior.dateLocked}); }
@@ -370,7 +377,7 @@ export class HealthStore {
     return this.memories().flatMap(current=>{
       if(current.stale)return [];
       if(Math.max(Date.parse(current.startsAt),Date.parse(current.versionStartsAt??current.startsAt))<=+at&&(current.active||!current.updatedAt||Date.parse(current.updatedAt)<=+at))return [current];
-      const previous=this.memoryHistory(current.id).map(h=>h.memory).filter(m=>Math.max(Date.parse(m.startsAt),Date.parse(m.versionStartsAt??m.startsAt))<=+at).sort((a,b)=>memoryRevision(b)-memoryRevision(a))[0];
+      const previous=this.db.prepare("SELECT doc FROM revisions WHERE entity='memory' AND id=?").all(current.id).map(r=>parseJSON<Memory>(r.doc)).filter(m=>Math.max(Date.parse(m.startsAt),Date.parse(m.versionStartsAt??m.startsAt))<=+at).sort((a,b)=>memoryRevision(b)-memoryRevision(a))[0];
       return previous?[previous]:[];
     });
   }
@@ -378,7 +385,9 @@ export class HealthStore {
     const memories=this.memories(),now=new Date();
     for(const m of this.messages()){
       if(m.stale||m.role!=='assistant')continue;
-      const invalid=m.memoryDependency?.some(d=>{const current=memories.find(x=>x.id===d.id);return !current||!validMemory(current,now)||memoryRevision(current)!==d.revision||current.text!==d.text;});
+      const at=m.contextReceipt?.period?new Date(m.contextReceipt.period.asOf):now;
+      const available=m.contextReceipt?.period?this.memoriesAt(at):memories;
+      const invalid=m.memoryDependency?.some(d=>{const current=available.find(x=>x.id===d.id);return !current||!validMemory(current,at)||memoryRevision(current)!==d.revision||current.text!==d.text;});
       const legacy=changedId&&!m.memoryDependency&&m.text.includes(`[记忆:${changedId}]`);
       if(invalid||legacy)this.putMessage({...m,stale:true});
     }
@@ -590,7 +599,7 @@ export class HealthStore {
   }
   repairExerciseAliases(){const aliases=this.exerciseAliases();if(aliases.length)this.reclassifyExercises(aliases);}
   completeChat(reply:Message,changes:MemoryChange[],user:Message,expected:Memory[],expectedGoals:Settings['goals'],energyProposal?:{value:{kcal:number;reason:string};hash:string}) {
-    const updates=changes.map(c=>{const p=memoryChangeSchema.parse(c);return {...p,...(p.kind==='fact'&&p.operation==='upsert'&&/这周|本周|这几天|暂时/.test(p.evidenceQuote)?{kind:'state' as const}:{}),key:memoryTopic(p.text??p.evidenceQuote,p.key)!};});const current=this.memories();
+    const updates=changes.map(c=>{const p=memoryChangeSchema.parse(c);return {...p,subject:p.subject??(/赶课|考试|期中|期末/.test(p.evidenceQuote)&&/^training\./.test(p.key)?'study_busy':undefined),...(p.kind==='fact'&&p.operation==='upsert'&&/这周|本周|这几天|暂时/.test(p.evidenceQuote)?{kind:'state' as const}:{}),key:memoryTopic(p.text??p.evidenceQuote,p.key)!};});const current=this.memories();
     const changed:{id:string;before:Memory|null;after:Memory}[]=[];let goals={...expectedGoals};
     for(const c of updates){
       if(!user.text.includes(c.evidenceQuote))throw new Error('记忆更新缺少你的原话依据，未保存。');
@@ -625,12 +634,13 @@ export class HealthStore {
         if(!/目标|训练安排/.test(c.evidenceQuote)||!/改|更新|设|希望|目标是/.test(c.evidenceQuote))throw new Error('修改目标需要你的明确表达。');
         if(c.key==='goals.goal')goals.goal=text;else if(c.key==='goals.training')goals.training=text;else throw new Error('这类目标请在我的档案中设置。');
       }
-      const startsAt=user.createdAt,expiresAt=c.kind==='state'?(c.expiresAt??new Date(Date.parse(startsAt)+7*86400000).toISOString()):null;
+      const temporal=temporalScope(c.evidenceQuote,user.createdAt,this.getSettings().timezone);
+      const startsAt=c.kind==='state'?temporal.occurredAt:user.createdAt,expiresAt=c.kind==='state'?(temporal.expiresAt??c.expiresAt):null;
       const evidence:NonNullable<Memory['evidence']>=[{quote:c.evidenceQuote,origin:'user',messageId:user.id,at:user.createdAt}];
       if(c.key==='recording.training_notation'&&!Object.keys(detectTrainingNotation(c.evidenceQuote)).length)throw new Error('记法更新缺少明确的原话依据，未保存。');
       const content=c.key==='recording.training_notation'?mergeTrainingNotation(before,{text:c.evidenceQuote,evidence}):{text,evidence};
       const checked=memoryInputSchema.parse({kind:c.kind??'fact',text:content.text,startsAt,expiresAt,sourceIds:[...new Set(content.evidence.flatMap(e=>e.recordId?[e.recordId]:[]))],active:true,confirmed:c.kind!=='hypothesis',...(c.food?{food:c.food}:{})});
-      const id=before?.id??randomUUID();const after:Memory={...before,...checked,id,subject:c.subject??before?.subject,versionStartsAt:user.createdAt,revision:before?memoryRevision(before)+1:1,updatedAt:iso(),supersedesRevision:before?memoryRevision(before):undefined,evidence:content.evidence,topicKey:c.key,sourceMessageIds:[...(before?.sourceMessageIds??[]),user.id].slice(-20),autoManaged:false,stale:false,...(c.split?{policy:{split:c.split}}:{})};
+      const id=before?.id??randomUUID();const after:Memory={...before,...checked,id,subject:c.subject??before?.subject,versionStartsAt:c.kind==='state'?startsAt:user.createdAt,recordedAt:user.createdAt,revision:before?memoryRevision(before)+1:1,updatedAt:iso(),supersedesRevision:before?memoryRevision(before):undefined,evidence:content.evidence,topicKey:c.key,sourceMessageIds:[...(before?.sourceMessageIds??[]),user.id].slice(-20),autoManaged:false,stale:false,...(c.split?{policy:{split:c.split}}:{})};
       changed.push({id,before:before??null,after});
     }
     if(updates.some(c=>c.operation==='set_goal')&&JSON.stringify(this.getSettings().goals)!==JSON.stringify(expectedGoals))throw new Error('目标已在回答期间修改，本次未覆盖。');
@@ -674,7 +684,7 @@ export class HealthStore {
   }
   undoMemory(id:string) { const row=this.db.prepare("SELECT doc FROM revisions WHERE entity='memory' AND id=? ORDER BY seq DESC LIMIT 1").get(id); if(!row) throw new Error('没有可撤销的记忆修改'); const m=parseJSON<Memory>(row.doc); return this.saveMemory(m,id); }
   messages():Message[] { return this.db.prepare('SELECT doc FROM messages ORDER BY rowid').all().map(r=>parseJSON<Message>(r.doc)); }
-  putMessage(m:Message) { this.db.prepare('INSERT INTO messages VALUES(?,?) ON CONFLICT(id) DO UPDATE SET doc=excluded.doc').run(m.id,JSON.stringify(m)); }
+  putMessage(m:Message) { this.db.prepare('INSERT INTO messages VALUES(?,?) ON CONFLICT(id) DO UPDATE SET doc=excluded.doc').run(m.id,JSON.stringify(m));if(m.role==='user'&&m.status==='complete'&&this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='memory_episodes'").get())this.saveEpisode(m.text,m.createdAt,{messageId:m.id}); }
   history(id:string) { return this.db.prepare('SELECT doc,at FROM revisions WHERE id=? ORDER BY seq DESC LIMIT 30').all(id).map(r=>({at:r.at,record:parseJSON(r.doc)})); }
   usage(month=iso().slice(0,7)) {
     const rows=this.db.prepare("SELECT * FROM usage WHERE month=? AND provider='deepseek'").all(month);
@@ -690,24 +700,194 @@ export class HealthStore {
   memoryContext(purpose:MemoryPurpose,query:string,at=new Date()){
     return selectMemories(this.memoriesAt(at),purpose,query,at);
   }
-  context(question:string,purpose:'chat'|'weekly'|'memory'='chat') {
-    const all=this.records(); const now=Date.now(); const long=/全部|所有|历史|长期|半年|一年/.test(question);
-    const days=/月/.test(question)?90:35; const keywords=question.split(/[，。！？\s]+/).filter(s=>s.length>1);
-    const dated=question.match(/\b20\d{2}-\d{2}-\d{2}\b/)?.[0],requestedAt=dated?new Date(dated+'T12:00:00+08:00'):new Date();
-    const selection=this.memoryContext(purpose,question,Number.isFinite(+requestedAt)&&+requestedAt<=now?requestedAt:new Date()),memories=selection.items,memoryIds=new Set([...memories.flatMap(m=>m.sourceIds),...[...question.matchAll(/\[记录:([a-zA-Z0-9_-]+)\]/g)].map(m=>m[1])]);
-    const recent=all.filter(r=>long||Date.parse(r.occurredAt)>=now-days*86400000||keywords.some(k=>r.text.includes(k)));
-    const relevant=[...new Map([...all.filter(r=>memoryIds.has(r.id)).slice(0,60),...recent].map(r=>[r.id,r])).values()].slice(0,160).sort((a,b)=>Date.parse(b.occurredAt)-Date.parse(a.occurredAt));
-    return {goals:this.getSettings().goals,memories,weekly:weeklyContext(all,this.getSettings().timezone,new Date(),this.trainingSplit()),stats:computeStats(relevant,this.getSettings().timezone,{rules:this.exerciseRules()}),records:relevant.map(r=>({id:r.id,revision:r.revision,kind:r.kind,occurredAt:r.occurredAt,timeSource:r.timeSource,dateResolution:r.dateResolution,text:r.text.slice(0,4000),body:r.body,status:r.status,analysis:r.analysis})),coverage:{allRecords:all.length,included:relevant.length,earliest:relevant.at(-1)?.occurredAt,latest:relevant[0]?.occurredAt,scope:long?'历史记录（最多 160 条）':`最近 ${days} 天及关键词匹配记录（最多 160 条）`},memoryCoverage:{included:selection.items.length,omitted:selection.omitted,chars:selection.chars,budget:selection.budget}};
+  private allMemoryVersions():Memory[]{
+    return [...this.memories(),...this.db.prepare("SELECT doc FROM revisions WHERE entity='memory' ORDER BY seq").all().map(r=>parseJSON<Memory>(r.doc))];
+  }
+  private saveEpisode(text:string,at:string,source:{messageId?:string;recordId?:string;recordRevision?:number},quote?:string){
+    if(source.messageId&&/已(?:经)?解决|问题解决了|已经安排好|就这么定|不用继续/.test(text)){
+      const candidates=this.db.prepare('SELECT doc FROM memory_episodes').all().map(r=>parseJSON<Episode>(r.doc)).filter(e=>e.status==='open'&&Date.parse(e.recordedAt)<=Date.parse(at)&&Date.parse(at)-Date.parse(e.recordedAt)<=3*86400000&&(!topicOf(text)||e.topic===topicOf(text)));
+      const topics=new Set(candidates.map(e=>e.topic+'|'+(e.subject??'')));
+      if(topics.size===1)for(const e of candidates)this.db.prepare('UPDATE memory_episodes SET doc=? WHERE id=?').run(JSON.stringify({...e,status:'resolved'}),e.id);
+      return;
+    }
+    const episode=episodeFrom(text,at,this.getSettings().timezone,source,quote);
+    if(episode&&(!quote||!this.db.prepare('SELECT 1 FROM memory_episodes WHERE id=?').get(episode.id)))this.db.prepare('INSERT OR REPLACE INTO memory_episodes VALUES(?,?)').run(episode.id,JSON.stringify(episode));
+  }
+  saveEpisodeCandidates(value:unknown,source:{messageId?:string;recordId?:string;recordRevision?:number},text:string,at:string){
+    if(!Array.isArray(value))return;
+    for(const candidate of value.slice(0,3))if(candidate&&typeof candidate.quote==='string'&&candidate.quote.length<=2000&&text.includes(candidate.quote))this.saveEpisode(text,at,source,candidate.quote);
+  }
+  private backfillEpisodes(){
+    if(this.getConfig('episodesBackfillV1'))return;
+    for(const row of this.db.prepare('SELECT doc FROM messages').iterate()){
+      const m=parseJSON<Message>(row.doc);if(m.role==='user'&&m.status==='complete')this.saveEpisode(m.text,m.createdAt,{messageId:m.id});
+    }
+    for(const r of this.records())if(r.kind==='note'||r.kind==='training')this.saveEpisode(r.text,r.occurredAt,{recordId:r.id,recordRevision:r.revision});
+    this.setConfig('episodesBackfillV1',true);
+  }
+  context(question:string,purpose:'chat'|'weekly'|'memory'='chat',now=new Date()) {
+    const zone=this.getSettings().timezone,query=queryPeriod(question,zone,now);
+    if(query.historical&&!query.period&&/上次|那周|赶课|考试/.test(question)){
+      const last=this.db.prepare('SELECT doc FROM memory_episodes').all().map(r=>parseJSON<Episode>(r.doc)).filter(e=>Date.parse(e.occurredAt)<=+now&&(e.topic===topicOf(question)||e.condition&&/赶课|考试/.test(question))).sort((a,b)=>b.occurredAt.localeCompare(a.occurredAt))[0];
+      if(last){const from=localDay(last.occurredAt,zone),end=last.expiresAt?new Date(Date.parse(last.expiresAt)-1):new Date(last.occurredAt);query.period={from,to:localDay(end.toISOString(),zone),asOf:new Date(Math.min(+now,+end)).toISOString()};}
+    }
+    const at=query.period?new Date(query.period.asOf):now;
+    const all=this.records(),versions=this.allMemoryVersions(),messages=this.messages();
+    const effective=this.memoriesAt(at).filter(m=>validMemory(m,at));
+    const explicitHistory=query.historical;
+    const storedEpisodes=this.db.prepare('SELECT doc FROM memory_episodes').all().map(r=>parseJSON<Episode>(r.doc));
+    let episodes=storedEpisodes.filter(e=>{
+      if(Date.parse(e.occurredAt)>+at)return false;
+      if(e.recordId){const r=all.find(r=>r.id===e.recordId);if(!r||r.deleted||r.revision!==e.recordRevision)return false;}
+      if(e.messageId&&!messages.some(m=>m.id===e.messageId&&m.role==='user'&&m.status==='complete'))return false;
+      const sourceMatches=(v:NonNullable<Memory['evidence']>[number])=>!!(e.messageId&&v.messageId===e.messageId||e.recordId&&v.recordId===e.recordId);
+      const effectiveQuotes=new Set(effective.flatMap(m=>(m.evidence??[]).filter(sourceMatches).map(v=>v.quote)));
+      const blocked=versions.flatMap(m=>(m.evidence??[]).filter(v=>sourceMatches(v)&&!effectiveQuotes.has(v.quote)).map(v=>v.quote)).filter(Boolean);
+      if(!sanitizeSource(e.quote,blocked))return false;
+      e.quote=sanitizeSource(e.quote,blocked);
+      return true;
+    });
+    const patternEpisodes=storedEpisodes.filter(e=>!e.openQuestion&&Date.parse(e.occurredAt)<=+at&&+at-Date.parse(e.occurredAt)<=90*86400000&&(!e.recordId||all.some(r=>r.id===e.recordId&&r.revision===e.recordRevision))&&!this.memories().some(m=>!m.active&&m.evidence?.some(v=>v.messageId===e.messageId&&e.messageId||v.recordId===e.recordId&&e.recordId)));
+    episodes=episodes.filter(e=>explicitHistory||(e.status!=='resolved'&&+at-Date.parse(e.occurredAt)<=14*86400000&&(!e.expiresAt||Date.parse(e.expiresAt)>+at)));
+    let topic=topicOf(question),clarification=query.clarification;
+    if(!topic&&/^(那|所以|接着|继续)|还是上次|照旧/.test(question)){
+      const topics=[...new Set(episodes.map(e=>e.topic))];
+      if(topics.length===1)topic=topics[0];else if(topics.length>1)clarification='你想接着聊训练、饮食，还是最近的状态？';
+      const subjects=new Set(episodes.filter(e=>e.topic===topic&&e.subject).map(e=>e.subject));
+      if(subjects.size>1)clarification='前面聊到了不同部位，你想接着聊哪一项训练？';
+    }
+    const requestedSubject=topic==='training'?question.match(/胸|背|肩|腿|膝|腕/)?.[0]:undefined;
+    const relevantEpisodes=episodes.filter(e=>e.topic===topic&&(!requestedSubject||!e.subject||e.subject===requestedSubject)).sort((a,b)=>b.occurredAt.localeCompare(a.occurredAt)).slice(0,4);
+    const memoryQuery=question+' '+relevantEpisodes.map(e=>e.quote).join(' ');
+    const selection=this.memoryContext(purpose,memoryQuery,at);
+    let memories=selection.items;
+    const selectedVersions=new Set(memories.map(m=>m.id+'@'+memoryRevision(m)));
+    const blockedFor=(messageId?:string,recordId?:string)=>[
+      ...versions.flatMap(m=>(m.evidence??[]).filter(e=>((messageId&&e.messageId===messageId)||(recordId&&e.recordId===recordId))&&!selectedVersions.has(m.id+'@'+memoryRevision(m))).map(e=>e.quote)),
+      ...storedEpisodes.filter(e=>!explicitHistory&&((messageId&&e.messageId===messageId)||(recordId&&e.recordId===recordId))&&(e.status==='resolved'||Date.parse(e.expiresAt??'9999-01-01')<=+at||+at-Date.parse(e.occurredAt)>14*86400000)).map(e=>e.quote),
+    ].filter(Boolean);
+    memories=memories.map(m=>({...m,evidence:m.evidence?.map(e=>({...e,quote:sanitizeSource(e.quote,blockedFor(e.messageId,e.recordId))})).filter(e=>e.quote||e.origin==='unknown')}));
+    const retired=this.retiredMemoryMessageIds();
+    const since=this.getConfig<string>('conversationStart')??'';
+    const recentIds=new Set(messages.filter(m=>m.status==='complete'&&!m.stale).slice(-20).map(m=>m.id));
+    const conversation=messages.filter(m=>m.status==='complete'&&!m.stale&&(!retired.has(m.id)||explicitHistory)&&Date.parse(m.createdAt)<=+at).flatMap(m=>{
+      const age=(+at-Date.parse(m.createdAt))/86400000;
+      const direct=recentIds.has(m.id)&&(!since||Date.parse(m.createdAt)>=Date.parse(since))&&age<=3&&!explicitHistory;
+      const matches=topicOf(m.text)===topic||question.split(/[，。！？\s]+/).some(k=>k.length>1&&m.text.includes(k));
+      if(!direct&&(!matches||!explicitHistory&&age>14))return [];
+      if(m.role==='assistant'&&m.memoryDependency?.some(d=>!memories.some(v=>v.id===d.id&&memoryRevision(v)===d.revision)))return [];
+      const text=sanitizeSource(m.text,blockedFor(m.id));
+      return text?[{id:m.id,role:m.role,createdAt:m.createdAt,text:text.slice(0,4000)}]:[];
+    }).slice(-28);
+    const memorySources=memoryEvidenceSources(memories,messages).map(m=>({...m,text:sanitizeSource(m.text,blockedFor(m.id))})).filter(m=>m.text);
+    let relevant:HealthRecord[];
+    if(query.period){
+      const bounds=periodBounds(query.period,zone),kind=queryKind(question);
+      const sql='SELECT r.doc FROM records_lookup l JOIN records r ON r.id=l.id WHERE l.deleted=0 AND l.occurred_ms>=? AND l.occurred_ms<?'+(kind?' AND l.kind=?':'')+' ORDER BY l.occurred_ms DESC';
+      relevant=this.db.prepare(sql).all(...(kind?[bounds.from,bounds.until,kind]:[bounds.from,bounds.until])).map(r=>parseJSON<HealthRecord>(r.doc));
+    }else{
+      const long=/全部|所有|历史|长期|半年|一年/.test(question),days=/月/.test(question)?90:35;
+      const ids=new Set([...memories.flatMap(m=>m.sourceIds),...[...question.matchAll(/\[记录:([a-zA-Z0-9_-]+)\]/g)].map(m=>m[1])]);
+      relevant=all.filter(r=>Date.parse(r.occurredAt)<=+at&&(ids.has(r.id)||long||Date.parse(r.occurredAt)>=+at-days*86400000));
+    }
+    const energy=!query.historical&&purpose!=='memory'&&(/能量|热量|消耗|摄入|饮食|吃|蛋白|目标|下一次.*练|下次.*练/.test(question)||purpose==='weekly')?this.energy.chatContext(question,now):undefined;
+    const energyHistory=query.historical&&query.period&&/能量|热量|消耗|摄入|蛋白|目标/.test(question)?Array.from({length:Math.min(31,Math.round((Date.parse(query.period.to)-Date.parse(query.period.from))/86400000)+1)},(_,i)=>this.energy.day(new Date(Date.parse(query.period!.from+'T12:00:00Z')+i*86400000).toISOString().slice(0,10))):undefined;
+    const energyIds=new Set([...(energy?[...energy.selected.sources,...energy.days.flatMap(d=>d.sources)]:[]),...(energyHistory?.flatMap(d=>d.sources)??[])].map(s=>s.id));
+    const records=relevant.map(r=>({...r,text:sanitizeSource(r.text,blockedFor(undefined,r.id))}));
+    const evidenceRecords=[...new Map([...records,...all.filter(r=>energyIds.has(r.id)).map(r=>({...r,text:sanitizeSource(r.text,blockedFor(undefined,r.id))}))].map(r=>[r.id,r])).values()];
+    const historicalRecords=all.filter(r=>Date.parse(r.occurredAt)<=+at);
+    const goals=query.historical?{goal:'历史目标描述以当时记录为准',training:'',kcal:query.period?this.energy.targetAt(query.period.to)?.kcal??null:null,protein:query.period?this.energy.targetAt(query.period.to)?.protein??null:null}:this.getSettings().goals;
+    const patterns:Record<string,{days:Set<string>;weeks:Set<string>;sources:string[]}>={};
+    for(const e of patternEpisodes.filter(e=>e.condition&&e.topic===topic&&/缩短|减少|最多|只留|控制.{0,8}分钟/.test(e.quote))){
+      const day=localDay(e.occurredAt,zone),weekday=new Date(day+'T12:00:00Z').getUTCDay();
+      const p=patterns[e.condition!]??={days:new Set(),weeks:new Set(),sources:[]};p.days.add(day);p.weeks.add(new Date(Date.parse(day+'T12:00:00Z')-((weekday+6)%7)*86400000).toISOString().slice(0,10));p.sources.push(e.messageId??e.recordId!);
+    }
+    return {goals,query,clarification,conversation,memorySources,memories,energy,energyHistory,
+      episodes:relevantEpisodes.map(e=>({...e,quote:+at-Date.parse(e.occurredAt)<=3*86400000?e.quote:e.quote.slice(0,160),detail:+at-Date.parse(e.occurredAt)<=3*86400000?'original':'dated_summary'})),
+      observedPatterns:Object.entries(patterns).filter(([,p])=>p.days.size>=3&&p.weeks.size>=2&&Date.parse([...p.days].sort().at(-1)!+'T12:00:00Z')>=+at-30*86400000).map(([condition,p])=>({condition,summary:'过去不同赶课时段曾缩短训练，本次安排仍需结合当前时间。',sources:p.sources,independentDays:p.days.size,periods:p.weeks.size})),
+      familiarity:memories.filter(m=>m.kind==='habit').map(m=>({id:m.id,...habitFamiliarity(m,all,at)})),
+      weekly:weeklyContext(historicalRecords,zone,at,this.trainingSplit()),stats:computeStats(records,zone,{rules:this.exerciseRules()}),
+      records:evidenceRecords.slice(0,240).map(r=>{
+        const blocked=blockedFor(undefined,r.id);
+        const analysis=r.analysis?{...r.analysis,memoryReceipt:undefined,memories:undefined,memoryChanges:undefined,...(blocked.length?{summary:'原记录含已更正或过期的线索，此处保留结构化实际数据。',assumptions:[],questions:[]}: {})}:null;
+        return {id:r.id,revision:r.revision,kind:r.kind,occurredAt:r.occurredAt,timeSource:r.timeSource,dateResolution:r.dateResolution,text:r.text.slice(0,4000),body:r.body,status:r.status,analysis};
+      }),
+      coverage:{allRecords:all.length,included:Math.min(240,evidenceRecords.length),matched:records.length,earliest:records.at(-1)?.occurredAt,latest:records[0]?.occurredAt,scope:query.period?`${query.period.from} 至 ${query.period.to}，按发生时间查询`:'近期及相关记录（最多160条详情）'},
+      memoryCoverage:{included:memories.length,omitted:selection.omitted,chars:selection.chars,budget:selection.budget},promptVersion:RECALL_VERSION};
   }
   attachmentData(id:string,index:number) { const r=this.record(id); const a=r.attachments[index]; if(!a) throw new Error('附件不存在'); const data=readFileSync(safePath(this.root,a.file)); if(sha256(data)!==a.sha256) throw new Error('图片校验失败'); return `data:${a.mime};base64,${data.toString('base64')}`; }
   exportBundle() {
     const tables:Record<string,unknown[]>={}; for(const name of ['records','revisions','memories','messages','usage']) tables[name]=this.db.prepare(`SELECT * FROM ${name}`).all();
     const files:{path:string;sha256:string;base64:string}[]=[];
     for(const r of this.records(true)) { for(const a of r.attachments) { const data=readFileSync(safePath(this.root,a.file)); files.push({path:a.file,sha256:sha256(data),base64:data.toString('base64')}); } const raw=`raw/${r.id}.json`; if(existsSync(safePath(this.root,raw))) {const data=readFileSync(safePath(this.root,raw));files.push({path:raw,sha256:sha256(data),base64:data.toString('base64')});} }
-    return {format:'bodyjournal-backup',version:this.energy?(Number(this.db.prepare('PRAGMA user_version').get()?.user_version)===2?2:Number(this.db.prepare('PRAGMA user_version').get()?.user_version)>=4?4:3):1,createdAt:iso(),coachProfile:this.coachProfile(),exerciseAliases:this.exerciseAliases(),settings:this.getSettings(),dishDefinitions:this.dishDefinitions(),tables,files,energy:this.energy?.export()};
+    return {format:'bodyjournal-backup',version:this.energy?(Number(this.db.prepare('PRAGMA user_version').get()?.user_version)===2?2:Number(this.db.prepare('PRAGMA user_version').get()?.user_version)>=4?4:3):1,createdAt:iso(),coachProfile:this.coachProfile(),exerciseAliases:this.exerciseAliases(),exerciseRules:this.exerciseRules(),ignoredFoodCandidates:this.ignoredFoodCandidates(),settings:this.getSettings(),dishDefinitions:this.dishDefinitions(),tables,files,energy:this.energy?.export()};
   }
-  backup(file:string) { const data=JSON.stringify(this.exportBundle());if(Buffer.byteLength(data)>512*1024*1024)throw new Error('此档案超过首版完整备份的 512 MB 上限，请使用可读导出保存资料。');atomicWrite(file,data); }
+  backup(file:string) { writeArchive(this.db,this.root,file); }
+  restoreFile(file:string) {
+    if(!isArchive(file)){
+      if(statSync(file).size>512*1024*1024)throw new Error('旧 JSON 备份超过支持的 512 MB，请使用 v5 完整备份。');
+      return this.restore(JSON.parse(readFileSync(file,'utf8')));
+    }
+    return this.restoreStaged(stage=>extractArchive(file,stage));
+  }
   restore(bundle:unknown) {
+    return this.restoreStaged(stage=>{
+      const target=new HealthStore(stage,this.catalog,this.getSettings().inbox,false);
+      try{target.restoreLegacy(bundle);}finally{target.close();}
+    });
+  }
+  private restoreStaged(populate:(stage:string)=>void){
+    const stage=this.root+'.staged-'+randomUUID();
+    const safety=this.root+'.before-restore-'+Date.now()+'.bodyjournal';
+    const inbox=this.getSettings().inbox;
+    const usage=this.db.prepare('SELECT * FROM usage').all();
+    let target:HealthStore|undefined;
+    try{
+      populate(stage);
+      target=new HealthStore(stage,this.catalog,inbox,false);
+      target.setSettings({...target.getSettings(),inbox});
+      for(const r of usage)target.db.prepare('INSERT OR REPLACE INTO usage VALUES(?,?,?,?,?,?,?,?)').run(r.id,r.month,r.provider,r.input,r.output,r.cost,r.state,r.at);
+      target.validateRestored();
+      target.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');target.close();target=undefined;
+      this.backup(safety);
+      this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');this.db.close();
+      try{switchVault(this.root,stage);}finally{this.db=new DatabaseSync(path.join(this.root,'health.sqlite'));this.db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000');}
+      this.energy=new EnergyStore(this);this.syncState={imported:0,pending:0,errors:[]};
+      return safety;
+    }finally{target?.close();if(existsSync(stage))rmSync(stage,{recursive:true,force:true});}
+  }
+  private validateRestored(){
+    if(this.db.prepare('PRAGMA integrity_check').get()!.integrity_check!=='ok')throw new Error('恢复数据库完整性校验失败');
+    settingsSchema.parse(this.getSettings());coachProfileSchema.parse(this.coachProfile());
+    this.energy.validateBackup(this.energy.export());dishDefinitionsSchema.parse(this.dishDefinitions());
+    z.object({archived:z.array(z.string().min(1).max(100)).max(500),overrides:z.record(z.string(),z.enum(['per_hand','total','machine','bodyweight','unknown']))}).parse(this.getConfig('exerciseRules')??{archived:[],overrides:{}});
+    z.array(z.string().min(1).max(80)).parse(this.getConfig('ignoredFoodCandidates')??[]);
+    z.array(z.object({raw:z.string().max(200),name:z.string().min(1).max(100)})).max(1000).parse(this.exerciseAliases());
+    for(const row of this.db.prepare('SELECT * FROM usage').iterate())z.object({id:idSchema,month:z.string().regex(/^\d{4}-\d{2}$/),provider:z.enum(['chatgpt','deepseek']),input:z.number().int().nonnegative(),output:z.number().int().nonnegative(),cost:z.number().finite().nonnegative(),state:z.enum(['reserved','uncertain','complete'])}).parse(row);
+    for(const row of this.db.prepare('SELECT * FROM memory_episodes').iterate()){
+      const e=parseJSON<Episode>(row.doc);
+      if(row.id!==e.id||typeof e.quote!=='string'||e.quote.length>2000||!topicOf(e.quote)||!Number.isFinite(Date.parse(e.occurredAt))||!Number.isFinite(Date.parse(e.recordedAt)))throw new Error('备份话题线索无效');
+      if(e.recordId)this.record(e.recordId);
+      if(e.messageId&&!this.db.prepare('SELECT 1 FROM messages WHERE id=?').get(e.messageId))throw new Error('备份话题线索缺少来源');
+    }
+    for(const row of this.db.prepare('SELECT id,doc FROM records').iterate()){
+      const r=parseJSON<HealthRecord>(row.doc);
+      if(row.id!==r.id||!Number.isInteger(r.revision)||r.revision<1)throw new Error('备份记录编号或版本无效');
+      envelopeSchema.parse({version:1,...r,body:r.body??undefined,attachments:[]});recordProgressSchema.parse(r);
+      if(r.analysis)analysisSchema.parse(r.analysis);
+      for(const a of r.attachments){const bytes=readFileSync(safePath(this.root,a.file));sniffImage(bytes);if(sha256(bytes)!==a.sha256)throw new Error('备份图片校验失败');}
+    }
+    for(const row of this.db.prepare('SELECT * FROM revisions').iterate()){
+      const r=parseJSON<any>(row.doc);if(r.id!==row.id)throw new Error('备份修订编号不一致');
+      if(row.entity==='memory')memoryInputSchema.parse(r);
+      else if(row.entity==='record'){envelopeSchema.parse({version:1,...r,body:r.body??undefined,attachments:[]});if(r.analysis)analysisSchema.parse(r.analysis);recordProgressSchema.parse(r);}
+      else throw new Error('备份修订类型无效');
+    }
+    for(const m of this.memories()){idSchema.parse(m.id);memoryInputSchema.parse(m);for(const id of m.sourceIds)this.record(id);}
+    for(const m of this.messages()){idSchema.parse(m.id);if(!['user','assistant'].includes(m.role)||typeof m.text!=='string'||!Array.isArray(m.sources))throw new Error('备份对话损坏');for(const s of m.sources)this.record(s.id);}
+    for(const d of this.dishDefinitions())for(const id of d.recordIds)if(this.record(id).kind!=='meal')throw new Error('餐食分组引用无效');
+  }
+  private restoreLegacy(bundle:unknown) {
     const b=bundle as ReturnType<HealthStore['exportBundle']>; if(!b||b.format!=='bodyjournal-backup'||![1,2,3,4].includes(b.version)||!Array.isArray(b.files)||!b.tables) throw new Error('备份格式不支持');
     const dishDefinitions=dishDefinitionsSchema.parse(b.dishDefinitions??[]);
     const energyData=this.energy.validateBackup(b.version>=2?b.energy:{profiles:[],targets:[],days:[],proposals:[]});
@@ -725,7 +905,6 @@ export class HealthStore {
     const mealIds=new Set(rows.filter(row=>parseJSON<HealthRecord>(row.doc).kind==='meal').map(row=>row.id));if(dishDefinitions.some(d=>d.recordIds.some(id=>!mealIds.has(id))))throw new Error('餐食分组引用了不存在的饮食记录');
     for(const row of b.tables.memories as {id:string;doc:string}[]) { const m=parseJSON<Memory>(row.doc); idSchema.parse(m.id);if(m.id!==row.id)throw new Error('备份记忆编号不一致'); memoryInputSchema.parse(m); }
     for(const row of b.tables.messages as {id:string;doc:string}[]) { const m=parseJSON<Message>(row.doc); idSchema.parse(m.id); if(!['user','assistant'].includes(m.role)||!Array.isArray(m.sources)||typeof m.text!=='string') throw new Error('备份对话损坏'); }
-    const safety=path.join(this.root,'backups',`before-restore-${Date.now()}.bodyjournal`); this.backup(safety);
     for(const s of staged) atomicWrite(s.file,s.data);
     this.transaction(()=>{
       for(const name of ['records','revisions','memories','messages']) this.db.exec(`DELETE FROM ${name}`);
@@ -736,10 +915,10 @@ export class HealthStore {
       this.energy.restore(energyData);this.energy.mirroring=true;try{this.setSettings(settings);}finally{this.energy.mirroring=false;}
       if(b.version===1&&settings.goals.kcal!==null)this.energy.importManualTarget(settings.goals.kcal,settings.goals.protein);
       this.energy.syncTarget();this.energy.invalidate();if(profile)this.saveCoachProfile(profile);if(aliases)this.setConfig('exerciseAliases',aliases);
-      this.setConfig('dishDefinitions',dishDefinitions);this.migrateMemoryReliability();if(b.version<4)this.energy.migrateFixedBaselines();this.invalidateMemoryAnswers();
+      this.setConfig('dishDefinitions',dishDefinitions);this.setConfig('exerciseRules',b.exerciseRules??{archived:[],overrides:{}});this.setConfig('ignoredFoodCandidates',b.ignoredFoodCandidates??[]);this.migrateMemoryReliability();if(b.version<4)this.energy.migrateFixedBaselines();this.invalidateMemoryAnswers();
       this.setConfig('energyParsingV1',false);this.setConfig('trainingNotationParsingV1',false);this.setConfig('mealFollowupContextV1',false);this.setConfig('mealFormattingEditsV1',false);
       this.setConfig('conversationStart','');
-    });this.migrateTrainingNotationParsing();this.migrateMealFollowupContext();this.migrateMealFormattingEdits();this.migrateEnergyParsing(); return safety;
+    });this.migrateTrainingNotationParsing();this.migrateMealFollowupContext();this.migrateMealFormattingEdits();this.migrateEnergyParsing();
   }
   exportReadable(dir:string) {
     atomicWrite(path.join(dir,'常吃餐食.json'),JSON.stringify({definitions:this.dishDefinitions(),dishes:this.commonDishes()},null,2));

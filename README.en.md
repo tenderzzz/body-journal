@@ -12,6 +12,10 @@ Capture on iPhone with Apple Shortcuts, deliver through an iCloud inbox, and kee
 
 ![Assistant with synthetic demo data](evidence/assistant.png)
 
+## Local v0.6.0
+
+Related recent topics can continue across new conversations. Explicit dates query records by occurrence time, and answer receipts distinguish provided evidence from citations. Native v5 backups store images in chunks and retain exercise rules. A pristine directory snapshot is saved before upgrading an older vault. See [upgrade and rollback](docs/0.6.0升级与回退.md).
+
 ## What it does
 
 | Area | Features |
@@ -23,7 +27,7 @@ Capture on iPhone with Apple Shortcuts, deliver through an iCloud inbox, and kee
 | AI | On-demand chat and analysis using relevant records and memories; locally validated structured results; explicit acceptance of goal changes. |
 | Data | Revisions, undo, soft deletion and recovery; editable memories; readable exports and full backups. |
 
-**v0.5.6 (local implementation)** groups recurring named meals with editable aliases and whole-meal summaries while preserving component evidence, preserves valid nutrition units during catalog matching and successful estimates during conservative separator edits, uses the macOS system-network session for authentication and model requests, processes the full pending-analysis queue with recoverable per-record results, preserves complete meal estimates during followups, finishes at the stream terminal event, distinguishes cancellation from timeout, and retains confirmed training notation, and adds versioned, time-aware memory with evidence and stale-answer handling; strict product identities; g/ml/serving nutrition labels and persistent meal corrections; fixed step-baseline snapshots; four-week trend review; and an offline accuracy evaluation panel. Backups use v4 and can restore v1–v3. See the [upgrade notes](docs/0.5.0升级说明.md) and [evaluation guide](docs/精度评测.md). Published downloads remain those actually available in Releases.
+**v0.6.0 (local implementation)** groups recurring named meals with editable aliases and whole-meal summaries while preserving component evidence, preserves valid nutrition units during catalog matching and successful estimates during conservative separator edits, uses the macOS system-network session for authentication and model requests, processes the full pending-analysis queue with recoverable per-record results, preserves complete meal estimates during followups, finishes at the stream terminal event, distinguishes cancellation from timeout, and retains confirmed training notation, and adds versioned, time-aware memory with evidence and stale-answer handling; strict product identities; g/ml/serving nutrition labels and persistent meal corrections; fixed step-baseline snapshots; four-week trend review; and an offline accuracy evaluation panel. Backups use v4 and can restore v1–v3. See the [upgrade notes](docs/0.5.0升级说明.md) and [evaluation guide](docs/精度评测.md). Published downloads remain those actually available in Releases.
 
 ## Screenshots
 
