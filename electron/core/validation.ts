@@ -35,4 +35,4 @@ export function readableError(e: unknown): string {
 }
 
 export const coachProfileSchema=z.object({profile:z.string().max(6000),trainingRules:z.string().max(18000),feedbackRules:z.string().max(10000),weeklyRules:z.string().max(10000),originalText:z.string().max(50000),reportedAt:timeSchema});
-export const chatResponseSchema=z.object({answerMarkdown:z.string().min(1).max(30000),memoryChanges:z.array(memoryChangeSchema).max(5).default([]),goalProposal:z.object({kcal:z.number().int().min(1000).max(6000),reason:z.string().min(1).max(2000)}).nullable().optional()});
+export const chatResponseSchema=z.object({answerMarkdown:z.string().min(1).max(30000),episodeCandidates:z.array(z.object({quote:z.string().min(1).max(2000)})).max(3).optional(),memoryChanges:z.array(memoryChangeSchema).max(5).default([]),goalProposal:z.object({kcal:z.number().int().min(1000).max(6000),reason:z.string().min(1).max(2000)}).nullable().optional()});

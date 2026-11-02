@@ -147,3 +147,11 @@ git push origin main v0.4.1
 `npm run test:dishes-ui` 验证同款餐食自动归组、整餐仅显示一次、明细折叠、名称与别名、停用恢复和重启。v4 备份增加可选 dishDefinitions；旧备份缺失此项时清空显式关联并从名称重新推导，不继承恢复前的无关关联。`BodyJournal --import-dishes <json-file>` 只在本地原子导入明确的餐食关联，先备份，不发起模型请求。
 
 `npm run test:training-baseline-ui` 使用临时合成档案核对反向飞鸟的统计口径、训练参照、记录详情与重启，不发起模型请求。
+
+## v0.6.0 开发与验收
+
+本地打包使用 `.node-version` 指定的 Node 24。`npm run test:v06-ui` 在隔离档案验证新对话、更正、查账、回执、v5 备份恢复与重启。`npm run test:archive-large` 用约 540 MB 合成照片核对分块备份、空档恢复与首次升级回退点。界面脚本仍支持 `BODYJOURNAL_APP` 指向实际安装包。
+
+v5 数据库增加可重建的发生时间查询索引和近期话题表。v5 备份是有清单和 SHA-256 的 SQLite 容器，旧 `exportBundle` 仅保留为 v1–v4 JSON 兼容表示。正式手动与自动备份统一走分块归档路径。恢复只从固定表结构还原已校验数据，不执行备份提供的 SQL。
+
+打包从公开文件白名单准备 staging，界面和主进程使用构建后的自包含文件。未签名快捷指令逐字节对照已审阅源码，校验 app.asar 与额外资源清单。发布流水线在生成安装包后运行隔离桌面流程。

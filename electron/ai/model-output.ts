@@ -1,3 +1,4 @@
+import {memoryChangeSchema} from '../core/validation';
 type ObjectValue=Record<string,unknown>;
 const object=(value:unknown):value is ObjectValue=>!!value&&typeof value==='object'&&!Array.isArray(value);
 function optionalNulls(value:unknown,fields:string[]):unknown {
@@ -16,7 +17,9 @@ function memoryCandidates(value:unknown,limit:number,allowed:string[]){
   if(!operation||!allowed.includes(operation)){
    warnings.push(`第${index+1}项附带记忆更新的操作类型无法识别，已跳过，未修改对应记忆或目标。`);continue;
   }
-  accepted.push({...optionalNulls(item,['subject','text','kind','food','targetId','split']) as ObjectValue,operation});
+  const candidate={...optionalNulls(item,['subject','text','kind','food','targetId','split']) as ObjectValue,operation};
+  if(!memoryChangeSchema.safeParse(candidate).success){warnings.push(`第${index+1}项附带记忆的格式无效，已跳过。`);continue;}
+  accepted.push(candidate);
  }
  return {value:accepted,warnings};
 }
@@ -26,6 +29,7 @@ export function normalizeModelOutput(value:unknown,purpose:'analysis'|'chat'):{v
  const next=optionalNulls(value,purpose==='analysis'
   ?['questions','assumptions','copyFromRecordId','copiedFrom','training','run','sets','dailyActivity','ingredients','memories','memoryChanges','excludedIngredientIdentities']
   :['memoryChanges']) as ObjectValue;
+ if(next.episodeCandidates!==undefined){next.episodeCandidates=Array.isArray(next.episodeCandidates)?next.episodeCandidates.filter(item=>object(item)&&typeof item.quote==='string'&&item.quote.length>0&&item.quote.length<=2000).slice(0,3):[];}
  delete next.memoryWarnings; // Warnings are local receipts, never claims supplied by the model.
  if(purpose==='analysis'){
   next.training=optionalNulls(next.training,['durationMinutes','pain','recovery']);

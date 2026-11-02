@@ -2,7 +2,7 @@ import { localDay } from '../../src/shared/stats';
 export type ResolvedDate = { occurredAt:string; matchedText:string; dateOnly:boolean };
 const pad=(n:number)=>String(n).padStart(2,'0');
 function validDay(y:number,m:number,d:number){const date=`${y}-${pad(m)}-${pad(d)}`;const value=new Date(`${date}T12:00:00Z`);return Number.isFinite(+value)&&value.toISOString().slice(0,10)===date?date:null;}
-function atTime(day:string,hour:number,minute:number,zone:string):string|null {
+export function atTime(day:string,hour:number,minute:number,zone:string):string|null {
  const target=Date.parse(`${day}T${pad(hour)}:${pad(minute)}:00Z`);if(!Number.isFinite(target)||hour>23||minute>59)return null;
  const formatter=new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'});
  let value=target;
