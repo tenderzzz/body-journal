@@ -1,4 +1,9 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, Menu, nativeImage, net } from 'electron';
+import {JournalQueries} from './core/queries';
+import {InboxSync} from './core/inbox';
+import {validateMutation} from './core/ipc';
+import {bodySchema,timeSchema} from './core/validation';
+import {calendarDay,nextDayBoundary} from '../src/shared/dates';
+import { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, Menu, nativeImage, net, powerMonitor } from 'electron';
 import path from 'node:path';
 import { homedir } from 'node:os';
 import { existsSync, mkdirSync, readFileSync, statSync, renameSync } from 'node:fs';
@@ -24,65 +29,81 @@ const root=process.env.HEALTH_TEST_VAULT??(demo?path.join(app.getPath('temp'),'b
 const resource=(p:string)=>path.join(app.isPackaged?process.resourcesPath:app.getAppPath(),p);
 const modelNetwork:NetworkFetch=(url,init)=>net.fetch(url,init);
 let win:BrowserWindow;let store:HealthStore;let auth:ChatGPTAuth;let assistant:AssistantService;let secrets:SecretStorage;let timer:NodeJS.Timeout;let securityError='';
+let refreshDay=()=>{};
+let queries:JournalQueries;let inboxSync:InboxSync;
 const attachments=new Map<string,{name:string;mime:string;base64:string}>();
 function emit(event:Record<string,unknown>){if(win&&!win.isDestroyed())win.webContents.send('health:event',event);}
-async function snapshot():Promise<Snapshot&{demo:boolean}> {store.energy.syncTarget();store.energy.invalidate();store.invalidateMemoryAnswers();const secretState=await secrets.read().catch(()=>({} as Record<string,unknown>));return {records:store.recordsWithDishes(true),commonDishes:store.commonDishes(),memories:store.memories(),messages:store.messages(),settings:store.getSettings(),connection:{...auth.status(),hasDeepSeek:!!secretState.deepseekKey,error:securityError||auth.status().error},sync:store.syncState,usage:store.usage(),vault:root,version:app.getVersion(),demo,coachProfile:store.coachProfile(),exerciseAliases:store.exerciseAliases(),exerciseRules:store.exerciseRules(),foodCandidates:store.foodCandidates(false),conversationStart:store.getConfig<string>('conversationStart')};}
+async function snapshot():Promise<Snapshot&{demo:boolean}> {const secretState=await secrets.read().catch(()=>({} as Record<string,unknown>));return {records:store.recordsWithDishes(true),commonDishes:store.commonDishes(),memories:store.memories(),messages:store.messages(),settings:store.getSettings(),connection:{...auth.status(),hasDeepSeek:!!secretState.deepseekKey,error:securityError||auth.status().error},sync:store.syncState,usage:store.usage(),vault:root,version:app.getVersion(),demo,coachProfile:store.coachProfile(),exerciseAliases:store.exerciseAliases(),exerciseRules:store.exerciseRules(),foodCandidates:store.foodCandidates(false),conversationStart:store.getConfig<string>('conversationStart')};}
+async function overview():Promise<Snapshot&{demo:boolean}> {const secretState=await secrets.read().catch(()=>({} as Record<string,unknown>));return {records:queries.records({limit:12}).items,memories:[],messages:[],summary:queries.summary(),migration:(()=>{const r=store.getConfig<import('../src/shared/types').DayMigrationReport>('dayMigrationReport');return r?{...r,movedTotal:r.moved.length,moved:r.moved.slice(0,20),reviewDays:r.reviewDays.slice(0,20)}:undefined;})(),settings:store.getSettings(),connection:{...auth.status(),hasDeepSeek:!!secretState.deepseekKey,error:securityError||auth.status().error},sync:store.syncState,usage:store.usage(),vault:root,version:app.getVersion(),demo,coachProfile:store.coachProfile(),exerciseAliases:store.exerciseAliases(),exerciseRules:store.exerciseRules(),conversationStart:store.getConfig<string>('conversationStart')};}
 function assertAvailable(){if(assistant.isBusy())throw new Error('分析进行中，请完成或取消后再进行此操作。');}
 async function chooseImages(){const picked=await dialog.showOpenDialog(win,{title:'选择餐食照片或训练截图',properties:['openFile','multiSelections'],filters:[{name:'图片',extensions:['jpg','jpeg','png','webp','gif']}]});if(picked.canceled)return [];const result=[];for(const file of picked.filePaths.slice(0,8)){if(statSync(file).size>20*1024*1024)throw new Error('单张图片不能超过 20 MB');const data=readFileSync(file);const mime=sniffImage(data);const token=randomUUID();attachments.set(token,{name:path.basename(file),mime,base64:data.toString('base64')});result.push({token,name:path.basename(file),preview:`data:${mime};base64,${data.toString('base64')}`});}return result;}
 async function invoke(action:string,payload:any) {
+  payload=validateMutation(action,payload);
   switch(action){
     case 'snapshot':return snapshot();
+    case 'migration:get':return store.getConfig('dayMigrationReport');
+    case 'overview':return overview();
+    case 'records:list':return queries.records(payload??{});
+    case 'record:get':return store.record(idSchema.parse(payload.id));
+    case 'messages:list':return queries.messages(payload??{});
+    case 'message:get':{const id=idSchema.parse(payload.id);const row=store.db.prepare('SELECT doc FROM messages WHERE id=?').get(id);if(!row)throw new Error('这条对话当前不可用');return JSON.parse(String(row.doc));}
+    case 'calendar:get':return queries.calendar(payload);
+    case 'trends:get':return queries.trends(payload);
+    case 'profile:get':return {memories:store.memories(),commonDishes:store.commonDishes(),foodCandidates:store.foodCandidates(false)};
+    case 'dish:forRecord':{const id=idSchema.parse(payload.id);return store.commonDishes().filter(d=>d.recordIds.includes(id));}
+    case 'exercise:examples':return store.db.prepare("SELECT json_extract(j.value,'$.originalExercise') AS raw,j.value FROM records r,json_each(r.doc,'$.analysis.sets') j WHERE coalesce(json_extract(r.doc,'$.deleted'),0)=0 GROUP BY coalesce(json_extract(j.value,'$.originalExercise'),json_extract(j.value,'$.exercise'))").all().map((r,i)=>({id:String(i),analysis:{sets:[JSON.parse(String(r.value))]}}));
     case 'energy:get':return store.energy.view(payload??{});
     case 'energy:sourceOpen':{const source=z.enum(['resting','met','protein']).parse(payload.source);return shell.openExternal({resting:'https://pubmed.ncbi.nlm.nih.gov/2305711/',met:'https://pacompendium.com/adult-compendium/',protein:'https://pmc.ncbi.nlm.nih.gov/articles/PMC5477153/'}[source]);}
-    case 'energy:profileSave':{const result=store.energy.saveProfile(payload);emit({type:'changed'});return result;}
-    case 'energy:daySave':{const result=store.energy.saveDay(payload);emit({type:'changed'});return result;}
-    case 'energy:targetSave':{assertAvailable();const result=store.energy.saveTarget(payload);emit({type:'changed'});return result;}
-    case 'energy:goalApply':{assertAvailable();const result=store.energy.applyProposal(idSchema.parse(payload.id));emit({type:'changed'});return result;}
-    case 'energy:goalUndo':{assertAvailable();store.energy.undoTarget(idSchema.parse(payload.id));emit({type:'changed'});return;}
+    case 'energy:profileSave':{const result=store.energy.saveProfile(payload);emit({type:'changed',scopes:['energy','overview','messages']});return result;}
+    case 'energy:daySave':{const result=store.energy.saveDay(payload);emit({type:'changed',scopes:['energy','overview','messages']});return result;}
+    case 'energy:targetSave':{const result=store.energy.saveTarget(payload);emit({type:'changed',scopes:['energy','overview','messages']});return result;}
+    case 'energy:goalApply':{const result=store.energy.applyProposal(idSchema.parse(payload.id));emit({type:'changed',scopes:['energy','overview','messages']});return result;}
+    case 'energy:goalUndo':{store.energy.undoTarget(idSchema.parse(payload.id));emit({type:'changed',scopes:['energy','overview','messages']});return;}
     case 'attachment:choose':return chooseImages();
     case 'attachment:get':return store.attachmentData(idSchema.parse(payload.id),z.number().int().min(0).max(7).parse(payload.index));
-    case 'record:create':{const input=z.object({kind:z.enum(['meal','training','body','note']),text:z.string().max(100000),occurredAt:z.string(),dateLocked:z.boolean().optional(),body:z.any().optional(),attachmentTokens:z.array(z.string()).max(8).default([])}).parse(payload);const images=input.attachmentTokens.map(t=>{const a=attachments.get(t);if(!a)throw new Error('图片选择已过期，请重新选择');return a;});const e={version:1,id:randomUUID(),kind:input.kind,text:input.text,occurredAt:input.occurredAt,dateLocked:input.dateLocked,timezone:store.getSettings().timezone,body:input.body,attachments:images};const r=store.importEnvelope(e).record;for(const t of input.attachmentTokens)attachments.delete(t);emit({type:'changed'});return r;}
-    case 'record:update':{const id=idSchema.parse(payload.id);const r=store.revise(id,{text:payload.text,occurredAt:payload.occurredAt,body:payload.body,deleted:payload.deleted,followup:payload.followup},z.number().int().parse(payload.revision));emit({type:'changed'});return r;}
-    case 'record:activityUpdate':{const r=store.updateActivity(payload);emit({type:'changed'});return r;}
-    case 'record:undo':{const r=store.undoRecord(idSchema.parse(payload.id));emit({type:'changed'});return r;}
+    case 'record:create':{const input=z.object({kind:z.enum(['meal','training','body','note']),text:z.string().max(100000),occurredAt:timeSchema,dateLocked:z.boolean().optional(),body:bodySchema.optional(),attachmentTokens:z.array(z.string()).max(8).default([])}).parse(payload);const images=input.attachmentTokens.map(t=>{const a=attachments.get(t);if(!a)throw new Error('图片选择已过期，请重新选择');return a;});const e={version:1,id:randomUUID(),kind:input.kind,text:input.text,occurredAt:input.occurredAt,dateLocked:input.dateLocked,timezone:store.getSettings().timezone,body:input.body,attachments:images};const r=store.importEnvelope(e).record;for(const t of input.attachmentTokens)attachments.delete(t);emit({type:'changed',scopes:['records','overview','energy','profile','trends','messages']});return r;}
+    case 'record:update':{const id=idSchema.parse(payload.id);const r=store.revise(id,{text:payload.text,occurredAt:payload.occurredAt,body:payload.body,deleted:payload.deleted,followup:payload.followup},z.number().int().parse(payload.revision));emit({type:'changed',scopes:['records','overview','energy','profile','trends','messages']});return r;}
+    case 'record:activityUpdate':{const r=store.updateActivity(payload);emit({type:'changed',scopes:['records','overview','energy','profile','trends','messages']});return r;}
+    case 'record:undo':{const r=store.undoRecord(idSchema.parse(payload.id));emit({type:'changed',scopes:['records','overview','energy','profile','trends','messages']});return r;}
     case 'record:history':return store.history(idSchema.parse(payload.id));
-    case 'record:analyze':{const ids=z.array(idSchema).min(1).max(5000).parse(payload.ids);if(payload.analysis){if(ids.length!==1)throw new Error('请逐条修正分析');const r=store.applyAnalysis(ids[0],payload.analysis,'local',z.number().int().parse(payload.revision),z.boolean().optional().parse(payload.manualMeal)??false);emit({type:'changed'});return r;}return assistant.analyze(ids);}
+    case 'record:analyze':{const ids=z.array(idSchema).min(1).max(5000).parse(payload.ids);if(payload.analysis){if(ids.length!==1)throw new Error('请逐条修正分析');const r=store.applyAnalysis(ids[0],payload.analysis,'local',z.number().int().parse(payload.revision),z.boolean().optional().parse(payload.manualMeal)??false);emit({type:'changed',scopes:['records','overview','energy','profile','trends','messages']});return r;}return assistant.analyze(ids);}
     case 'record:analyzePending':return assistant.analyze(store.records().filter(needsAnalysis).map(r=>r.id),{pendingOnly:true});
-    case 'record:importHistory':{const text=z.string().max(500000).parse(payload.text);const parsed=splitHistorical(text);if(payload.preview)return parsed;const result=store.importMany(parsed.map(p=>({version:1,id:randomUUID(),kind:'training',...p})));emit({type:'changed'});return result;}
-    case 'record:importFiles':{const selected=await dialog.showOpenDialog(win,{properties:['openFile','multiSelections'],filters:[{name:'手机记录',extensions:['json']}]});if(selected.canceled)return 0;let count=0;for(const f of selected.filePaths){if(statSync(f).size>40*1024*1024)throw new Error('记录文件过大');if(!store.importEnvelope(JSON.parse(readFileSync(f,'utf8')),path.dirname(f),'文件导入').duplicate)count++;}emit({type:'changed'});return count;}
-    case 'sync':{const r=store.scanInbox();emit({type:'changed'});return r;}
+    case 'record:importHistory':{const text=z.string().max(500000).parse(payload.text);const parsed=splitHistorical(text);if(payload.preview)return parsed;const result=store.importMany(parsed.map(p=>({version:1,id:randomUUID(),kind:'training',...p})));emit({type:'changed',scopes:['records','overview','energy','profile','trends','messages']});return result;}
+    case 'record:importFiles':{const selected=await dialog.showOpenDialog(win,{properties:['openFile','multiSelections'],filters:[{name:'手机记录',extensions:['json']}]});if(selected.canceled)return 0;let count=0;for(const f of selected.filePaths){if(statSync(f).size>40*1024*1024)throw new Error('记录文件过大');if(!store.importEnvelope(JSON.parse(readFileSync(f,'utf8')),path.dirname(f),'文件导入').duplicate)count++;}emit({type:'changed',scopes:['records','overview','energy','profile','trends','messages']});return count;}
+    case 'sync':{inboxSync.retry();await inboxSync.scan();return store.syncState;}
+    case 'memory:get':{const id=idSchema.parse(payload.id),row=store.db.prepare('SELECT doc FROM memories WHERE id=?').get(id);if(!row)throw new Error('这条记忆当前不可用');return JSON.parse(String(row.doc));}
     case 'memory:history':return store.memoryHistory(idSchema.parse(payload.id));
-    case 'memory:save':{const m=store.saveMemory(payload.memory,payload.id? idSchema.parse(payload.id):undefined);emit({type:'changed'});return m;}
-    case 'coach:save':{assertAvailable();const p=store.saveCoachProfile(payload);emit({type:'changed'});return p;}
-    case 'exercise:reclassifyMany':{assertAvailable();const result=store.reclassifyExercises(payload.changes);emit({type:'changed'});return result;}
-    case 'exercise:reclassify':{assertAvailable();const a=store.reclassifyExercise(payload.raw,payload.name);emit({type:'changed'});return a;}
-    case 'memory:tidy':{const r=store.tidyMemories();emit({type:'changed'});return r;}
+    case 'memory:save':{const m=store.saveMemory(payload.memory,payload.id? idSchema.parse(payload.id):undefined);emit({type:'changed',scopes:['profile','overview','messages']});return m;}
+    case 'coach:save':{const p=store.saveCoachProfile(payload);emit({type:'changed'});return p;}
+    case 'exercise:reclassifyMany':{const result=store.reclassifyExercises(payload.changes);emit({type:'changed'});return result;}
+    case 'exercise:reclassify':{const a=store.reclassifyExercise(payload.raw,payload.name);emit({type:'changed'});return a;}
+    case 'memory:tidy':{const r=store.tidyMemories();emit({type:'changed',scopes:['profile','overview','messages']});return r;}
     case 'food:candidateIgnore':{const r=store.ignoreFoodCandidate(payload.name);emit({type:'changed'});return r;}
-    case 'exercise:rules':{assertAvailable();const r=store.saveExerciseRules(payload);emit({type:'changed'});return r;}
-    case 'exercise:deleteAlias':{assertAvailable();const r=store.deleteExerciseAlias(payload.raw);emit({type:'changed'});return r;}
-    case 'record:setDeleted':{const r=store.setRecordDeleted(payload.id,payload.deleted);emit({type:'changed'});return r;}
-    case 'chat:undoMemory':{store.undoChatMemory(idSchema.parse(payload.id));emit({type:'changed'});return;}
-    case 'memory:undo':{const m=store.undoMemory(idSchema.parse(payload.id));emit({type:'changed'});return m;}
-    case 'settings:save':{assertAvailable();const old=store.getSettings();const value={...payload,inbox:old.inbox};if(!Array.isArray(auth.status().models)||!value.chatgptModel){}else if(auth.status().models.length&&!auth.status().models.includes(value.chatgptModel))throw new Error('请选择此账号可用的模型。');const s=store.setSettings(value);emit({type:'changed'});return s;}
-    case 'inbox:choose':{const r=await dialog.showOpenDialog(win,{properties:['openDirectory','createDirectory'],title:'选择 iCloud 收件箱'});if(r.canceled)return;store.setSettings({...store.getSettings(),inbox:r.filePaths[0]});store.scanInbox();emit({type:'changed'});return r.filePaths[0];}
-    case 'inbox:prepare':{const p=store.getSettings().inbox;mkdirSync(p,{recursive:true,mode:0o700});await shell.openPath(p);store.scanInbox();emit({type:'changed'});return p;}
+    case 'exercise:rules':{const r=store.saveExerciseRules(payload);emit({type:'changed'});return r;}
+    case 'exercise:deleteAlias':{const r=store.deleteExerciseAlias(payload.raw);emit({type:'changed'});return r;}
+    case 'record:setDeleted':{const r=store.setRecordDeleted(payload.id,payload.deleted);emit({type:'changed',scopes:['records','overview','energy','profile','trends','messages']});return r;}
+    case 'chat:undoMemory':{store.undoChatMemory(idSchema.parse(payload.id));emit({type:'changed',scopes:['profile','overview','messages']});return;}
+    case 'memory:undo':{const m=store.undoMemory(idSchema.parse(payload.id));emit({type:'changed',scopes:['profile','overview','messages']});return m;}
+    case 'settings:save':{const old=store.getSettings();const value={...payload,inbox:old.inbox};if(!Array.isArray(auth.status().models)||!value.chatgptModel){}else if(auth.status().models.length&&!auth.status().models.includes(value.chatgptModel))throw new Error('请选择此账号可用的模型。');const s=store.setSettings(value);refreshDay();emit({type:'changed',scopes:['overview','energy','profile']});return s;}
+    case 'inbox:choose':{const r=await dialog.showOpenDialog(win,{properties:['openDirectory','createDirectory'],title:'选择 iCloud 收件箱'});if(r.canceled)return;store.setSettings({...store.getSettings(),inbox:r.filePaths[0]});await restartInbox();emit({type:'changed',scopes:['overview']});return r.filePaths[0];}
+    case 'inbox:prepare':{const p=store.getSettings().inbox;mkdirSync(p,{recursive:true,mode:0o700});await shell.openPath(p);await restartInbox();emit({type:'changed',scopes:['overview']});return p;}
     case 'vault:open':return shell.openPath(root);
     case 'shortcuts:open':return shell.openPath(resource('shortcuts'));
     case 'docs:open':return shell.openPath(resource('docs/使用说明.html'));
     case 'backup:save':{assertAvailable();const r=await dialog.showSaveDialog(win,{title:'保存完整备份',defaultPath:`身体手记-${new Date().toISOString().slice(0,10)}.bodyjournal`,filters:[{name:'身体手记备份',extensions:['bodyjournal']}]});if(r.canceled||!r.filePath)return;store.backup(r.filePath);return r.filePath;}
-    case 'backup:restore':{assertAvailable();const r=await dialog.showOpenDialog(win,{properties:['openFile'],filters:[{name:'身体手记备份',extensions:['bodyjournal']}]});if(r.canceled)return;const confirm=await dialog.showMessageBox(win,{type:'question',buttons:['取消','恢复备份'],defaultId:0,cancelId:0,message:'用所选备份恢复档案？',detail:'当前档案会先自动备份。账号密钥不会被导入或覆盖。'});if(confirm.response!==1)return;const backup=store.restoreFile(r.filePaths[0]);emit({type:'changed'});return backup;}
+    case 'backup:restore':{assertAvailable();const r=await dialog.showOpenDialog(win,{properties:['openFile'],filters:[{name:'身体手记备份',extensions:['bodyjournal']}]});if(r.canceled)return;const confirm=await dialog.showMessageBox(win,{type:'question',buttons:['取消','恢复备份'],defaultId:0,cancelId:0,message:'用所选备份恢复档案？',detail:'当前档案会先自动备份。账号密钥不会被导入或覆盖。'});if(confirm.response!==1)return;await inboxSync.stop();let backup;try{backup=store.restoreFile(r.filePaths[0]);}finally{await restartInbox();}emit({type:'changed'});return backup;}
     case 'export':{const r=await dialog.showOpenDialog(win,{properties:['openDirectory','createDirectory'],title:'选择导出位置'});if(r.canceled)return;const dir=path.join(r.filePaths[0],`身体手记导出-${Date.now()}`);store.exportReadable(dir);await shell.openPath(dir);return dir;}
     case 'chat:send':return assistant.chat(z.string().max(10000).parse(payload.text));
-    case 'chat:cancel':assistant.cancel();return;
+    case 'chat:cancel':assistant.cancel(z.object({taskId:idSchema.optional()}).strict().parse(payload??{}).taskId);return;
     case 'chat:new':{assertAvailable();store.setConfig('conversationStart',new Date().toISOString());emit({type:'new-chat'});return;}
     case 'chat:remember':{const m=store.messages().find(m=>m.id===payload.id&&m.role==='user');if(!m)throw new Error('未找到你的这句话');return {kind:'fact',text:m.text,startsAt:m.createdAt,expiresAt:null,sourceIds:[],active:true,confirmed:true};}
-    case 'auth:login':{assertAvailable();const c=await auth.login();const models=c.models;if(models.length&&!models.includes(store.getSettings().chatgptModel))store.setSettings({...store.getSettings(),chatgptModel:models[0]});emit({type:'changed'});return c;}
-    case 'auth:logout':assertAvailable();await auth.logout();emit({type:'changed'});return;
-    case 'auth:models':{assertAvailable();const models=await auth.listModels();if(models.length&&!models.includes(store.getSettings().chatgptModel))store.setSettings({...store.getSettings(),chatgptModel:models[0]});emit({type:'changed'});return models;}
+    case 'auth:login':{assertAvailable();const c=await auth.login();const models=c.models;if(models.length&&!models.includes(store.getSettings().chatgptModel))store.setSettings({...store.getSettings(),chatgptModel:models[0]});emit({type:'changed',scopes:['overview','energy','profile']});return c;}
+    case 'auth:logout':assertAvailable();await auth.logout();emit({type:'changed',scopes:['overview','energy','profile']});return;
+    case 'auth:models':{assertAvailable();const models=await auth.listModels();if(models.length&&!models.includes(store.getSettings().chatgptModel))store.setSettings({...store.getSettings(),chatgptModel:models[0]});emit({type:'changed',scopes:['overview','energy','profile']});return models;}
     case 'auth:usage':return shell.openExternal('https://chatgpt.com/settings/usage');
     case 'auth:test':{const icon=resource('assets/connection-test.png');const data=readFileSync(icon);return assistant.testConnection(`data:image/png;base64,${data.toString('base64')}`);}
-    case 'deepseek:save':{assertAvailable();const key=z.string().trim().min(10).max(500).parse(payload.key);const all=await secrets.read();await secrets.write({...all,deepseekKey:key});emit({type:'changed'});return;}
-    case 'deepseek:remove':{assertAvailable();const all=await secrets.read();delete all.deepseekKey;await secrets.write(all);emit({type:'changed'});return;}
+    case 'deepseek:save':{assertAvailable();const key=z.string().trim().min(10).max(500).parse(payload.key);const all=await secrets.read();await secrets.write({...all,deepseekKey:key});emit({type:'changed',scopes:['overview','energy','profile']});return;}
+    case 'deepseek:remove':{assertAvailable();const all=await secrets.read();delete all.deepseekKey;await secrets.write(all);emit({type:'changed',scopes:['overview','energy','profile']});return;}
     case 'evaluation:open':{
       const selected=await dialog.showOpenDialog(win,{title:'选择精度评测文件',properties:['openFile'],filters:[{name:'评测数据',extensions:['json']}]});
       if(selected.canceled||!selected.filePaths[0])return null;
@@ -95,11 +116,17 @@ async function invoke(action:string,payload:any) {
       if(selected.canceled||!selected.filePath)return null;
       atomicWrite(selected.filePath,JSON.stringify(EVALUATION_EXAMPLE,null,2));return path.basename(selected.filePath);
     }
-    case 'dish:save':{assertAvailable();const result=store.saveDish(payload);emit({type:'changed'});return result;}
+    case 'dish:save':{const result=store.saveDish(payload);emit({type:'changed'});return result;}
     case 'food:search':return store.catalog.search(z.string().max(150).parse(payload.query));
     default:throw new Error('不支持的操作');
   }
 }
+async function restartInbox(){
+  await inboxSync?.stop();
+  inboxSync=new InboxSync(store,path.join(app.getPath('userData'),'inbox-state.json'),imported=>emit({type:'changed',scopes:imported?['overview','records','energy','profile','trends','messages']:['sync']}));
+  inboxSync.start();
+}
+
 async function start(){
   const data=JSON.parse(readFileSync(resource('data/foods.json'),'utf8')) as {foods:Food[]};
   const inbox=process.env.HEALTH_TEST_VAULT||demo?path.join(root,'inbox'):path.join(homedir(),'Library/Mobile Documents/com~apple~CloudDocs/Shortcuts/BodyJournal/inbox');
@@ -117,8 +144,8 @@ async function start(){
     }catch(e){console.error(JSON.stringify({connectionCheck:'failed',error:readableError(e)}));app.exit(1);return;}
   }
   if(demo&&store.records().length===0){const {seedDemo}=await import('./demo');seedDemo(store);}
-  store.migrate016();store.repairExerciseAliases();store.migrateExerciseRules();store.migrateSeatedPress();store.migrateMemoryTopics();store.migrateTrainingNotationParsing();store.migrateMealFollowupContext();store.migrateMealFormattingEdits();store.migrateEnergyParsing();store.scanInbox();
-  store.refreshPersonalization();
+  store.migrate016();store.repairExerciseAliases();store.migrateExerciseRules();store.migrateSeatedPress();store.migrateMemoryTopics();store.migrateTrainingNotationParsing();store.migrateMealFollowupContext();store.migrateMealFormattingEdits();store.migrateEnergyParsing();
+  store.refreshPersonalization();queries=new JournalQueries(store);
   if(process.argv.includes('--import-dishes')){
     try{
       const file=process.argv[process.argv.indexOf('--import-dishes')+1];if(!file||statSync(file).size>1024*1024)throw new Error('请选择不超过1 MB的餐食分组文件');
@@ -142,12 +169,20 @@ async function start(){
   Menu.setApplicationMenu(Menu.buildFromTemplate([{label:'身体手记',submenu:[{role:'about'},{type:'separator'},{role:'hide'},{role:'quit'}]},{label:'编辑',submenu:[{role:'undo'},{role:'redo'},{type:'separator'},{role:'cut'},{role:'copy'},{role:'paste'},{role:'selectAll'}]},{label:'窗口',submenu:[{role:'minimize'},{role:'zoom'},{role:'front'}]}]));
   if(process.env.HEALTH_DEV==='1')await win.loadURL('http://127.0.0.1:5179');else await win.loadFile(path.join(app.getAppPath(),'dist/index.html'));
   win.show();
-  let energyDay=store.energy.today();
-  timer=setInterval(()=>{try{const previous=JSON.stringify({pending:store.syncState.pending,errors:store.syncState.errors});const result=store.scanInbox();const changedDay=energyDay!==store.energy.today();if(changedDay){energyDay=store.energy.today();store.energy.syncTarget();store.energy.invalidate();}if(changedDay||result.imported||previous!==JSON.stringify({pending:result.pending,errors:result.errors}))emit({type:'changed'});}catch{}},20000);
-  app.on('activate',()=>{if(!win.isDestroyed())win.show();});
+  await restartInbox();
+  let dateKey='';
+  refreshDay=()=>{
+    const zone=store.getSettings().timezone,key=store.energy.today()+'|'+calendarDay(new Date().toISOString(),zone);
+    if(key!==dateKey){dateKey=key;store.energy.syncTarget();store.energy.invalidate();store.invalidateMemoryAnswers();emit({type:'changed',scopes:['overview','energy','records','trends','messages']});}
+    clearTimeout(timer);timer=setTimeout(refreshDay,Math.min(2147483647,Math.max(100,nextDayBoundary(new Date(),zone)-Date.now()+50)));
+  };
+  refreshDay();
+  powerMonitor.on('resume',()=>{refreshDay();inboxSync.request(0);});
+  win.on('focus',refreshDay);
+  app.on('activate',()=>{if(!win.isDestroyed())win.show();refreshDay();inboxSync.request(0);});
 }
 if(!app.requestSingleInstanceLock()&&!process.env.HEALTH_TEST_VAULT){app.quit();}else{
   app.on('second-instance',()=>{if(win&&!win.isDestroyed()){win.show();win.focus();}});
   app.whenReady().then(start).catch(e=>{dialog.showErrorBox('身体手记未能启动',readableError(e));app.exit(1);});
-  app.on('window-all-closed',()=>app.quit());app.on('before-quit',()=>{clearInterval(timer);assistant?.cancel();store?.close();});
+  app.on('window-all-closed',()=>app.quit());app.on('before-quit',()=>{clearTimeout(timer);assistant?.cancel();void inboxSync?.stop();store?.close();});
 }

@@ -1,7 +1,7 @@
 import { normalizeSet, baselineKey, baselineLabel, inferSession, workSetCount, EMPTY_RULES, runCompletion } from './exercises';
 import type { HealthRecord, Memory, SetEntry, ExerciseRules } from './types';
-const dayFormatters=new Map<string,Intl.DateTimeFormat>();
-export function localDay(iso:string, zone='Asia/Shanghai') {let formatter=dayFormatters.get(zone);if(!formatter){formatter=new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'});if(dayFormatters.size>=32)dayFormatters.clear();dayFormatters.set(zone,formatter);}return formatter.format(new Date(iso)); }
+import {journalDay as localDay} from './dates';
+export {calendarDay as localDay} from './dates';
 export function validMemory(m:Memory, now=new Date()) { return m.active && !m.stale && Date.parse(m.startsAt)<=now.valueOf() && (!m.expiresAt || Date.parse(m.expiresAt)>now.valueOf()); }
 export function computeStats(records:HealthRecord[], zone='Asia/Shanghai', options:{rules?:ExerciseRules}={}) {
   const rules=options.rules??EMPTY_RULES,archived=new Set(rules.archived);

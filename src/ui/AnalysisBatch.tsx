@@ -1,7 +1,8 @@
 import type {BatchAnalysisResult,HealthRecord} from '../shared/types';
-import {fmtDate,kinds} from './common';
+import {useDateFormat,kinds} from './common';
 export type AnalysisProgress={id?:string;index:number;total:number;completed:number;failed:number};
 export function AnalysisBatchNotice({busy,progress,result,records,onSource,onCancel,onRetry}:{busy:boolean;progress:AnalysisProgress|null;result:BatchAnalysisResult|null;records:HealthRecord[];onSource:(id:string)=>void;onCancel:()=>void;onRetry:()=>void}){
+ const fmtDate=useDateFormat();
  const label=(id:string)=>{const r=records.find(r=>r.id===id);return r?`${fmtDate(r.occurredAt)} · ${kinds[r.kind].label} · ${r.text.split('\n')[0]||'照片记录'}`:'记录已变动';};
  const failed=result?.items.filter(i=>i.status==='failed'||i.status==='cancelled')??[],needsInfo=result?.items.filter(i=>i.status==='completed'&&i.record?.status==='needs_info')??[];
  if(busy&&progress)return <section className="memory-receipt" role="status" aria-label="批量分析进度"><strong>正在分析第 {progress.index}／{progress.total} 条</strong><p>已完成 {progress.completed} 条{progress.failed?`，失败 ${progress.failed} 条`:''}。</p>{progress.id&&<p>{label(progress.id)}</p>}<button className="text-button" onClick={onCancel}>取消剩余分析</button></section>;

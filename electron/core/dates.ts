@@ -1,17 +1,12 @@
-import { localDay } from '../../src/shared/stats';
+import { calendarDay as localDay, journalDay, atTime, clockIn } from '../../src/shared/dates';
+export {atTime} from '../../src/shared/dates';
 export type ResolvedDate = { occurredAt:string; matchedText:string; dateOnly:boolean };
 const pad=(n:number)=>String(n).padStart(2,'0');
 function validDay(y:number,m:number,d:number){const date=`${y}-${pad(m)}-${pad(d)}`;const value=new Date(`${date}T12:00:00Z`);return Number.isFinite(+value)&&value.toISOString().slice(0,10)===date?date:null;}
-export function atTime(day:string,hour:number,minute:number,zone:string):string|null {
- const target=Date.parse(`${day}T${pad(hour)}:${pad(minute)}:00Z`);if(!Number.isFinite(target)||hour>23||minute>59)return null;
- const formatter=new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'});
- let value=target;
- for(let i=0;i<3;i++){const p=Object.fromEntries(formatter.formatToParts(new Date(value)).map(x=>[x.type,x.value]));const shown=Date.parse(`${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}Z`);const diff=target-shown;if(!diff)return new Date(value).toISOString();value+=diff;}
- return null;
-}
 /** Only event headings / explicit date corrections. Incidental comparisons and plans do not move records. */
 export function resolveRecordDate(text:string,referenceAt:string,zone:string):ResolvedDate|null {
- const today=localDay(referenceAt,zone),year=Number(today.slice(0,4));
+ const civilToday=localDay(referenceAt,zone),year=Number(civilToday.slice(0,4));
+ const today=/步数|步行距离|全天活动/.test(text)||/凌晨|\d{1,2}[:：]\d{2}|[零一二两三四五六七八九十]+点/.test(text)?civilToday:journalDay(referenceAt,zone);
  const candidates:{value:ResolvedDate;correction:boolean}[]=[];
  for(const raw of text.split(/\n/)) {
   const line=raw.trim();if(!line||/计划|打算|准备|将于|将要|目标|预计|相比|对比|比较/.test(line))continue;
@@ -28,10 +23,10 @@ export function resolveRecordDate(text:string,referenceAt:string,zone:string):Re
   if(!day||day>today)continue;
   const tail=line.slice(match.index+match[0].length);
   if(short&&/^\s*(?:kg|g|克|公斤|千克|斤|cm|厘米|组|次|%|[×*x])/i.test(tail))continue;
-  const clock=/^\s*(?:[T，,：:]\s*)?(?:(上午|下午|晚上|中午)\s*)?(\d{1,2})[:：](\d{2})/.exec(tail);
-  let hour=clock?+clock[2]:12;if(clock&&/下午|晚上|中午/.test(clock[1]??'')&&hour<12)hour+=12;
-  const occurredAt=atTime(day,hour,clock?+clock[3]:0,zone);if(!occurredAt)continue;
-  candidates.push({value:{occurredAt,matchedText:line.slice(0,match.index+match[0].length+(clock?.[0].length??0)),dateOnly:!clock},correction:/补充|更正|纠正|实际|其实/.test(prefix)});
+  const clock=clockIn(tail,true);
+  const hour=clock?.hour??12;
+  const occurredAt=relative&&day===journalDay(referenceAt,zone)&&!clock&&!/补记|补录|日期|昨天|前天/.test(line)?referenceAt:atTime(day,hour,clock?.minute??0,zone);if(!occurredAt)continue;
+  candidates.push({value:{occurredAt,matchedText:line.slice(0,match.index+match[0].length+(clock?.text.length??0)),dateOnly:!clock},correction:/补充|更正|纠正|实际|其实/.test(prefix)});
  }
  const corrections=candidates.filter(c=>c.correction);if(corrections.length)return corrections.at(-1)!.value;
  return candidates.length&&new Set(candidates.map(c=>localDay(c.value.occurredAt,zone))).size===1?candidates[0].value:null;

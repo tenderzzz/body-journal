@@ -2,8 +2,8 @@ import {createHash,randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import type {HealthStore} from './store';
 import type {DailyEnergyInput,EnergyProfile,EnergyTarget,GoalProposal,EnergyReview,EnergyView,EnergyGoal,StepReference,ActivityLevel,EnergyBaselineAnchor,EnergyTrendWeek} from '../../src/shared/types';
-import {localDay} from '../../src/shared/stats';
-import {addDays,dateDistance,estimateDay,initialEnergySuggestion,refs,sameRefs,ENERGY_MODEL_VERSION,isEnergyActivityRecord,ACTIVITY_LEVELS,ASSUMED_REFERENCE_STEPS} from '../../src/shared/energy';
+import {journalDay as localDay,calendarDay,DAY_POLICY_VERSION} from '../../src/shared/dates';
+import {addDays,dateDistance,estimateDay,initialEnergySuggestion,refs,sameRefs,ENERGY_MODEL_VERSION,isEnergyActivityRecord,ACTIVITY_LEVELS,ASSUMED_REFERENCE_STEPS,stepDay,isJournalActivityRecord} from '../../src/shared/energy';
 import {daySchema,energyDayInput,energyProfileInput,energyTargetInput,energyBackupSchema,energyGoalSchema} from './energy-validation';
 const TABLES={profiles:'energy_profiles',targets:'energy_targets',days:'energy_days',proposals:'energy_proposals'} as const;
 const digest=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -32,7 +32,7 @@ export class EnergyStore{
       // Call the pure calculation directly: reference extraction must not recursively consume older references.
       const day=estimateDay(input.date,zone,records,p,input,null);
       return day.activityConfirmed&&day.activityComplete&&day.walking?.coverage==='full'&&day.walking.nonTrainingSteps!==undefined&&!day.walking.pending
-        ?[{date:input.date,steps:day.walking.nonTrainingSteps,sources:input.activitySources}]:[];
+        ?[{date:input.date,steps:day.walking.nonTrainingSteps,sources:[...input.activitySources,...(input.stepSources??[])]}]:[];
     });
     if(samples.length<7)return;
     const steps=Math.round(median(samples.map(s=>s.steps))!);
@@ -69,12 +69,14 @@ export class EnergyStore{
   }
   saveDay(value:unknown,now=new Date()){
     const p=energyDayInput.parse(value),zone=this.host.getSettings().timezone;
-    if(p.date>this.today(now))throw new Error('不能确认未来日期已经记齐');
+    if(p.date>calendarDay(now.toISOString(),zone))throw new Error('不能确认未来日期已经记齐');
+    if(p.date>this.today(now)&&(p.mealComplete||p.activityComplete))throw new Error('这个手记日尚未开始，请只保存自然日步数');
     const records=this.host.records().filter(r=>localDay(r.occurredAt,zone)===p.date);
-    if(p.stepSourceId&&!records.some(r=>r.id===p.stepSourceId&&r.analysis?.dailyActivity))throw new Error('步数来源不存在或日期不一致，请重新选择');
+    const stepRecords=this.host.records().filter(r=>stepDay(r,zone)===p.date);
+    if(p.stepSourceId&&!stepRecords.some(r=>r.id===p.stepSourceId&&r.analysis?.dailyActivity))throw new Error('步数来源不存在或日期不一致，请重新选择');
     if(p.excludedWorkoutIds?.some(id=>!records.some(r=>r.id===id&&isEnergyActivityRecord(r))))throw new Error('待排除训练不存在或日期不一致');
     if(p.distinctWorkoutPairs?.flat().some(id=>!records.some(r=>r.id===id&&isEnergyActivityRecord(r))))throw new Error('要核对的训练不存在或日期不一致');
-    const input:DailyEnergyInput={...p,timezone:zone,mealSources:refs(records.filter(r=>r.kind==='meal')),activitySources:refs(records.filter(isEnergyActivityRecord)),updatedAt:now.toISOString()};
+    const input:DailyEnergyInput={...p,timezone:zone,dayPolicy:DAY_POLICY_VERSION,stepSources:refs(stepRecords.filter(r=>!!r.analysis?.dailyActivity)),mealSources:refs(records.filter(r=>r.kind==='meal')),activitySources:refs(records.filter(isJournalActivityRecord)),updatedAt:now.toISOString()};
     this.put('days',`${zone}:${p.date}`,input);this.invalidate();return input;
   }
   saveTarget(value:unknown,now=new Date()){
@@ -105,14 +107,14 @@ export class EnergyStore{
   }
   hash(from:string,to:string){
     const zone=this.host.getSettings().timezone,records=this.host.records();
-    const selected=records.filter(r=>{const d=localDay(r.occurredAt,zone);return d>=addDays(from,-28)&&d<=to;});
+    const selected=records.filter(r=>{const d=localDay(r.occurredAt,zone);return d>=addDays(from,-29)&&d<=addDays(to,1);});
     const anchors=this.profiles().flatMap(p=>p.baselineAnchor?[p.baselineAnchor]:[]);
     const anchorIds=new Set(anchors.flatMap(a=>Object.values(a.references).flatMap(r=>r.sources.map(s=>s.id))));
     const anchorDates=new Set(anchors.flatMap(a=>a.dayEvidence?.map(e=>e.date)??[]));
     const anchorRecords=records.filter(r=>anchorIds.has(r.id));
     const prior=records.filter(r=>r.kind==='body'&&r.body?.weightKg&&!r.timeSource&&localDay(r.occurredAt,zone)<from).sort((a,b)=>Date.parse(b.occurredAt)-Date.parse(a.occurredAt))[0];
     const priorTraining=refs(records.filter(r=>r.kind==='training'&&localDay(r.occurredAt,zone)<from));
-    return digest({model:ENERGY_MODEL_VERSION,zone,records:[...new Map([...selected,...anchorRecords,...(prior?[prior]:[])].map(r=>[r.id,r])).values()].sort((a,b)=>a.id.localeCompare(b.id)).map(r=>{const {analysisPending,analysisError,analysisAttemptedRevision,...evidence}=r;return evidence;}),priorTraining,profiles:this.profiles(),targets:this.targets(),days:this.days().filter(d=>d.timezone===zone&&(anchorDates.has(d.date)||d.date>=addDays(from,-28)&&d.date<=to))});
+    return digest({model:ENERGY_MODEL_VERSION,dayPolicy:DAY_POLICY_VERSION,zone,records:[...new Map([...selected,...anchorRecords,...(prior?[prior]:[])].map(r=>[r.id,r])).values()].sort((a,b)=>a.id.localeCompare(b.id)).map(r=>{const {analysisPending,analysisError,analysisAttemptedRevision,...evidence}=r;return evidence;}),priorTraining,profiles:this.profiles(),targets:this.targets(),days:this.days().filter(d=>d.timezone===zone&&(anchorDates.has(d.date)||d.date>=addDays(from,-28)&&d.date<=to))});
   }
   invalidate(){for(const m of this.host.messages()){const d=m.energyDependency;if(!m.stale&&d&&this.hash(d.from,d.to)!==d.hash)this.host.putMessage({...m,stale:true});}}
   review(now=new Date()):EnergyReview{
@@ -178,12 +180,12 @@ export class EnergyStore{
   }
   view(payload:unknown={},now=new Date()):EnergyView{
     const p=z.object({date:daySchema.optional(),days:z.union([z.literal(7),z.literal(30)]).default(7),mode:energyGoalSchema.optional()}).parse(payload),today=this.today(now),date=p.date??today;
-    if(date>today)throw new Error('请选择今天或之前的日期');
+    if(date>calendarDay(now.toISOString(),this.host.getSettings().timezone))throw new Error('请选择今天或之前的日期');
     const selected=this.day(date),profile=this.profileAt(today),current=this.day(today),mode:EnergyGoal=p.mode??this.targetAt(today)?.mode??'maintain';
     const initialSuggestion=profile&&current.weight?initialEnergySuggestion({...profile,age:profile.age+Math.floor(Math.max(0,dateDistance(profile.effectiveDate,today))/365.2425)},current.weight,mode):null;
     const review=this.review(now);
     const suggestedUsualSteps=this.stepReference(date)?.steps.low;
-    return {today,currentTarget:this.targetAt(today),selected,days:Array.from({length:p.days},(_,i)=>this.day(addDays(date,i-p.days+1))),profiles:this.profiles(),targets:this.targets(),dayInput:this.inputAt(date)??null,initialSuggestion,review,suggestedUsualSteps,trendWeeks:this.trendWeeks(date),proposals:this.proposals().map(p=>({...p,stale:p.status==='pending'&&(p.to!==today||p.sourceHash!==this.hash(p.from,p.to))})),sourceHash:this.hash(review.from,today)};
+    return {today,sourceLabels:Object.fromEntries(selected.sources.map(s=>{const r=this.host.record(s.id);return [s.id,r.text.split('\n')[0]||r.analysis?.summary||'原始记录'];})),stepToday:calendarDay(now.toISOString(),this.host.getSettings().timezone),stepReports:this.host.records().filter(r=>r.analysis?.dailyActivity&&stepDay(r,this.host.getSettings().timezone)===date),currentTarget:this.targetAt(today),selected,days:Array.from({length:p.days},(_,i)=>this.day(addDays(date,i-p.days+1))),profiles:this.profiles(),targets:this.targets(),dayInput:this.inputAt(date)??null,initialSuggestion,review,suggestedUsualSteps,trendWeeks:this.trendWeeks(date),proposals:this.proposals().map(p=>({...p,stale:p.status==='pending'&&(p.to!==today||p.sourceHash!==this.hash(p.from,p.to))})),sourceHash:this.hash(review.from,today)};
   }
   chatContext(question:string,now=new Date()){
     const today=this.today(now),matched=question.match(/\d{4}-\d{2}-\d{2}/)?.[0],parsed=daySchema.safeParse(matched),date=parsed.success&&parsed.data<=today?parsed.data:today;

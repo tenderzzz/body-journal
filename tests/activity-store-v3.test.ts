@@ -56,7 +56,7 @@ test('reference steps suggestion needs seven complete historical days and is a m
 test('v2 database is backed up before v3 and v1/v2 backups remain restorable',t=>{
  let store=setup(t);store.energy.saveProfile(profile,now);record(store,'kept-v3-01');const root=store.root;const old={...store.exportBundle(),version:2};
  store.db.exec('PRAGMA user_version=2');store.close();store=new HealthStore(root,new FoodCatalog([]),root+'/inbox',false);t.after(()=>{if(store.db.isOpen)store.close();});
- assert.equal(store.db.prepare('PRAGMA user_version').get()?.user_version,5);
+ assert.equal(store.db.prepare('PRAGMA user_version').get()?.user_version,6);
  const files=readdirSync(root+'/backups').filter(f=>f.startsWith('before-activity-v3-'));assert.equal(files.length,1);
  assert.equal(verifyArchive(root+'/backups/'+files[0]),2);assert.equal(old.energy!.profiles[0].usualSteps,4000);
  store.restore(old);assert.equal(store.record('kept-v3-01').id,'kept-v3-01');assert.equal(store.energy.profiles().length,1);

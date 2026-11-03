@@ -218,7 +218,7 @@ test('v1 migration creates a pre-upgrade backup; v3 backup round-trip and v1 res
   const root=store.root;store.db.exec('PRAGMA user_version=1');store.close();
   store=new HealthStore(root,new FoodCatalog([]),path.join(root,'inbox'),false);
   const files=readdirSync(path.join(root,'backups')).filter(f=>f.startsWith('before-energy-v2-'));assert.equal(files.length,1);assert.equal(verifyArchive(path.join(root,'backups',files[0])),1);
-  assert.equal(store.db.prepare('PRAGMA user_version').get()?.user_version,5);store.close();
+  assert.equal(store.db.prepare('PRAGMA user_version').get()?.user_version,6);store.close();
 });
 
 function sse(value:unknown,complete=true){const text=JSON.stringify(value);return new Response(`data: ${JSON.stringify({type:'response.output_text.delta',delta:text})}\n\n`+(complete?`data: ${JSON.stringify({type:'response.completed',response:{usage:{input_tokens:20,output_tokens:30}}})}\n\n`:''),{headers:{'Content-Type':'text/event-stream'}});}

@@ -47,6 +47,7 @@ try{
     await input.fill(q);await page.getByRole('button',{name:'发送问题',exact:true}).click();
     await expect.poll(async()=>page.evaluate(async()=>{const s=await window.health.invoke('snapshot');return s.messages.at(-1)?.status;})).toBe('complete');
   }
+  await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'我的档案',exact:true}).click();await expect(page.locator('.profile-page')).toContainText('每次训练最多45分钟');await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'助理',exact:true}).click();
   await page.getByRole('button',{name:'新对话',exact:true}).click();
   await expect(page.locator('.message')).toHaveCount(0);
   await input.fill('今天肩怎么练？');await page.getByRole('button',{name:'发送问题',exact:true}).click();
@@ -65,7 +66,7 @@ try{
   if(snapshot.records.some(r=>r.text==='合成恢复后应不存在')||!snapshot.records.some(r=>r.id===record.id))throw new Error('Restore did not replace the record dataset');
   await app.close();app=undefined;
   page=await launch();snapshot=await page.evaluate(()=>window.health.invoke('snapshot'));
-  if(snapshot.version!=='0.6.0'||snapshot.exerciseRules.archived[0]!=='哑铃飞鸟')throw new Error('Version or portable rules were lost on restart');
+  if(snapshot.version!=='0.6.1'||snapshot.exerciseRules.archived[0]!=='哑铃飞鸟')throw new Error('Version or portable rules were lost on restart');
   if(snapshot.memories.filter(m=>m.active&&m.topicKey==='training.duration')[0].text!=='每次训练最多45分钟')throw new Error('Memory correction lost on restore');
   await page.locator('.message.assistant').last().getByText('本次参考与引用',{exact:true}).click();
   await page.setViewportSize({width:860,height:650});

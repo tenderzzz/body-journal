@@ -23,7 +23,7 @@ test('v5 archive round trips all portable config, raw files, histories and image
   store.saveExerciseRules({archived:['哑铃飞鸟'],overrides:{杠铃平板卧推:'total'}});
   store.ignoreFoodCandidate('合成食品');store.setConfig('conversationStart','2026-01-01T00:00:00Z');
   const file=path.join(dir,'archive.bodyjournal');store.backup(file);
-  assert.ok(isArchive(file));assert.equal(verifyArchive(file),5);
+  assert.ok(isArchive(file));assert.equal(verifyArchive(file),6);
   const target=new HealthStore(path.join(dir,'target'),new FoodCatalog([]),'target-inbox',false);
   try{
     const spend=target.reserveUsage('chatgpt',0);
@@ -46,7 +46,7 @@ test('upgrade preserves pristine v4 snapshot before recovering interrupted reque
   store.db.exec('PRAGMA user_version=4');store.close();
   const upgraded=new HealthStore(store.root,new FoodCatalog([]),'inbox',false);
   try{
-    const rollback=readdirSync(dir).find(n=>n.startsWith('vault-before-v06-'))!;
+    const rollback=readdirSync(dir).find(n=>n.startsWith('vault-before-v061-'))!;
     assert.ok(rollback);const old=new DatabaseSync(path.join(dir,rollback,'health.sqlite'),{readOnly:true});
     assert.equal(old.prepare('PRAGMA user_version').get()!.user_version,4);
     assert.equal(old.prepare('SELECT state FROM usage WHERE id=?').get(spend)!.state,'reserved');old.close();
@@ -77,5 +77,5 @@ test('more than 512 MiB of synthetic image data backs up and restores', {skip:pr
   try{target.restoreFile(file);assert.equal(target.records().length,30);for(const r of store.records())assert.deepEqual(target.record(r.id).attachments,r.attachments);}finally{target.close();}
   store.db.exec('PRAGMA user_version=4');store.close();
   const upgraded=new HealthStore(store.root,new FoodCatalog([]),'inbox',false);
-  try{assert.equal(upgraded.records().length,30);assert.ok(readdirSync(dir).some(n=>n.startsWith('vault-before-v06-')));}finally{upgraded.close();}
+  try{assert.equal(upgraded.records().length,30);assert.ok(readdirSync(dir).some(n=>n.startsWith('vault-before-v061-')));}finally{upgraded.close();}
 });

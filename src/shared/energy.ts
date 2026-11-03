@@ -1,5 +1,5 @@
 import type {ActivityLevel, DailyEnergyEstimate, DailyEnergyInput, EnergyGoal, EnergyProfile, EnergyTarget, EnergyWorkout, HealthRecord, Range, RunEntry, DailyActivity, WalkingEstimate, ActivityDuplicate, StepReference} from './types';
-import {localDay} from './stats';
+import {journalDay as localDay,calendarDay,dayBounds,atTime} from './dates';
 import {inferSession,runCompletion} from './exercises';
 
 export const ENERGY_MODEL_VERSION='mifflin-compendium2024-fixed-steps-v5';
@@ -57,6 +57,7 @@ export function initialEnergySuggestion(profile:EnergyProfile,weight:{id:string;
 
 const positive=(n:number|undefined):n is number=>typeof n==='number'&&Number.isFinite(n)&&n>0;
 const nonnegative=(n:number|undefined):n is number=>typeof n==='number'&&Number.isFinite(n)&&n>=0;
+export const isJournalActivityRecord=(r:HealthRecord)=>r.kind==='training'||!!r.analysis?.run||!!r.analysis?.sets?.length||!!r.analysis?.training?.durationMinutes;
 export const isEnergyActivityRecord=(r:HealthRecord)=>r.kind==='training'||!!r.analysis?.run||!!r.analysis?.sets?.length||!!r.analysis?.training?.durationMinutes||!!r.analysis?.dailyActivity;
 const energyRunCompletion=(r:HealthRecord)=>runCompletion(r.kind==='note'?{...r,kind:'training'}:r);
 const reportedMinutes=(run:RunEntry)=>positive(run.minutes)?run.minutes:positive(run.km)&&positive(run.paceSecondsPerKm)?run.km*run.paceSecondsPerKm/60:positive(run.elapsedMinutes)?run.elapsedMinutes:undefined;
@@ -97,13 +98,20 @@ function activityDuplicates(training:HealthRecord[],excluded:Set<string>,distinc
   }
   return {duplicates,skip};
 }
+export function stepDay(record:HealthRecord,zone:string){
+  const report=record.analysis?.dailyActivity;
+  if(report?.reportDate)return report.reportDate;
+  if(report?.asOf&&/^\d{4}-\d{2}-\d{2}T/.test(report.asOf)&&Number.isFinite(Date.parse(report.asOf)))return calendarDay(report.asOf,zone);
+  return calendarDay(record.occurredAt,zone);
+}
+
 function reportTimestamp(record:HealthRecord){
   const asOf=record.analysis?.dailyActivity?.asOf;
   if(asOf){
     const iso=Date.parse(asOf);
     if(Number.isFinite(iso))return iso;
     const clock=asOf.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
-    if(clock)return Date.parse(record.occurredAt.slice(0,10)+'T'+clock[1].padStart(2,'0')+':'+clock[2]+':'+(clock[3]??'00')+(record.occurredAt.match(/(?:Z|[+-]\d{2}:\d{2})$/)?.[0]??'Z'));
+    if(clock)return Date.parse(atTime(stepDay(record,record.timezone),+clock[1],+clock[2],record.timezone)??record.occurredAt);
   }
   return Date.parse(record.occurredAt);
 }
@@ -193,7 +201,7 @@ export function estimateDay(date:string,timezone:string,records:HealthRecord[],p
   const active=records.filter(r=>!r.deleted),day=active.filter(r=>localDay(r.occurredAt,timezone)===date);
   const meals=day.filter(r=>r.kind==='meal'),training=day.filter(r=>r.kind==='training'||!!r.analysis?.run||!!r.analysis?.sets?.length||!!r.analysis?.training?.durationMinutes)
     .sort((a,b)=>Number(!!b.analysis?.activityOverrides)-Number(!!a.analysis?.activityOverrides)||Date.parse(b.updatedAt)-Date.parse(a.updatedAt)||a.id.localeCompare(b.id));
-  const activityRecords=day.filter(isEnergyActivityRecord);
+  const activityRecords=day.filter(input?.dayPolicy?isJournalActivityRecord:isEnergyActivityRecord);
   const measurements=active.filter(r=>r.kind==='body'&&r.body?.weightKg&&localDay(r.occurredAt,timezone)<=date&&!r.timeSource).sort((a,b)=>Date.parse(b.occurredAt)-Date.parse(a.occurredAt));
   const measured=measurements[0],weight=measured?{id:measured.id,revision:measured.revision,kg:measured.body!.weightKg!,date:localDay(measured.occurredAt,timezone)}:undefined;
   const missing:string[]=[],assumptions=['活动档位为经验参数，含日常活动与进食相关消耗。','参考区间不是统计置信区间，也不是实测消耗。'];
@@ -271,7 +279,26 @@ export function estimateDay(date:string,timezone:string,records:HealthRecord[],p
       workouts.push({recordId:r.id,revision:r.revision,kind:'run',minutes:energyMinutes,met,method,extra,assumed:elapsedOnly,basis,comparison});
     }
   }
-  const {walking,unresolved}=walkingEstimate(day,completedRuns,input,profile,weight?.kg,missing,assumptions,unresolvedRun,historyReference);
+  const civilBounds=dayBounds(date,date,timezone,'calendar');
+  const civilRecords=active.filter(r=>stepDay(r,timezone)===date);
+  const runCandidates=active.filter(r=>{if(!r.analysis?.run||runCompletion(r)!=='completed'||r.timeSource)return false;const start=Date.parse(r.analysis.run.startedAt??r.occurredAt),end=start+(r.analysis.run.elapsedMinutes??reportedMinutes(r.analysis.run)??0)*60000;return start<civilBounds.until&&end>civilBounds.from;});
+  const civilRuns:CompletedRun[]=[];
+  const runSources:HealthRecord[]=[];
+  let civilOverlap=false;
+  const {skip:civilDuplicates,duplicates:civilDuplicateDetails}=activityDuplicates(runCandidates,new Set(input?.excludedWorkoutIds??[]),input?.distinctWorkoutPairs);
+  for(const r of runCandidates){
+    if(civilDuplicates.has(r.id)||(input?.excludedWorkoutIds??[]).includes(r.id))continue;
+    const run=r.analysis!.run!,minutes=reportedMinutes(run);
+    const start=Date.parse(run.startedAt??r.occurredAt),end=start+(run.elapsedMinutes??minutes??0)*60000;
+    if(start>=civilBounds.until||end<civilBounds.from)continue;
+    runSources.push(r);
+    if(!minutes||start<civilBounds.from||end>civilBounds.until){civilOverlap=true;continue;}
+    const validTiming=!(positive(run.elapsedMinutes)&&(run.elapsedMinutes<minutes||run.elapsedMinutes>1440))&&!(positive(run.km)&&positive(run.minutes)&&positive(run.paceSecondsPerKm)&&Math.abs(run.minutes*60/run.km-run.paceSecondsPerKm)/run.paceSecondsPerKm>.05);
+    civilRuns.push({run,minutes,recordId:r.id,revision:r.revision,validTiming});
+  }
+  const unresolvedCivilRun=civilOverlap||civilDuplicateDetails.some(d=>!d.exact)||civilRecords.some(r=>(r.analysis?.run||(!r.analysis&&r.kind==='training'))&&(r.timeSource||r.status==='pending'||r.status==='needs_info'));
+  const {walking,unresolved}=walkingEstimate(civilRecords,civilRuns,input,profile,weight?.kg,missing,assumptions,unresolvedCivilRun,historyReference);
+  assumptions.push('饮食和训练按04:00换日，步数修正采用同日期00:00–24:00的自然日数据。');
   if(profile?.baselineAnchor&&walking?.reference?.sources.some(s=>!active.some(r=>r.id===s.id&&r.revision===s.revision)))assumptions.push('固定步数参考的来源已有修订或移除；当前保留已确认的参考快照，请核对后保存新版计算资料。');
   unsupported=unsupported||unresolved;
   const tooLong=workouts.reduce((sum,w)=>sum+w.minutes.high,0)>1440;
@@ -283,12 +310,13 @@ export function estimateDay(date:string,timezone:string,records:HealthRecord[],p
   const sumMacro=(key:'kcal'|'protein'):Range|null=>estimated.length?{low:estimated.reduce((s,r)=>s+r.analysis!.macros![key].low,0),high:estimated.reduce((s,r)=>s+r.analysis!.macros![key].high,0)}:null;
   const foodReady=meals.length>0&&estimated.length===meals.length&&meals.every(r=>r.status==='ready'&&!r.analysis?.unmatched?.length&&!r.timeSource);
   const mealConfirmed=!!input?.mealComplete&&sameRefs(input.mealSources,refs(meals));
-  const activityConfirmed=!!input?.activityComplete&&sameRefs(input.activitySources,refs(activityRecords));
+  const stepSourcesMatch=input?.steps!==undefined||input?.walkingKm!==undefined||!input?.stepSources||sameRefs(input.stepSources,refs(civilRecords.filter(r=>!!r.analysis?.dailyActivity)));
+  const activityConfirmed=!!input?.activityComplete&&sameRefs(input.activitySources,refs(activityRecords))&&stepSourcesMatch;
   const mealComplete=mealConfirmed&&foodReady;
   const activityComplete=activityConfirmed&&!unsupported;
   if(!mealComplete)missing.push('饮食尚未确认记齐，或存在待分析／修订的餐食');
   if(!activityComplete)missing.push('活动尚未确认记齐，或存在待确认的训练');
   if(profile&&!profile.generalAdult)assumptions.push('当前不属于一般成年健身场景，仅展示记录与估算，不自动提供饮食目标。');
   const protein=sumMacro('protein'),kcal=sumMacro('kcal'),balance=mealComplete&&activityComplete&&kcal&&expenditure?{low:kcal.low-expenditure.high,high:kcal.high-expenditure.low}:null;
-  return {date,timezone,modelVersion:profile?.baselineAnchor?.modelVersion??LEGACY_ENERGY_MODEL_VERSION,profileId:profile?.id,weight,resting,baseline,dailyBaseline,expenditure,workouts,walking,duplicates,intake:{kcal,protein,meals:meals.length,estimated:estimated.length,complete:mealComplete},mealConfirmed,activityConfirmed,activityComplete,balance,balanceState:balance?(balance.high<0?'deficit':balance.low>0?'surplus':'uncertain'):'incomplete',target,targetDifference:target&&kcal?{low:target.kcal-kcal.high,high:target.kcal-kcal.low}:null,proteinDifference:target?.protein&&protein?{low:target.protein-protein.high,high:target.protein-protein.low}:null,sources:[...new Map([...refs([...day,...(measured&&!day.some(r=>r.id===measured.id)?[measured]:[])]),...(walking?.reference?.sources??[])].map(r=>[r.id,r])).values()],missing,assumptions};
+  return {date,timezone,modelVersion:profile?.baselineAnchor?.modelVersion??LEGACY_ENERGY_MODEL_VERSION,profileId:profile?.id,weight,resting,baseline,dailyBaseline,expenditure,workouts,walking,duplicates,intake:{kcal,protein,meals:meals.length,estimated:estimated.length,complete:mealComplete},mealConfirmed,activityConfirmed,activityComplete,balance,balanceState:balance?(balance.high<0?'deficit':balance.low>0?'surplus':'uncertain'):'incomplete',target,targetDifference:target&&kcal?{low:target.kcal-kcal.high,high:target.kcal-kcal.low}:null,proteinDifference:target?.protein&&protein?{low:target.protein-protein.high,high:target.protein-protein.low}:null,sources:[...new Map([...refs([...day,...civilRecords,...runSources,...(measured&&!day.some(r=>r.id===measured.id)?[measured]:[])]),...(walking?.reference?.sources??[])].map(r=>[r.id,r])).values()],missing,assumptions};
 }

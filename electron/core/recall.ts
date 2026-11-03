@@ -1,24 +1,27 @@
 import type {DatabaseSync} from 'node:sqlite';
 import type {Memory,Message,HealthRecord} from '../../src/shared/types';
-import {localDay} from '../../src/shared/stats';
+import {journalDay as localDay, calendarDay, dayBounds, clockIn, type DayBasis} from '../../src/shared/dates';
 import {addDays,dateDistance} from '../../src/shared/energy';
 import {atTime} from './dates';
 
-export const RECALL_VERSION='recall-v06-1';
-export type QueryPeriod={from:string;to:string;asOf:string};
+export const RECALL_VERSION='recall-v061-1';
+export type QueryPeriod={from:string;to:string;asOf:string;basis?:DayBasis;fromAt?:string;untilAt?:string};
 export type RecallQuery={period?:QueryPeriod;clarification?:string;historical:boolean};
-export function queryPeriod(text:string,zone:string,now=new Date()):RecallQuery{
-  const today=localDay(now.toISOString(),zone),year=Number(today.slice(0,4));
+export function queryPeriod(text:string,zone:string,now=new Date(),basis?:DayBasis):RecallQuery{
+  const clock=(!/计划|打算|准备|建议|如果|能不能|可以|能训练|能锻炼/.test(text)&&(/查|记录|吃了|吃的|跑了|练了|做了|发生|那餐|那次|当时/.test(text)||/\d{1,2}(?:月|[-/])\d{1,2}/.test(text)))?clockIn(text):undefined;
+  basis??=clock||/自然日/.test(text)||(/步数|走了|走多少|步行距离/.test(text)&&!/吃|摄入|餐|训练/.test(text))?'calendar':'journal';
+  const today=(basis==='calendar'?calendarDay:localDay)(now.toISOString(),zone),year=Number(calendarDay(now.toISOString(),zone).slice(0,4));
   const dates=[...text.matchAll(/(?:(\d{4})\s*[-/.年]\s*)?(\d{1,2})\s*[-/月]\s*(\d{1,2})(?:日|号)?/g)];
   const days:string[]=[];
   for(const m of dates){
     let y=m[1]?+m[1]:year;
     let day=`${y}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
-    if(!m[1]&&day>today){y--;day=String(y)+day.slice(4);}
+    if(!m[1]&&day>calendarDay(now.toISOString(),zone)){y--;day=String(y)+day.slice(4);}
     if(!Number.isFinite(Date.parse(day+'T12:00:00Z'))||new Date(day+'T12:00:00Z').toISOString().slice(0,10)!==day)return {historical:false,clarification:'这个日期不存在，请确认要查哪一天。'};
     days.push(day);
   }
   let from=days[0],to=days.at(-1);
+  if(!from&&clock)from=to=today;
   if(days.length>1&&!/到|至|~|～|—/.test(text))return {historical:false,clarification:'你提到了多个日期，要查哪一天，还是比较这几天？'};
   if(!from){
     const relative=text.match(/前天|昨天|昨日|今天|今日/);
@@ -34,16 +37,20 @@ export function queryPeriod(text:string,zone:string,now=new Date()):RecallQuery{
   }
   if(!from||!to)return {historical:/以前|当时|上次|那周|那天|曾经|过去|历史/.test(text)};
   if(from>to)return {historical:false,clarification:'日期范围的先后顺序不明确，请确认起止日期。'};
-  const next=atTime(addDays(to,1),0,0,zone);if(!next)return {historical:false,clarification:'请确认这个日期所在的时区。'};
-  return {period:{from,to,asOf:new Date(Math.min(+now,Date.parse(next)-1)).toISOString()},historical:to<today};
+  const next=atTime(addDays(to,1),basis==='journal'?4:0,0,zone);if(!next)return {historical:false,clarification:'请确认这个日期所在的时区。'};
+  const bounds=dayBounds(from,to,zone,basis);
+  if(clock){const start=atTime(from,clock.hour,clock.minute,zone);if(!start)return {historical:false,clarification:'这个钟点在所选时区不存在，请确认发生时间。'};bounds.from=Date.parse(start);bounds.until=bounds.from+(clock.precision==='minute'?60000:3600000);}
+  return {period:{from,to,basis,fromAt:new Date(bounds.from).toISOString(),untilAt:new Date(bounds.until).toISOString(),asOf:new Date(Math.min(+now,bounds.until-1)).toISOString()},historical:to<today};
 }
 export function periodBounds(period:QueryPeriod,zone:string){
-  const from=atTime(period.from,0,0,zone),until=atTime(addDays(period.to,1),0,0,zone);
-  if(!from||!until)throw new Error('无法确定日期边界，请确认时区');return {from:Date.parse(from),until:Date.parse(until)};
+  if(period.fromAt&&period.untilAt)return {from:Date.parse(period.fromAt),until:Date.parse(period.untilAt)};
+  return dayBounds(period.from,period.to,zone,period.basis??'journal');
 }
 export function createRecordIndex(db:DatabaseSync){
+  if(db.prepare("SELECT 1 FROM sqlite_master WHERE name='records_lookup'").get())db.exec('CREATE INDEX IF NOT EXISTS records_lookup_page ON records_lookup(deleted,occurred_ms DESC,id DESC)');
+  if(db.prepare("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='records_lookup_update'").get())return;
   db.exec(`CREATE TABLE IF NOT EXISTS records_lookup(id TEXT PRIMARY KEY,occurred_ms INTEGER NOT NULL,kind TEXT NOT NULL,deleted INTEGER NOT NULL);
-    CREATE INDEX IF NOT EXISTS records_lookup_date ON records_lookup(occurred_ms,kind,deleted);
+    CREATE INDEX IF NOT EXISTS records_lookup_date ON records_lookup(deleted,occurred_ms DESC,id DESC,kind);
     CREATE TRIGGER IF NOT EXISTS records_lookup_insert AFTER INSERT ON records BEGIN
       INSERT OR REPLACE INTO records_lookup VALUES(new.id,CAST(ROUND((julianday(json_extract(new.doc,'$.occurredAt'))-2440587.5)*86400000) AS INTEGER),json_extract(new.doc,'$.kind'),coalesce(json_extract(new.doc,'$.deleted'),0)); END;
     CREATE TRIGGER IF NOT EXISTS records_lookup_update AFTER UPDATE OF doc ON records BEGIN
@@ -69,11 +76,11 @@ export function topicOf(text:string){
 export function temporalScope(quote:string,recordedAt:string,zone:string){
   const now=new Date(recordedAt),q=queryPeriod(quote,zone,now);
   const explicit=!!q.period&&!/以后|从今|今后/.test(quote);
-  const occurredAt=explicit?atTime(q.period!.from,0,0,zone)!:recordedAt;
+  const occurredAt=explicit?atTime(q.period!.from,q.period!.basis==='calendar'?0:4,0,zone)!:recordedAt;
   let until=q.period?.to;
   if(explicit&&/(?:本|这)周/.test(quote))until=addDays(q.period!.from,6);
   if(explicit&&/本月|这个月/.test(quote)){const next=new Date(q.period!.from+'T12:00:00Z');next.setUTCMonth(next.getUTCMonth()+1);until=addDays(next.toISOString().slice(0,10),-1);}
-  const expiresAt=explicit?atTime(addDays(until!,1),0,0,zone)!:new Date(+now+7*86400000).toISOString();
+  const expiresAt=explicit?atTime(addDays(until!,1),q.period!.basis==='calendar'?0:4,0,zone)!:new Date(+now+7*86400000).toISOString();
   return {occurredAt,expiresAt};
 }
 export function episodeFrom(text:string,recordedAt:string,zone:string,source:{messageId?:string;recordId?:string;recordRevision?:number},quote?:string):Episode|undefined{
@@ -104,8 +111,9 @@ export function memoryEvidenceSources(selected:Memory[],messages:Message[]){
   }));
 }
 export function habitFamiliarity(memory:Memory,records:HealthRecord[],now:Date){
+  const zone=records.find(r=>memory.sourceIds.includes(r.id))?.timezone??'Asia/Shanghai';
   const seen=new Map<string,HealthRecord>();
   for(const r of records)if(memory.sourceIds.includes(r.id)&&!r.deleted)seen.set(localDay(r.occurredAt,r.timezone),r);
-  const days=[...seen.keys()].sort(),latest=days.at(-1),age=latest?dateDistance(latest,localDay(now.toISOString(),'UTC')):Infinity;
+  const days=[...seen.keys()].sort(),latest=days.at(-1),age=latest?dateDistance(latest,localDay(now.toISOString(),zone)):Infinity;
   return {days:days.length,lastSeen:latest,age,level:days.length>=3&&age<=30?'familiar':days.length>=2?'reference':'single',historical:age>30};
 }
