@@ -1,15 +1,15 @@
 import {useLayoutEffect,useMemo,useRef} from 'react';
 import {ChevronLeft,ChevronRight,ChevronDown,ChevronUp} from 'lucide-react';
 import type {HealthRecord} from '../shared/types';
-import {localDay} from '../shared/stats';
+import {journalDay as localDay} from '../shared/dates';
 export type CalendarState={anchor:string;expanded:boolean};
 export const shiftDay=(day:string,offset:number)=>new Date(Date.parse(`${day}T12:00:00Z`)+offset*86400000).toISOString().slice(0,10);
 export function monday(day:string){const d=new Date(`${day}T12:00:00Z`);return shiftDay(day,-((d.getUTCDay()+6)%7));}
 export function monthDays(anchor:string){const first=anchor.slice(0,7)+'-01',start=monday(first);return Array.from({length:42},(_,i)=>shiftDay(start,i));}
 export function readCalendarState(zone:string):CalendarState{try{const value=JSON.parse(localStorage.getItem('bodyjournal.calendar')??'null');if(value&&/^\d{4}-\d{2}-\d{2}$/.test(value.anchor)&&Number.isFinite(Date.parse(value.anchor)))return {anchor:value.anchor,expanded:!!value.expanded};}catch{}return {anchor:localDay(new Date().toISOString(),zone),expanded:false};}
-export function JournalCalendar({records,zone,value,onChange,onSelect}:{records:HealthRecord[];zone:string;value:CalendarState;onChange:(v:CalendarState)=>void;onSelect:(date:string)=>void}){
+export function JournalCalendar({records,zone,value,onChange,onSelect,counts:providedCounts}:{counts?:Record<string,number>;records:HealthRecord[];zone:string;value:CalendarState;onChange:(v:CalendarState)=>void;onSelect:(date:string)=>void}){
  const viewport=useRef<HTMLDivElement>(null),timer=useRef<ReturnType<typeof setTimeout>|null>(null),today=localDay(new Date().toISOString(),zone),start=monday(value.anchor);
- const counts=useMemo(()=>{const map=new Map<string,number>();for(const r of records)if(!r.deleted){const day=localDay(r.occurredAt,zone);map.set(day,(map.get(day)??0)+1);}return map;},[records,zone]);
+ const counts=useMemo(()=>{const map=new Map<string,number>(Object.entries(providedCounts??{}));if(providedCounts)return map;for(const r of records)if(!r.deleted){const day=localDay(r.occurredAt,zone);map.set(day,(map.get(day)??0)+1);}return map;},[records,zone,providedCounts]);
  useLayoutEffect(()=>{if(viewport.current)viewport.current.scrollLeft=viewport.current.clientWidth*3;return()=>{if(timer.current)clearTimeout(timer.current);};},[start,value.expanded]);
  const update=(anchor:string,expanded=value.expanded)=>{const next={anchor,expanded};onChange(next);try{localStorage.setItem('bodyjournal.calendar',JSON.stringify(next));}catch{}};
  const month=(delta:number)=>{const d=new Date(value.anchor.slice(0,7)+'-01T12:00:00Z');d.setUTCMonth(d.getUTCMonth()+delta);update(d.toISOString().slice(0,10));};

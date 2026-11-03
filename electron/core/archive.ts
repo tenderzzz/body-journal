@@ -125,7 +125,7 @@ function visitArchive(file:string,onRow?:(table:string,row:Record<string,any>)=>
     db.exec('PRAGMA trusted_schema=OFF; PRAGMA query_only=ON;');
     if(db.prepare('PRAGMA integrity_check').get()!.integrity_check!=='ok')throw new Error('备份数据库完整性校验失败');
     const get=(key:string)=>db.prepare('SELECT value FROM meta WHERE key=?').get(key)?.value;
-    if(get('format')!=='bodyjournal-backup'||get('version')!=='5'||Number(get('databaseVersion'))>5)throw new Error('备份格式不支持，请检查应用版本');
+    if(get('format')!=='bodyjournal-backup'||get('version')!=='5'||Number(get('databaseVersion'))>6)throw new Error('备份格式不支持，请检查应用版本');
     const digest=createHash('sha256');
     for(const entry of db.prepare('SELECT * FROM rows ORDER BY seq').iterate()){
       const table=String(entry.table_name),json=String(entry.json),sha=hash(json);
@@ -177,9 +177,9 @@ export function beforeUpgrade(root:string){
   let snapshot:string|undefined;
   try{
     const version=Number(db.prepare('PRAGMA user_version').get()!.user_version);
-    if(version>5)throw new Error('档案由更高版本创建，请升级应用后再打开。');
-    if(version===0||version===5)return;
-    snapshot=root+'-before-v06-'+Date.now()+'-'+randomUUID().slice(0,8);
+    if(version>6)throw new Error('档案由更高版本创建，请升级应用后再打开。');
+    if(version===0||version===6)return;
+    snapshot=root+'-before-v061-'+Date.now()+'-'+randomUUID().slice(0,8);
     mkdirSync(snapshot,{mode:0o700});
     let size=statSync(source).size*2;for(const f of vaultFiles(db,root))size+=statSync(safeFile(root,f.relative)).size;
     ensureSpace(snapshot,size);

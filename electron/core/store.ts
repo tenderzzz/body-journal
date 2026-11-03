@@ -1,8 +1,10 @@
+import {migrateJournalDays} from './day-migration';
+import {journalDay,calendarDay,dayBounds,DAY_POLICY_VERSION} from '../../src/shared/dates';
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, statSync, lstatSync, realpathSync, copyFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
-import type { Analysis, Attachment, Envelope, HealthRecord, Memory, Message, Settings, CoachProfile, MemoryChange, ExerciseRules, FoodPreset, FoodCandidate, CommonDish, DishDefinition } from '../../src/shared/types';
+import type { Analysis, Attachment, Envelope, HealthRecord, Memory, Message, Settings, CoachProfile, MemoryChange, ExerciseRules, FoodPreset, FoodCandidate, CommonDish, DishDefinition, SyncItem } from '../../src/shared/types';
 import { analysisSchema, bodySchema, envelopeSchema, idSchema, memoryInputSchema, settingsSchema, readableError, coachProfileSchema, memoryChangeSchema, runSchema, dailyActivitySchema } from './validation';
 import { localRecordStatus, parseBody, parseTraining } from './parser';
 import { FoodCatalog } from './nutrition';
@@ -53,7 +55,7 @@ const recordProgressSchema=z.object({analysisPending:z.boolean().optional(),anal
 export class HealthStore {
   db: DatabaseSync;
   energy!:EnergyStore;
-  syncState: { imported:number;pending:number;errors:string[];at?:string }={imported:0,pending:0,errors:[]};
+  syncState: { imported:number;pending:number;errors:string[];at?:string;items?:SyncItem[] }={imported:0,pending:0,errors:[]};
   constructor(public root:string,public catalog:FoodCatalog,defaultInbox:string,seed=true) {
     recoverSwap(root);
     beforeUpgrade(root);
@@ -61,7 +63,7 @@ export class HealthStore {
     this.db=new DatabaseSync(path.join(root,'health.sqlite'));
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
     const version=Number(this.db.prepare('PRAGMA user_version').get()?.user_version??0);
-    if(version>5) throw new Error('档案由更高版本创建，请升级应用后再打开。');
+    if(version>6) throw new Error('档案由更高版本创建，请升级应用后再打开。');
     if(version>0 && version<1) this.db.prepare('VACUUM INTO ?').run(path.join(root,`before-migration-${Date.now()}.sqlite`));
     this.db.exec(`CREATE TABLE IF NOT EXISTS records(id TEXT PRIMARY KEY, doc TEXT NOT NULL, fingerprint TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS revisions(seq INTEGER PRIMARY KEY AUTOINCREMENT, entity TEXT NOT NULL, id TEXT NOT NULL, doc TEXT NOT NULL, at TEXT NOT NULL);
@@ -84,7 +86,9 @@ export class HealthStore {
     this.transaction(()=>{
       if(version<2&&this.getSettings().goals.kcal!==null)this.energy.importManualTarget(this.getSettings().goals.kcal!,this.getSettings().goals.protein);
       this.migrateMemoryReliability();this.energy.migrateFixedBaselines();
-      this.db.exec('CREATE TABLE IF NOT EXISTS memory_episodes(id TEXT PRIMARY KEY,doc TEXT NOT NULL); PRAGMA user_version=5');});
+      this.db.exec('CREATE TABLE IF NOT EXISTS memory_episodes(id TEXT PRIMARY KEY,doc TEXT NOT NULL)');
+      migrateJournalDays(this,version>0&&version<6);
+      this.db.exec('PRAGMA user_version=6');});
     createRecordIndex(this.db);
     this.backfillEpisodes();
     this.energy.syncTarget();this.energy.invalidate();
@@ -195,20 +199,24 @@ export class HealthStore {
     envelopes.forEach(e=>envelopeSchema.parse(e));
     return this.transaction(()=>envelopes.map(e=>this.importEnvelope(e,undefined,source).record));
   }
+  importInboxFile(file:string){
+    const inbox=this.getSettings().inbox;
+    if(lstatSync(file).isSymbolicLink()||!realpathSync(file).startsWith(realpathSync(inbox)+path.sep)) throw new Error('记录文件路径无效');
+    const info=statSync(file);if(info.size>40*1024*1024) throw new Error('单条记录过大');
+    const data=JSON.parse(readFileSync(file,'utf8'));
+    // v0.1's generated Shortcuts could omit their date. Only recover that exact
+    // envelope shape; other malformed dates must still fail strict validation.
+    const legacy=data?.version===1&&data.occurredAt===''&&/^-[1-9]\d{6}$/.test(data.id)&&path.basename(file)===`${data.id}.health.json`&&typeof data.textBase64==='string'&&typeof data.imageBase64==='string'&&data.timezone==='Asia/Shanghai';
+    return this.importRecord(data,path.dirname(file),'iPhone / iCloud',legacy?info.mtime.toISOString():undefined);
+  }
   scanInbox():typeof this.syncState {
     const result={imported:0,pending:0,errors:[] as string[],at:iso()}; const inbox=this.getSettings().inbox;
     if(!inbox||!existsSync(inbox)) { result.errors.push('尚未找到手机收件箱，请在设置中建立或选择文件夹。'); this.syncState=result; return result; }
     const files:string[]=[];
     for(const entry of readdirSync(inbox,{withFileTypes:true})) { if(entry.isFile()&&entry.name.endsWith('.json')) files.push(path.join(inbox,entry.name)); if(entry.isDirectory()) {const f=path.join(inbox,entry.name,'record.json');if(existsSync(f)) files.push(f);} }
-    for(const file of files.slice(0,5000)) {
+    for(const file of files) {
       try {
-        if(lstatSync(file).isSymbolicLink()||!realpathSync(file).startsWith(realpathSync(inbox)+path.sep)) throw new Error('记录文件路径无效');
-        const info=statSync(file);if(info.size>40*1024*1024) throw new Error('单条记录过大');
-        const data=JSON.parse(readFileSync(file,'utf8'));
-        // v0.1's generated Shortcuts could omit their date. Only recover that exact
-        // envelope shape; other malformed dates must still fail strict validation.
-        const legacy=data?.version===1&&data.occurredAt===''&&/^-[1-9]\d{6}$/.test(data.id)&&path.basename(file)===`${data.id}.health.json`&&typeof data.textBase64==='string'&&typeof data.imageBase64==='string'&&data.timezone==='Asia/Shanghai';
-        if(!this.importRecord(data,path.dirname(file),'iPhone / iCloud',legacy?info.mtime.toISOString():undefined).duplicate)result.imported++;
+        if(!this.importInboxFile(file).duplicate)result.imported++;
       }
       catch(e) { const msg=readableError(e); if(e instanceof SyntaxError||/尚未同步/.test(msg)) result.pending++; else result.errors.push(`${path.basename(file)}：${msg}`); }
     }
@@ -423,7 +431,7 @@ export class HealthStore {
   commonDishes(at?:Date):CommonDish[]{
     const records=this.records().filter(r=>r.kind==='meal'&&r.status==='ready'&&r.analysis?.ingredients?.length&&r.analysis.macros&&!r.analysis.unmatched?.length&&(!at||Date.parse(r.occurredAt)<=+at));
     return groupDishRecords(records,this.dishDefinitions()).flatMap(group=>{
-      const days=new Set(group.records.map(r=>localDay(r.occurredAt,r.timezone))).size;
+      const days=new Set(group.records.map(r=>journalDay(r.occurredAt,this.getSettings().timezone))).size;
       if(!group.definition&&days<2)return [];
       const latest=group.records.at(-1)!;
       return [{id:group.id,name:group.name,aliases:[...new Set([...(group.definition?.aliases??[]),...group.records.map(r=>primaryDishName(r.text)).filter((v):v is string=>!!v)])],recordIds:group.records.map(r=>r.id),days,latestAt:latest.occurredAt,latestRecordId:latest.id,template:structuredClone(latest.analysis!.ingredients!),macros:structuredClone(latest.analysis!.macros!),active:group.definition?.active!==false,auto:!group.definition}];
@@ -460,7 +468,7 @@ export class HealthStore {
         if(!ing.nutrition&&ing.foodId===null)continue;
         const key=normalizeFoodName(ing.name);if(!key||ignored.has(ing.name))continue;
         const group=groups.get(key)??{name:ing.name,meals:new Set(),days:new Set(),latestAt:'',grams:new Set(),per100g:null,source:'estimate' as FoodCandidate['source']};
-        group.meals.add(r.id);group.days.add(localDay(r.occurredAt,r.timezone));
+        group.meals.add(r.id);group.days.add(journalDay(r.occurredAt,this.getSettings().timezone));
         if(r.occurredAt>=group.latestAt){
           group.latestAt=r.occurredAt;
           group.grams=new Set([`${ing.grams.low}-${ing.grams.high}`]);
@@ -660,7 +668,7 @@ export class HealthStore {
     return this.transaction(()=>{for(const c of receipt.changed){const restored={...(c.before??{...c.after,active:false}),revision:memoryRevision(c.after)+1,updatedAt:iso()};this.db.prepare('INSERT INTO revisions(entity,id,doc,at) VALUES(?,?,?,?)').run('memory',c.id,JSON.stringify(c.after),iso());this.db.prepare('UPDATE memories SET doc=? WHERE id=?').run(JSON.stringify(restored),c.id);}if(receipt.beforeGoals)this.setSettings({...this.getSettings(),goals:receipt.beforeGoals});this.invalidateMemoryAnswers();this.putMessage({...message,memoryReceipt:{...receipt,undone:true}});});
   }
   refreshAutomaticMemories() {
-    const existing=this.memories(),drafts=automaticMemories(this.records(),existing,this.dishDefinitions()),keys=new Set(drafts.map(m=>m.autoKey));
+    const existing=this.memories(),drafts=automaticMemories(this.records(),existing,this.dishDefinitions(),this.getSettings().timezone),keys=new Set(drafts.map(m=>m.autoKey));
     this.transaction(()=>{
       for(const draft of drafts){
         const old=this.memories().find(m=>m.autoKey===draft.autoKey)||(draft.topicKey?this.memories().find(m=>memoryTopic(m.text,m.topicKey)===draft.topicKey&&m.kind===draft.kind&&m.subject===draft.subject):undefined);
@@ -729,7 +737,7 @@ export class HealthStore {
     const zone=this.getSettings().timezone,query=queryPeriod(question,zone,now);
     if(query.historical&&!query.period&&/上次|那周|赶课|考试/.test(question)){
       const last=this.db.prepare('SELECT doc FROM memory_episodes').all().map(r=>parseJSON<Episode>(r.doc)).filter(e=>Date.parse(e.occurredAt)<=+now&&(e.topic===topicOf(question)||e.condition&&/赶课|考试/.test(question))).sort((a,b)=>b.occurredAt.localeCompare(a.occurredAt))[0];
-      if(last){const from=localDay(last.occurredAt,zone),end=last.expiresAt?new Date(Date.parse(last.expiresAt)-1):new Date(last.occurredAt);query.period={from,to:localDay(end.toISOString(),zone),asOf:new Date(Math.min(+now,+end)).toISOString()};}
+      if(last){const from=journalDay(last.occurredAt,zone),end=last.expiresAt?new Date(Date.parse(last.expiresAt)-1):new Date(last.occurredAt);query.period={from,to:journalDay(end.toISOString(),zone),asOf:new Date(Math.min(+now,+end)).toISOString()};}
     }
     const at=query.period?new Date(query.period.asOf):now;
     const all=this.records(),versions=this.allMemoryVersions(),messages=this.messages();
@@ -793,16 +801,19 @@ export class HealthStore {
     const energy=!query.historical&&purpose!=='memory'&&(/能量|热量|消耗|摄入|饮食|吃|蛋白|目标|下一次.*练|下次.*练/.test(question)||purpose==='weekly')?this.energy.chatContext(question,now):undefined;
     const energyHistory=query.historical&&query.period&&/能量|热量|消耗|摄入|蛋白|目标/.test(question)?Array.from({length:Math.min(31,Math.round((Date.parse(query.period.to)-Date.parse(query.period.from))/86400000)+1)},(_,i)=>this.energy.day(new Date(Date.parse(query.period!.from+'T12:00:00Z')+i*86400000).toISOString().slice(0,10))):undefined;
     const energyIds=new Set([...(energy?[...energy.selected.sources,...energy.days.flatMap(d=>d.sources)]:[]),...(energyHistory?.flatMap(d=>d.sources)??[])].map(s=>s.id));
+    const stepQuery=/步数|走了|走多少|步行距离/.test(question)?queryPeriod(question,zone,now,'calendar'):undefined;
+    const stepDate=stepQuery?.period?.to??calendarDay(now.toISOString(),zone);
+    const stepEnergy=stepQuery?this.energy.day(stepDate):undefined;
     const records=relevant.map(r=>({...r,text:sanitizeSource(r.text,blockedFor(undefined,r.id))}));
-    const evidenceRecords=[...new Map([...records,...all.filter(r=>energyIds.has(r.id)).map(r=>({...r,text:sanitizeSource(r.text,blockedFor(undefined,r.id))}))].map(r=>[r.id,r])).values()];
+    const evidenceRecords=[...new Map([...records,...all.filter(r=>energyIds.has(r.id)||stepEnergy?.sources.some(s=>s.id===r.id)).map(r=>({...r,text:sanitizeSource(r.text,blockedFor(undefined,r.id))}))].map(r=>[r.id,r])).values()];
     const historicalRecords=all.filter(r=>Date.parse(r.occurredAt)<=+at);
     const goals=query.historical?{goal:'历史目标描述以当时记录为准',training:'',kcal:query.period?this.energy.targetAt(query.period.to)?.kcal??null:null,protein:query.period?this.energy.targetAt(query.period.to)?.protein??null:null}:this.getSettings().goals;
     const patterns:Record<string,{days:Set<string>;weeks:Set<string>;sources:string[]}>={};
     for(const e of patternEpisodes.filter(e=>e.condition&&e.topic===topic&&/缩短|减少|最多|只留|控制.{0,8}分钟/.test(e.quote))){
-      const day=localDay(e.occurredAt,zone),weekday=new Date(day+'T12:00:00Z').getUTCDay();
+      const day=journalDay(e.occurredAt,zone),weekday=new Date(day+'T12:00:00Z').getUTCDay();
       const p=patterns[e.condition!]??={days:new Set(),weeks:new Set(),sources:[]};p.days.add(day);p.weeks.add(new Date(Date.parse(day+'T12:00:00Z')-((weekday+6)%7)*86400000).toISOString().slice(0,10));p.sources.push(e.messageId??e.recordId!);
     }
-    return {goals,query,clarification,conversation,memorySources,memories,energy,energyHistory,
+    return {goals,query,dayPolicy:{version:DAY_POLICY_VERSION,timezone:zone,journalStartHour:4,stepStartHour:0},stepPeriod:stepQuery?.period?{...stepQuery.period,fromAt:new Date(periodBounds(stepQuery.period,zone).from).toISOString(),untilAt:new Date(periodBounds(stepQuery.period,zone).until).toISOString()}:undefined,stepEnergy:stepEnergy?{date:stepDate,walking:stepEnergy.walking,sources:stepEnergy.sources}:undefined,clarification,conversation,memorySources,memories,energy,energyHistory,
       episodes:relevantEpisodes.map(e=>({...e,quote:+at-Date.parse(e.occurredAt)<=3*86400000?e.quote:e.quote.slice(0,160),detail:+at-Date.parse(e.occurredAt)<=3*86400000?'original':'dated_summary'})),
       observedPatterns:Object.entries(patterns).filter(([,p])=>p.days.size>=3&&p.weeks.size>=2&&Date.parse([...p.days].sort().at(-1)!+'T12:00:00Z')>=+at-30*86400000).map(([condition,p])=>({condition,summary:'过去不同赶课时段曾缩短训练，本次安排仍需结合当前时间。',sources:p.sources,independentDays:p.days.size,periods:p.weeks.size})),
       familiarity:memories.filter(m=>m.kind==='habit').map(m=>({id:m.id,...habitFamiliarity(m,all,at)})),
@@ -912,7 +923,7 @@ export class HealthStore {
       for(const row of revisionRows) this.db.prepare('INSERT INTO revisions VALUES(?,?,?,?,?)').run(row.seq,row.entity,row.id,row.doc,row.at);
       for(const name of ['memories','messages']) for(const row of b.tables[name] as {id:string;doc:string}[]) this.db.prepare(`INSERT INTO ${name} VALUES(?,?)`).run(row.id,row.doc);
       for(const r of usageRows) this.db.prepare('INSERT OR IGNORE INTO usage VALUES(?,?,?,?,?,?,?,?)').run(r.id,r.month,r.provider,r.input,r.output,r.cost,r.state,r.at);
-      this.energy.restore(energyData);this.energy.mirroring=true;try{this.setSettings(settings);}finally{this.energy.mirroring=false;}
+      this.energy.restore(energyData);this.energy.mirroring=true;try{this.setSettings(settings);}finally{this.energy.mirroring=false;}this.db.prepare('DELETE FROM config WHERE key=?').run('dayPolicyVersion');migrateJournalDays(this,true);
       if(b.version===1&&settings.goals.kcal!==null)this.energy.importManualTarget(settings.goals.kcal,settings.goals.protein);
       this.energy.syncTarget();this.energy.invalidate();if(profile)this.saveCoachProfile(profile);if(aliases)this.setConfig('exerciseAliases',aliases);
       this.setConfig('dishDefinitions',dishDefinitions);this.setConfig('exerciseRules',b.exerciseRules??{archived:[],overrides:{}});this.setConfig('ignoredFoodCandidates',b.ignoredFoodCandidates??[]);this.migrateMemoryReliability();if(b.version<4)this.energy.migrateFixedBaselines();this.invalidateMemoryAnswers();

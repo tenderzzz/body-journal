@@ -1,19 +1,23 @@
 import {useState} from 'react';
 import type {Memory,Message} from '../shared/types';
-import {fmtDate} from './common';
+import {useDateFormat} from './common';
 type Run=<T=unknown>(action:string,payload?:unknown)=>Promise<T>;
 export function MemoryAudit({memory,run}:{memory:Memory;run:Run}){
+ const fmtDate=useDateFormat();
  const [history,setHistory]=useState<{at:string;memory:Memory}[]|null>(null),[error,setError]=useState('');
  return <details className="memory-audit" onToggle={e=>{if(e.currentTarget.open)run<{at:string;memory:Memory}[]>('memory:history',{id:memory.id}).then(setHistory).catch(e=>setError(e.message));}}><summary>来源与修改历史 · 版本 {memory.revision??1}</summary><p className="small muted">从 {fmtDate(memory.versionStartsAt??memory.startsAt,true)} 起{memory.expiresAt?`，至 ${fmtDate(memory.expiresAt,true)}`:'，未设结束时间'}。{memory.kind==='state'?'到期只表示需要重新确认，不表示已经恢复。':''}</p>{memory.evidence?.map((e,i)=><div className="original-text" key={i}>{e.origin==='unknown'?'旧资料没有保存可核对的原话来源。':e.quote}{e.at&&<p className="small muted">原话时间：{fmtDate(e.at,true)}</p>}</div>)}{!memory.evidence?.length&&<p className="small muted">旧资料未保存原话快照，可通过依据查看原始记录。</p>}{error&&<p role="alert">{error}</p>}{history?.length===0&&<p className="small muted">暂无更早版本。</p>}{history?.map((h,i)=><div key={i}><p className="small muted">版本 {h.memory.revision??1} · {fmtDate(h.at,true)}</p><p>{h.memory.text}</p></div>)}</details>;
 }
 export function MessageMemories({message,onSource}:{message:Message;onSource:(id:string)=>void}){
+ const fmtDate=useDateFormat();
  const receipt=message.contextReceipt;
  if(!message.memoryDependency?.length&&!receipt)return null;
  return <details className="memory-receipt">
   <summary>{receipt?'本次参考与引用':`本次使用的记忆（${message.memoryDependency!.length}）`}</summary>
   {receipt&&<>
    <p className="small muted">{receipt.period?`查询 ${receipt.period.from} 至 ${receipt.period.to}`:'按当前话题取证'} · 方法 {receipt.promptVersion}</p>
+   <p className="small muted">{receipt.dayPolicy?`按 ${receipt.dayPolicy.timezone} 的手记04:00、步数00:00换日`:'旧版按当时保存的日期口径取证'}{receipt.period?.fromAt?` · ${fmtDate(receipt.period.fromAt,true)} 至 ${fmtDate(receipt.period.untilAt!,true)}`:''}{receipt.stepPeriod?` · 步数 ${receipt.stepPeriod.from} 至 ${receipt.stepPeriod.to}`:''}</p>
    <p className="small muted">提供了 {receipt.provided.length} 条记录，回答引用了 {receipt.cited.length} 条。</p>
+   <details><summary>查看本次提供的材料</summary>{receipt.provided.map(r=><button key={r.id} className="text-button" onClick={()=>onSource(r.id)}>记录 {r.id} · 版本 {r.revision}</button>)}</details>
    {receipt.cited.map(r=><button key={r.id} className="text-button" onClick={()=>onSource(r.id)}>查看引用记录 · 版本 {r.revision}</button>)}
    <p className="small muted">下列记忆是本次提供的背景，适用时间以各条为准。</p>
   </>}

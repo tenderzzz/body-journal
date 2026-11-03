@@ -45,7 +45,7 @@ test('explicit date query finds an old backfilled workout beyond 160 recent reco
 test('date range uses local calendar boundaries across daylight saving and asks on ambiguity',()=>{
   const zone='America/New_York',now=new Date('2026-11-04T12:00:00Z');
   const q=queryPeriod('2026-11-01训练',zone,now),b=periodBounds(q.period!,zone);
-  assert.equal((b.until-b.from)/3600000,25);assert.equal(localDay(new Date(b.from).toISOString(),zone),'2026-11-01');
+  assert.equal((b.until-b.from)/3600000,24);assert.equal(localDay(new Date(b.from).toISOString(),zone),'2026-11-01');
   assert.ok(queryPeriod('6月10日和6月11日训练','Asia/Shanghai',now).clarification);
   assert.ok(queryPeriod('2026-02-30训练','Asia/Shanghai',now).clarification);
   assert.equal(queryPeriod('上周训练','Asia/Shanghai',new Date('2026-11-02T04:00:00Z')).period!.from,'2026-10-26');
@@ -59,7 +59,7 @@ test('this-week agreement bridges a new conversation, fades later, and remains a
   assert.equal(store.context('今天肩怎么练？','chat',new Date('2026-11-23T12:00:00+08:00')).memories.length,0);
   const old=store.context('上次赶课程那周怎么安排训练？','chat',new Date('2026-11-23T12:00:00+08:00'));
   assert.ok(JSON.stringify(old).includes('40分钟'));assert.equal(old.query.period!.from,'2026-11-02');assert.equal(old.stats.exercises['哑铃肩推'],undefined);
-  assert.equal(temporalScope('这周最多40分钟',monday,'Asia/Shanghai').expiresAt,'2026-11-08T16:00:00.000Z');
+  assert.equal(temporalScope('这周最多40分钟',monday,'Asia/Shanghai').expiresAt,'2026-11-08T20:00:00.000Z');
 });
 test('recent conversation topics survive 20 unrelated turns, ambiguity asks, and recall never changes semantic revisions',t=>{
   const store=setup(t),now=Date.now();statement(store,'以后每次训练最多45分钟',new Date(now-86400000).toISOString());
@@ -93,7 +93,7 @@ test('both transports receive current evidence only and malformed optional candi
       return provider==='chatgpt'?openAI(result):new Response(`data: ${JSON.stringify({choices:[{delta:{content:JSON.stringify(result)}}]})}\n\ndata: ${JSON.stringify({choices:[{delta:{},finish_reason:'stop'}],usage:{prompt_tokens:10,completion_tokens:10}})}\n\ndata: [DONE]\n\n`);
     });
     assert.equal(await service.chat('今天怎么训练？'),'按45分钟安排。');assert.equal(calls,1);assert.ok(!request.includes('60分钟'));
-    const reply=store.messages().at(-1)!;assert.ok(reply.contextReceipt);assert.equal(reply.contextReceipt!.promptVersion,'recall-v06-1');
+    const reply=store.messages().at(-1)!;assert.ok(reply.contextReceipt);assert.equal(reply.contextReceipt!.promptVersion,'recall-v061-1');
   }
 });
 

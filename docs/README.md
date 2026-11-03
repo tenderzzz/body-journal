@@ -26,3 +26,5 @@
 | [食材来源](../data/README.md) | USDA 快照的来源、处理与重建 |
 
 文档随主分支更新。使用旧安装包时，请在 GitHub 切换到对应标签查看同版本文档。公开下载以 [Releases](https://github.com/tenderzzz/body-journal/releases) 为准；变更记录中的本地迭代不一定有独立标签或安装包。
+
+- [v0.6.1 升级与回退](0.6.1升级与回退.md)
