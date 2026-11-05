@@ -53,7 +53,7 @@ try{
   await expect(page.locator('.energy-breakdown').getByText('App 报告',{exact:true})).toBeVisible();
   await page.getByText('运动来源对照',{exact:true}).click();
   await expect(page.locator('.energy-source-comparison')).toContainText('采用：App 扣重后');
-  await expect(page.locator('.energy-source-comparison')).toContainText('对照：平地 MET 公式');
+  await expect(page.locator('.energy-source-comparison')).toContainText('对照：有氧公式');
   const compared=await page.evaluate(async()=>(await window.health.invoke('energy:get')).selected.workouts[0]);
   if(compared.comparison?.selected!=='app'||!compared.comparison.formula)throw new Error('App and formula comparison was missing');
   await page.locator('.energy-source-comparison').screenshot({path:'/tmp/bodyjournal-energy-source-comparison.png'});
@@ -62,7 +62,7 @@ try{
   if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw new Error('Source comparison overflows at 860px');
   await page.locator('.energy-source-comparison').screenshot({path:'/tmp/bodyjournal-energy-source-comparison-compact.png'});
   await page.setViewportSize({width:1300,height:900});
-  await page.locator('.energy-breakdown').getByRole('button',{name:'跑步',exact:true}).click();
+  await page.locator('.energy-breakdown').getByRole('button',{name:'有氧',exact:true}).click();
   modal=page.getByRole('dialog');
   await modal.getByRole('button',{name:'核对 / 更正活动数据',exact:true}).click();
   await modal.getByLabel('更正活动热量 kcal',{exact:true}).fill('');
@@ -78,7 +78,7 @@ try{
   await modal.getByRole('button',{name:'关闭',exact:true}).click();
   await expect.poll(()=>page.evaluate(async()=>(await window.health.invoke('energy:get')).selected.workouts[0]?.method)).toBe('met');
   await expect(page.locator('.energy-breakdown').getByText('公式估算',{exact:true})).toBeVisible();
-  await expect(page.locator('.energy-source-comparison')).toContainText('采用：平地 MET 公式');
+  await expect(page.locator('.energy-source-comparison')).toContainText('采用：有氧公式');
   await expect(page.locator('.energy-source-comparison')).toContainText('口径未知，不能计算');
 
   const duplicateId=await page.evaluate(async date=>{

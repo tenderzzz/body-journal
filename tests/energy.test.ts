@@ -108,12 +108,12 @@ test('confirmed usual duration is an assumption, plans are excluded and inputs s
   store.revise(r.id,{deleted:true},r.revision);assert.equal(store.energy.day(today).workouts.length,0);
   store.undoRecord(r.id);assert.equal(store.energy.day(today).workouts.length,1);
 });
-test('completed strength and a planned run are counted independently; cancelled runs and walks are not running',t=>{
+test('completed strength and a planned run are counted independently; cancelled cardio is excluded and walks retain their activity',t=>{
   const store=setup(t);store.energy.saveProfile(profile,now);weight(store);
   training(store,'卧推 50kg 3x8\n力量训练60分钟\n明天计划跑步3km，配速6分/公里');
   assert.deepEqual(store.energy.day(today).workouts.map(w=>w.kind),['strength']);
   assert.equal(parseTraining('没有完成跑步3km')?.training?.completion,'unknown');
-  assert.equal(parseTraining('步行3km 用时30分钟')?.run,undefined);
+  assert.equal(parseTraining('步行3km 用时30分钟')?.run?.activity,'walking');
 });
 test('standalone plan headings and action-prefixed plans never count as completed workouts',t=>{
   const store=setup(t);store.energy.saveProfile(profile,now);weight(store);

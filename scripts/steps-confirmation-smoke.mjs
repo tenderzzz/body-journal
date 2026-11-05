@@ -39,7 +39,7 @@ try{
  await modal.getByRole('button',{name:'保存计算资料',exact:true}).click();
  await expect(modal).toHaveCount(0);await expect(confirmation).toBeChecked();
  await expect.poll(()=>page.evaluate(async date=>(await window.health.invoke('energy:get',{date})).selected.walking?.referenceSteps,fixture.date)).toBe(4000);
- await page.getByRole('button',{name:'补充跑步步数 1',exact:true}).click();
+ await page.getByRole('button',{name:'补充有氧步数 1',exact:true}).click();
  modal=page.getByRole('dialog');
  await modal.getByRole('button',{name:'核对 / 更正活动数据',exact:true}).click();
  await modal.getByLabel('更正平均步频 步／分钟',{exact:true}).fill('170');

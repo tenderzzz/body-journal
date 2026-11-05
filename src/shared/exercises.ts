@@ -1,3 +1,4 @@
+import {CARDIO_TEXT,cardioComponent,normalizeCardio} from './cardio';
 import type { Analysis, ExerciseRules, SetEntry, TrainingPart, TrainingSession, HealthRecord } from './types';
 export const PART_NAMES:Record<TrainingPart,string>={chest:'胸',back:'背',shoulders:'肩',legs:'腿',mixed:'混合',unknown:'待确认'};
 export const DEFAULT_SPLIT:TrainingPart[]=['chest','back','shoulders','legs'];
@@ -129,21 +130,21 @@ export function strengthDurationMinutes(text:string,hasStrengthSets=false):numbe
 }
 export function inferSession(text:string,sets:SetEntry[]=[]):TrainingSession {
  const parts:TrainingPart[]=[];for(const [p,word] of [['chest','胸'],['back','背'],['shoulders','肩'],['legs','腿']] as const)if(new RegExp(`(?:^|\\n)\\s*${word}(?:部|日|训练)?\\s*[：:]?\\s*(?:$|\\n)`,'m').test(text))parts.push(p);
- const sessionText=sets.length||/力量训练\s*[:：]?\s*\d+(?:\.\d+)?\s*(?:分钟|min)/i.test(text)?text.split(/\n|[；;]/).map(line=>{const before=line.replace(/(?:跑步机|跑步|慢跑|跑了).*$/,'');return before===line||/力量|正式组|热身|\d+(?:\.\d+)?\s*(?:kg|公斤|千克|lb|磅|组|[x×*])/i.test(before)?before:'';}).join('\n'):text;
- const planned=(/(?:计划|打算|准备|明天|下次).{0,12}(?:练|训练|跑步|慢跑)|训练计划/.test(sessionText)||/^\s*(?:力量)?(?:训练)?计划\s*[:：]?\s*$/m.test(sessionText)||/(?:计划|打算|准备)[^\n]{0,60}\d+(?:\.\d+)?\s*(?:kg|公斤|千克|lb|磅|组|[x×*])/i.test(sessionText))&&!/已完成|练完|训练结束|(?:实际|已经|今天|本次).{0,8}(?:完成|练完)/.test(sessionText);
- const cancelled=/(?:未|没(?:有)?)(?:完成|练完|跑步|慢跑)|取消.{0,8}(?:训练|跑步)|未训练/.test(sessionText);
+ const sessionText=sets.length||/力量训练\s*[:：]?\s*\d+(?:\.\d+)?\s*(?:分钟|min)/i.test(text)?text.split(/\n|[；;]/).map(line=>{const before=line.replace(/(?:跑步机|跑步|慢跑|跑了|爬坡|步行|有氧).*$/,'');return before===line||/力量|正式组|热身|\d+(?:\.\d+)?\s*(?:kg|公斤|千克|lb|磅|组|[x×*])/i.test(before)?before:'';}).join('\n'):text;
+ const planned=(/(?:计划|打算|准备|明天|下次).{0,12}(?:练|训练|跑步|慢跑|爬坡|步行|有氧)|训练计划/.test(sessionText)||/^\s*(?:力量)?(?:训练)?计划\s*[:：]?\s*$/m.test(sessionText)||/(?:计划|打算|准备)[^\n]{0,60}\d+(?:\.\d+)?\s*(?:kg|公斤|千克|lb|磅|组|[x×*])/i.test(sessionText))&&!/已完成|练完|训练结束|(?:实际|已经|今天|本次).{0,8}(?:完成|练完)/.test(sessionText);
+ const cancelled=/(?:未|没(?:有)?)(?:完成|练完|跑步|慢跑|爬坡|步行|有氧)|取消.{0,8}(?:训练|跑步|爬坡|步行|有氧)|未训练/.test(sessionText);
  const hasData=sets.length>0||/\d+\s*(?:kg|公斤|千克).*\d+\s*[*x×]/i.test(sessionText)||/(?:跑步(?:机)?|慢跑|跑了)?\s*\d+(?:\.\d+)?\s*(?:km|公里)/i.test(sessionText)||/力量训练\s*[:：]?\s*\d+(?:\.\d+)?\s*(?:分钟|min)/i.test(sessionText);
  const completion=cancelled?'unknown':planned?'planned':hasData||/已完成|练完|训练结束/.test(sessionText)?'completed':'unknown';
  const duration=strengthDurationMinutes(text,sets.length>0);
  return {part:parts.length>1?'mixed':parts[0]??'unknown',completion,...(duration!==undefined?{durationMinutes:duration}:{})};
 }
-export function extractRunText(text:string){return text.split(/\n|[；;]/).filter(line=>/跑步|跑步机|慢跑|跑了/.test(line)||/^\s*(?:训练)?计划\s*[:：]?\s*$/.test(line)||(/^\s*\d+(?:\.\d+)?\s*(?:km|公里)/i.test(line)&&!/步行|走路|骑车|骑行|游泳/.test(line))).join('\n').replace(/(?:力量训练|训练用时|训练时长)\s*[:：]?\s*\d+(?:\.\d+)?\s*(?:分钟|min)/gi,'');}
+export function extractRunText(text:string){return text.split(/\n|[；;]/).map(cardioComponent).filter(line=>CARDIO_TEXT.test(line)||/^\s*(?:训练)?计划\s*[:：]?\s*$/.test(line)||(/^\s*\d+(?:\.\d+)?\s*(?:km|公里)/i.test(line)&&!/步行|走路|骑车|骑行|游泳/.test(line))).join('\n').replace(/(?:力量训练|训练用时|训练时长)\s*[:：]?\s*\d+(?:\.\d+)?\s*(?:分钟|min)/gi,'');}
 /** Resolve reported running independently of strength; image evidence need not be repeated in the caption. */
 export function runCompletion(record:Pick<HealthRecord,'kind'|'text'|'analysis'|'status'|'attachments'>):TrainingSession['completion']{
  const a=record.analysis,run=a?.run;if(record.kind!=='training'||!a||!run||record.status==='pending')return 'unknown';
  const mixed=!!a.sets?.length,component=extractRunText(record.text),evidence=mixed?component:(component.trim()?component:record.text);
  const raw=inferSession(evidence).completion;
- const unfinished=/(?:未|没(?:有)?)(?:完成|练完|跑步|慢跑)|取消.{0,8}(?:训练|跑步)|未训练/;
+ const unfinished=/(?:未|没(?:有)?)(?:完成|练完|跑步|慢跑|爬坡|步行|有氧)|取消.{0,8}(?:训练|跑步|爬坡|步行|有氧)|未训练/;
  if(unfinished.test(mixed?component:record.text))return 'unknown';
  if(raw==='planned'||run.completion==='planned'||(!mixed&&a.training?.completion==='planned'))return 'planned';
  if(!mixed&&unfinished.test(a.summary))return 'unknown';
@@ -162,7 +163,7 @@ export function runCompletion(record:Pick<HealthRecord,'kind'|'text'|'analysis'|
 }
 export function normalizeAnalysis(a:Analysis,text:string,custom:ExerciseAlias[]=[],rules:ExerciseRules=EMPTY_RULES):Analysis {
  const sets=a.sets?.map(s=>normalizeSet(s,custom,{rules,text,rebase:true}));const inferred=inferSession(text,sets);
- return {...a,...(sets?{sets}:{}),...((sets?.length||a.training)?{training:{...inferred,...a.training,...(inferred.completion==='planned'?{completion:'planned' as const}:{})}}:{})};
+ return {...a,...(a.run?{run:normalizeCardio(a.run,text)}:{}),...(sets?{sets}:{}),...((sets?.length||a.training)?{training:{...inferred,...a.training,...(inferred.completion==='planned'?{completion:'planned' as const}:{})}}:{})};
 }
 export function trainingProgress(records:HealthRecord[],split=DEFAULT_SPLIT){
  const candidates=records.filter(r=>!r.deleted&&r.kind==='training'&&(r.analysis?.sets?.length??0)>0).sort((a,b)=>Date.parse(b.occurredAt)-Date.parse(a.occurredAt));
