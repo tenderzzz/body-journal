@@ -81,7 +81,7 @@ try{
   const restored=await page.evaluate(()=>window.health.invoke('records:list',{search:'UI 恢复后移除'}));if(restored.items.length)throw new Error('Restore kept a post-backup record');
   const energy=await page.evaluate(()=>window.health.invoke('energy:get',{date:'2026-11-03'}));if(energy.dayInput.steps!==4321)throw new Error('Civil day steps were lost on restore');
   if(errors.length)throw new Error(errors.join('\n'));
-  const report={version:'0.6.1',synthetic:true,network:'mock transport only',passed:['bounded overview','record pagination','unloaded source','night correction','04:00 journal','00:00 steps','new conversation','dual-date receipt','watcher partial download','backup restore','restart']};
+  const report={version:'0.6.2',synthetic:true,network:'mock transport only',passed:['bounded overview','record pagination','unloaded source','night correction','04:00 journal','00:00 steps','new conversation','dual-date receipt','watcher partial download','backup restore','restart']};
   if(process.env.BODYJOURNAL_VERIFY_REPORT)writeFileSync(process.env.BODYJOURNAL_VERIFY_REPORT,JSON.stringify(report,null,2));
   console.log(JSON.stringify(report));
 }catch(error){if(app){const page=await app.firstWindow();await page.screenshot({path:path.join(tmpdir(),'bodyjournal-v061-failure.png')}).catch(()=>{});}throw error;}

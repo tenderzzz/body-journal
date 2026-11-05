@@ -1,3 +1,4 @@
+import {recordCardio} from '../../src/shared/cardio';
 import {migrateJournalDays} from './day-migration';
 import {journalDay,calendarDay,dayBounds,DAY_POLICY_VERSION} from '../../src/shared/dates';
 import { DatabaseSync } from 'node:sqlite';
@@ -251,8 +252,10 @@ export class HealthStore {
     if(formattingOnly){updated.analysis=old.analysis;updated.status='ready';updated.analysisPending=false;updated.analysisError=undefined;updated.analysisAttemptedRevision=undefined;}
     return this.commitRevision(old,updated);
   }
-  private commitRevision(old:HealthRecord,updated:HealthRecord,options?:{skipInvalidate?:string[]}):HealthRecord {
-    const next={...updated,...(updated.analysis?{analysis:withActivityOverrides(normalizeAnalysis(updated.analysis,updated.text,this.exerciseAliases(),this.exerciseRules()),updated.analysis.activityOverrides)}:{}),revision:old.revision+1,updatedAt:iso()};
+  private commitRevision(old:HealthRecord,updated:HealthRecord,options?:{skipInvalidate?:string[];preserveStrength?:boolean}):HealthRecord {
+    const normalized=updated.analysis?withActivityOverrides(normalizeAnalysis(updated.analysis,updated.text,this.exerciseAliases(),this.exerciseRules()),updated.analysis.activityOverrides):updated.analysis;
+    const analysis=normalized&&options?.preserveStrength?{...normalized,sets:updated.analysis!.sets,training:updated.analysis!.training}:normalized;
+    const next={...updated,analysis,revision:old.revision+1,updatedAt:iso()};
     const result=this.transaction(()=>{ this.db.prepare('INSERT INTO revisions(entity,id,doc,at) VALUES(?,?,?,?)').run('record',old.id,JSON.stringify(old),iso()); this.putRecord(next); this.invalidate(old.id,new Set(options?.skipInvalidate??[])); return next; });
     this.db.prepare("DELETE FROM memory_episodes WHERE json_extract(doc,'$.recordId')=?").run(old.id);if(!updated.deleted)this.saveEpisode(updated.text,updated.occurredAt,{recordId:old.id,recordRevision:next.revision});
     this.refreshAutomaticMemories(); return result;
@@ -327,6 +330,19 @@ export class HealthStore {
     for(const m of proposed) this.saveMemory(m);
     return r;
   }
+  migrateCardio(){
+    if(this.getConfig('cardioV1'))return 0;
+    const changes=this.records().flatMap(record=>{
+      const run=recordCardio(record);
+      return run&&JSON.stringify(run)!==JSON.stringify(record.analysis?.run)?[{record,run}]:[];
+    });
+    if(changes.length)this.backup(path.join(this.root,'backups',`before-cardio-${Date.now()}.bodyjournal`));
+    this.transaction(()=>{
+      for(const {record,run} of changes)this.commitRevision(record,{...record,analysis:{...record.analysis!,run}},{preserveStrength:true});
+      this.setConfig('cardioV1',true);
+    });
+    return changes.length;
+  }
   updateActivity(value:unknown):HealthRecord {
     const p=z.object({id:idSchema,revision:z.number().int().positive(),run:z.record(z.string(),z.unknown()).optional(),trainingMinutes:z.number().positive().max(1440).nullable().optional(),dailyActivity:z.record(z.string(),z.unknown()).optional()}).strict().parse(value);
     const old=this.record(p.id);
@@ -341,6 +357,7 @@ export class HealthStore {
       const nonNull=Object.fromEntries(Object.entries(changes).filter(([,v])=>v!==null));
       // Validate key names even for null (cleared) fields.
       for(const key of Object.keys(changes))if(!(key in (group==='run'?runSchema.shape:dailyActivitySchema.shape)))throw new Error('活动字段无效');
+      if(group==='run'&&typeof nonNull.inclinePercent==='number')nonNull.inclineSource='reported';
       const checked=schema.parse(nonNull),saved={...overrides[group]} as Record<string,unknown>;
       for(const [key,v] of Object.entries(changes)){if(v===null){delete saved[key];cleared.add(`${group}.${key}`);}else cleared.delete(`${group}.${key}`);}
       Object.assign(saved,checked);Object.assign(overrides,{[group]:saved});
@@ -354,7 +371,7 @@ export class HealthStore {
     const analysis=withActivityOverrides({...initial,...(p.trainingMinutes!==undefined&&!initial.training?{training:inferSession(old.text,initial.sets)}:{})},overrides);
     // A manually entered daily report requires explicit scope and coverage.
     analysisSchema.parse(analysis);
-    return this.commitRevision(old,{...old,analysis,status:analysis.questions.length?'needs_info':'ready'});
+    return this.commitRevision(old,{...old,analysis,status:analysis.questions.length?'needs_info':'ready'},{preserveStrength:true});
   }
   private invalidate(id:string,skip:Set<string>=new Set()) {
     for(const m of this.messages()) if(m.sources.some(s=>s.id===id)) this.putMessage({...m,stale:true});

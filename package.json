@@ -1,7 +1,7 @@
 {
   "name": "personal-health-assistant",
   "productName": "身体手记",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.cjs",
@@ -34,7 +34,8 @@
     "test:training-baseline-ui": "node scripts/training-baseline-smoke.mjs",
     "test:v06-ui": "node scripts/v06-smoke.mjs",
     "test:archive-large": "BODYJOURNAL_LARGE_TEST=1 node --import tsx --test tests/v06-archive.test.ts",
-    "test:v061-ui": "node scripts/v061-smoke.mjs"
+    "test:v061-ui": "node scripts/v061-smoke.mjs",
+    "test:cardio-ui": "node scripts/cardio-smoke.mjs"
   },
   "dependencies": {
     "jose": "^6.1.0",

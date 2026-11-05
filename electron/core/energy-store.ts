@@ -31,7 +31,7 @@ export class EnergyStore{
       const p=this.profileAt(input.date)??fallbackProfile;if(!p||(input.activity??p.activity)!==activity)return [];
       // Call the pure calculation directly: reference extraction must not recursively consume older references.
       const day=estimateDay(input.date,zone,records,p,input,null);
-      return day.activityConfirmed&&day.activityComplete&&day.walking?.coverage==='full'&&day.walking.nonTrainingSteps!==undefined&&!day.walking.pending
+      return day.activityConfirmed&&day.activityComplete&&day.walking?.coverage==='full'&&day.walking.nonTrainingSteps!==undefined&&!day.walking.nonTrainingStepRange&&!day.walking.pending
         ?[{date:input.date,steps:day.walking.nonTrainingSteps,sources:[...input.activitySources,...(input.stepSources??[])]}]:[];
     });
     if(samples.length<7)return;

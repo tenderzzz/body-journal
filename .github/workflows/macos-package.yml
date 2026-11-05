@@ -105,7 +105,7 @@ jobs:
           echo "解压后签名校验通过"
 
       - name: Verify packaged desktop flow with an isolated vault
-        run: BODYJOURNAL_APP="/tmp/bodyjournal-verify/身体手记.app/Contents/MacOS/BodyJournal" npm run test:v06-ui && BODYJOURNAL_APP="/tmp/bodyjournal-verify/身体手记.app/Contents/MacOS/BodyJournal" npm run test:v061-ui
+        run: BODYJOURNAL_APP="/tmp/bodyjournal-verify/身体手记.app/Contents/MacOS/BodyJournal" npm run test:v06-ui && BODYJOURNAL_APP="/tmp/bodyjournal-verify/身体手记.app/Contents/MacOS/BodyJournal" npm run test:v061-ui && BODYJOURNAL_APP="/tmp/bodyjournal-verify/身体手记.app/Contents/MacOS/BodyJournal" npm run test:cardio-ui
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7

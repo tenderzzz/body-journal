@@ -1,3 +1,4 @@
+import {recordCardio,walkingMET} from './cardio';
 import type {ActivityLevel, DailyEnergyEstimate, DailyEnergyInput, EnergyGoal, EnergyProfile, EnergyTarget, EnergyWorkout, HealthRecord, Range, RunEntry, DailyActivity, WalkingEstimate, ActivityDuplicate, StepReference} from './types';
 import {journalDay as localDay,calendarDay,dayBounds,atTime} from './dates';
 import {inferSession,runCompletion} from './exercises';
@@ -63,7 +64,7 @@ const energyRunCompletion=(r:HealthRecord)=>runCompletion(r.kind==='note'?{...r,
 const reportedMinutes=(run:RunEntry)=>positive(run.minutes)?run.minutes:positive(run.km)&&positive(run.paceSecondsPerKm)?run.km*run.paceSecondsPerKm/60:positive(run.elapsedMinutes)?run.elapsedMinutes:undefined;
 function sameRun(a:RunEntry,b:RunEntry){
   const am=reportedMinutes(a),bm=reportedMinutes(b);
-  return positive(a.km)&&positive(b.km)&&positive(am)&&positive(bm)&&Math.abs(a.km-b.km)<=.01&&Math.abs(am-bm)<=.05;
+  return (a.activity??'running')===(b.activity??'running')&&a.inclinePercent===b.inclinePercent&&positive(a.km)&&positive(b.km)&&positive(am)&&positive(bm)&&Math.abs(a.km-b.km)<=.01&&Math.abs(am-bm)<=.05;
 }
 function activityDuplicates(training:HealthRecord[],excluded:Set<string>,distinct:[string,string][]=[]){
   const duplicates:ActivityDuplicate[]=[],skip=new Set<string>(),previous:HealthRecord[]=[];
@@ -146,6 +147,8 @@ function walkingEstimate(day:HealthRecord[],runs:CompletedRun[],input:DailyEnerg
     walking.basis=`截至${data.asOf??'记录时'}的累计活动，未作为全天步数修正`;
     missing.push('活动截图仅覆盖部分日期，请补充全天数据');return {walking,unresolved:true};
   }
+  const stride=profile?(profile.strideCm!==undefined?{low:profile.strideCm/100,high:profile.strideCm/100}:{low:profile.heightCm*.35/100,high:profile.heightCm*.45/100}):undefined;
+  let distanceDeductionKm=0;
   let steps=data.steps,distance=(data.scope==='nonTraining'||input?.walkingKm!==undefined)?data.walkingKm:undefined;
   // The manual distance field explicitly means non-training walking, independently of total-step scope.
   if(data.scope==='all'&&distance!==undefined)steps=undefined;
@@ -158,17 +161,21 @@ function walkingEstimate(day:HealthRecord[],runs:CompletedRun[],input:DailyEnerg
       }else if(entry.validTiming&&positive(entry.run.cadence)&&(positive(entry.run.minutes)||(positive(entry.run.km)&&positive(entry.run.paceSecondsPerKm)))){
         const minutes=entry.run.minutes??entry.run.km!*entry.run.paceSecondsPerKm!/60,steps=entry.run.cadence*minutes;
         runSteps+=steps;walking.deductions!.push({...source,steps,method:'cadence',cadence:entry.run.cadence,minutes});
-        assumptions.push('跑步步数由明确报告的平均步频×运动时长推导，不使用含暂停的总时长。');
+        assumptions.push('有氧步数由明确报告的平均步频×运动时长推导，不使用含暂停的总时长。');
+      }else if(entry.validTiming&&stride&&positive(entry.run.km)&&(entry.run.activity==='incline'||entry.run.activity==='walking')){
+        const range={low:entry.run.km*1000/stride.high,high:entry.run.km*1000/stride.low};
+        distanceDeductionKm+=entry.run.km;
+        walking.deductions!.push({...source,steps:mid(range),range,distanceKm:entry.run.km,strideCm:{low:stride.low*100,high:stride.high*100},method:'distance'});
+        assumptions.push('爬坡／步行有氧步数由距离和步长范围估算，区间参与非训练步数与步行消耗计算，可用实际运动步数或步频覆盖。');
       }else unknown=true;
     }
-    if(unknown){walking.pending='overlap';walking.basis='全天步数已保存；跑步重叠步数尚不明确，暂沿用日常基线。可补充跑步步数／步频，或直接填写非训练步数。';assumptions.push(walking.basis);return {walking,unresolved};}
-    if(runSteps>steps){walking.pending='data';walking.basis='跑步步数大于当天累计步数，暂沿用日常基线';missing.push('跑步步数超过全天步数，请核对统计来源和覆盖范围');return {walking,unresolved:true};}
+    if(unknown){walking.pending='overlap';walking.basis='全天步数已保存；有氧重叠步数尚不明确，暂沿用日常基线。可补充有氧步数／步频，或直接填写非训练步数。';assumptions.push(walking.basis);return {walking,unresolved};}
+    if(runSteps+(stride?distanceDeductionKm*1000/stride.high:0)>steps){walking.pending='data';walking.basis='有氧步数大于当天累计步数，暂沿用日常基线';missing.push('有氧步数超过全天步数，请核对统计来源和覆盖范围');return {walking,unresolved:true};}
     steps-=runSteps;
   }
-  walking.nonTrainingSteps=steps;
-  if(!profile||!positive(weight))return {walking,unresolved};
+  if(distanceDeductionKm&&stride&&steps!==undefined){walking.nonTrainingStepRange={low:Math.max(0,steps-distanceDeductionKm*1000/stride.low),high:Math.max(0,steps-distanceDeductionKm*1000/stride.high)};walking.nonTrainingSteps=mid(walking.nonTrainingStepRange);}else walking.nonTrainingSteps=steps;
+  if(!profile||!stride||!positive(weight))return {walking,unresolved};
   if(distance===undefined&&!nonnegative(steps)){walking.pending='data';walking.basis='尚缺可用的非训练步数或步行距离';missing.push(walking.basis);return {walking,unresolved:true};}
-  const stride=profile.strideCm!==undefined?{low:profile.strideCm/100,high:profile.strideCm/100}:{low:profile.heightCm*.35/100,high:profile.heightCm*.45/100};
   const activity=input?.activity??profile.activity;
   const reference:StepReference=profile.baselineAnchor?.references[activity]??(profile.usualSteps!==undefined
     ?{method:'manual',steps:{low:profile.usualSteps,high:profile.usualSteps},dates:[],sources:[]}
@@ -182,9 +189,9 @@ function walkingEstimate(day:HealthRecord[],runs:CompletedRun[],input:DailyEnerg
     walking.distanceKm={low:distance,high:distance};
     delta={low:distance-reference.steps.high*stride.high/1000,high:distance-reference.steps.low*stride.low/1000};
   }else{
-    walking.distanceKm={low:steps!*stride.low/1000,high:steps!*stride.high/1000};
+    walking.distanceKm={low:Math.max(0,steps!*stride.low/1000-distanceDeductionKm),high:Math.max(0,steps!*stride.high/1000-distanceDeductionKm)};
     const changes=[steps!-reference.steps.low,steps!-reference.steps.high];
-    const distances=changes.flatMap(change=>[change*stride.low/1000,change*stride.high/1000]);
+    const distances=changes.flatMap(change=>[change*stride.low/1000-distanceDeductionKm,change*stride.high/1000-distanceDeductionKm]);
     delta={low:Math.min(...distances),high:Math.max(...distances)};
   }
   walking.correction={low:.5*weight*delta.low,high:.5*weight*delta.high};
@@ -198,7 +205,7 @@ function walkingEstimate(day:HealthRecord[],runs:CompletedRun[],input:DailyEnerg
 }
 
 export function estimateDay(date:string,timezone:string,records:HealthRecord[],profile:EnergyProfile|undefined,input:DailyEnergyInput|undefined,target:EnergyTarget|null,historyReference?:StepReference):DailyEnergyEstimate{
-  const active=records.filter(r=>!r.deleted),day=active.filter(r=>localDay(r.occurredAt,timezone)===date);
+  const active=records.filter(r=>!r.deleted).map(r=>r.analysis?.run?{...r,analysis:{...r.analysis,run:recordCardio(r)}}:r),day=active.filter(r=>localDay(r.occurredAt,timezone)===date);
   const meals=day.filter(r=>r.kind==='meal'),training=day.filter(r=>r.kind==='training'||!!r.analysis?.run||!!r.analysis?.sets?.length||!!r.analysis?.training?.durationMinutes)
     .sort((a,b)=>Number(!!b.analysis?.activityOverrides)-Number(!!a.analysis?.activityOverrides)||Date.parse(b.updatedAt)-Date.parse(a.updatedAt)||a.id.localeCompare(b.id));
   const activityRecords=day.filter(input?.dayPolicy?isJournalActivityRecord:isEnergyActivityRecord);
@@ -255,7 +262,8 @@ export function estimateDay(date:string,timezone:string,records:HealthRecord[],p
       if(positive(run.elapsedMinutes)&&run.elapsedMinutes<minutes){missing.push(`跑步总时长短于运动时长：${r.id}`);unsupported=true;continue;}
       if(positive(run.km)&&positive(run.minutes)&&positive(run.paceSecondsPerKm)&&Math.abs(run.minutes*60/run.km-run.paceSecondsPerKm)/run.paceSecondsPerKm>.05){missing.push(`跑步距离、时长与配速相差超过5%，请核对：${r.id}`);unsupported=true;continue;}
       if(nonnegative(run.activeKcal)&&nonnegative(run.totalKcal)&&run.activeKcal>run.totalKcal){missing.push(`跑步活动热量超过总热量：${r.id}`);unsupported=true;continue;}
-      const met=pace?runningMET(pace):null,appMinutes={low:minutes,high:run.elapsedMinutes??minutes};
+      const isWalking=run.activity==='incline'||run.activity==='walking';
+      const met=isWalking?walkingMET(run,minutes):pace?runningMET(pace):null,appMinutes={low:minutes,high:run.elapsedMinutes??minutes};
       if(appMinutes.high>1440){missing.push(`跑步总时长超过一天：${r.id}`);unsupported=true;continue;}
       let extra:Range,method:EnergyWorkout['method'],basis:string;
       if(nonnegative(run.activeKcal)){
@@ -266,22 +274,24 @@ export function estimateDay(date:string,timezone:string,records:HealthRecord[],p
         method='app-total';basis=`${run.sourceApp??'App'}报告总热量${run.totalKcal} kcal；扣除同期日常基线`;
       }else{
         if(run.reportedKcal!==undefined)assumptions.push(`跑步${r.id}保留原报告“${run.calorieLabel??'消耗'} ${run.reportedKcal} kcal”，口径待核对，暂用公式估算。`);
-        if(!met){missing.push(`跑步配速不足／超出平地估算范围：${r.id}`);unsupported=true;continue;}
-        if(run.terrain==='hilly'){missing.push(`跑步为坡地，平地公式仅作参考，请补充口径明确的App热量：${r.id}`);unsupported=true;}
-        extra=workoutExtra(weight.kg,{low:minutes,high:minutes},met,baseline);method='met';basis=`按${Math.round(pace!)}秒/公里在2024平地跑步MET表插值；坡度与地形未单独建模`;
+        if(!met){missing.push(isWalking?`有氧距离、运动时长或坡度不足／超出步行公式范围：${r.id}`:`跑步配速不足／超出平地估算范围：${r.id}`);unsupported=true;continue;}
+        if(run.terrain==='hilly'&&!isWalking){missing.push(`跑步为坡地，平地公式仅作参考，请补充口径明确的App热量：${r.id}`);unsupported=true;}
+        extra=workoutExtra(weight.kg,{low:minutes,high:minutes},met,baseline);method=isWalking?'acsm-walking':'met';basis=isWalking?`ACSM步行公式，速度${(run.km!*60/minutes).toFixed(2)} km/h，坡度${run.activity==='incline'?run.inclinePercent:0}%；按距离和运动时长计算`:`按${Math.round(pace!)}秒/公里在2024平地跑步MET表插值；坡度与地形未单独建模`;
+        if(run.inclineSource==='assumed')assumptions.push('跑步机未注明单位的坡度按百分比设置估算，可在活动核对中更正；步行公式假设持续行走、未额外扶持减重。');
       }
-      const energyMinutes=method==='met'?{low:minutes,high:minutes}:appMinutes;
-      if(method!=='met'&&appMinutes.high>appMinutes.low)basis+=`；App热量覆盖时长未明，按运动至总时长${appMinutes.low}–${appMinutes.high}分钟范围扣重`;
+      const formulaMethod=method==='met'||method==='acsm-walking';
+      const energyMinutes=formulaMethod?{low:minutes,high:minutes}:appMinutes;
+      if(!formulaMethod&&appMinutes.high>appMinutes.low)basis+=`；App热量覆盖时长未明，按运动至总时长${appMinutes.low}–${appMinutes.high}分钟范围扣重`;
       const elapsedOnly=!positive(run.minutes)&&!(positive(run.km)&&positive(run.paceSecondsPerKm));
       if(elapsedOnly)basis+='；仅报告总时长，暂作估算时长，运动时长待核对';
-      const formula=met&&run.terrain!=='hilly'?workoutExtra(weight.kg,{low:minutes,high:minutes},met,baseline):null;
+      const formula=met&&(isWalking||run.terrain!=='hilly')?workoutExtra(weight.kg,{low:minutes,high:minutes},met,baseline):null;
       const comparison:EnergyWorkout['comparison']=method==='app-active'||method==='app-total'?{app:{method,reportedKcal:method==='app-active'?run.activeKcal!:run.totalKcal!,extra},formula,selected:'app'}:nonnegative(run.reportedKcal)?{app:{method:'app-unknown',reportedKcal:run.reportedKcal,extra:null},formula,selected:'formula'}:undefined;
-      workouts.push({recordId:r.id,revision:r.revision,kind:'run',minutes:energyMinutes,met,method,extra,assumed:elapsedOnly,basis,comparison});
+      workouts.push({recordId:r.id,revision:r.revision,kind:'run',activity:run.activity??'running',gross:met?{low:met.low*3.5*weight.kg/200*minutes,high:met.high*3.5*weight.kg/200*minutes}:undefined,minutes:energyMinutes,met,method,extra,assumed:elapsedOnly||run.inclineSource==='assumed',basis,comparison});
     }
   }
   const civilBounds=dayBounds(date,date,timezone,'calendar');
   const civilRecords=active.filter(r=>stepDay(r,timezone)===date);
-  const runCandidates=active.filter(r=>{if(!r.analysis?.run||runCompletion(r)!=='completed'||r.timeSource)return false;const start=Date.parse(r.analysis.run.startedAt??r.occurredAt),end=start+(r.analysis.run.elapsedMinutes??reportedMinutes(r.analysis.run)??0)*60000;return start<civilBounds.until&&end>civilBounds.from;});
+  const runCandidates=active.filter(r=>{if(!r.analysis?.run||r.analysis.run.stepsIncluded===false||runCompletion(r)!=='completed'||r.timeSource)return false;const start=Date.parse(r.analysis.run.startedAt??r.occurredAt),end=start+(r.analysis.run.elapsedMinutes??reportedMinutes(r.analysis.run)??0)*60000;return start<civilBounds.until&&end>civilBounds.from;});
   const civilRuns:CompletedRun[]=[];
   const runSources:HealthRecord[]=[];
   let civilOverlap=false;
