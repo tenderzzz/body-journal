@@ -112,3 +112,23 @@ test('dish-title extraction preserves merchants, unrelated extras and explicit r
  assert.equal(matchDish(record('synthetic-old-binding',oldText),definitions)?.id,'bound-pot');
  const a=record('synthetic-pot-merchant-a','合成甲餐牌麻辣香锅，有蔬菜，加一碗米饭'),b=record('synthetic-pot-merchant-b','合成乙餐牌麻辣香锅，有蔬菜，加一碗米饭','21');assert.equal(groupDishRecords([a,b]).length,2);
 });
+
+test('a trailing light-meal category matches the same named dish in both directions and retains recipe and merchant distinctions',()=>{
+ const base='香煎鸡排荞麦面',labelled=base+'轻食';
+ for(const [name,text] of [[labelled,base],[base,labelled],[labelled+'（鸡排没有皮）','晚餐：一份'+base+'（无皮）']] as const){
+  assert.equal(matchDish(text,[{id:'same-light-meal',name}])?.id,'same-light-meal');
+ }
+ const records=[record('light-meal-labelled',labelled,'20'),record('light-meal-short',base,'21')];
+ const before=JSON.stringify(records),groups=groupDishRecords(records);
+ assert.equal(groups.length,1);assert.deepEqual(groups[0].records.map(r=>r.id),records.map(r=>r.id));
+ assert.equal(JSON.stringify(records),before);
+ assert.equal(dishRecordKey(records[0]),stableDishId(labelled));
+ assert.equal(dishAliasKey(labelled),dishIdentityKey(labelled));
+ for(const different of ['香煎鸡腿荞麦面轻食','香煎鸡排荞麦面低脂轻食','香煎鸡排荞麦面轻食（另加鸡蛋）'])
+  assert.equal(matchDish(different,[{id:'same-light-meal',name:base}]),undefined,different);
+ assert.equal(matchDish(base+'轻食（带皮）',[{id:'skinless-light-meal',name:base+'（去皮）'}]),undefined);
+ const brands=[{id:'brand-a',name:base,brand:'合成甲店'},{id:'brand-b',name:labelled,brand:'合成乙店'}];
+ assert.equal(matchDish('合成甲店 '+labelled,brands)?.id,'brand-a');
+ assert.equal(matchDish('合成乙店 '+base,brands)?.id,'brand-b');
+ assert.equal(matchDish(base+'轻食（照常）',brands),undefined);
+});
