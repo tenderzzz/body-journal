@@ -139,3 +139,21 @@ test('legacy component names remain owned by a common dish after its latest ingr
  assert.deepEqual(state.store.foodCandidates(false),[]);
  assert.deepEqual(state.store.ignoredFoodCandidates(),[]);
 });
+
+test('existing saved branded light-meal groups absorb the shorter wording and keep per-meal nutrition across restart',t=>{
+ const state=setup(t),s=state.store,base='香煎鸡排荞麦面',labelled=base+'轻食';
+ const first=meal(s,'light-existing-first',20,labelled+'（鸡排没有皮）',['合成鸡排','合成荞麦面'],100);
+ const second=meal(s,'light-existing-second',21,labelled,['合成鸡排','合成荞麦面'],130);
+ const saved=s.saveDish({id:s.commonDishes()[0].id,brand:'合成甲店'});
+ const third=meal(s,'light-existing-short',22,base,['合成鸡排','合成荞麦面'],160);
+ const fourth=meal(s,'light-existing-short-next',23,'依旧'+base,['合成鸡排','合成荞麦面'],180);
+ const before=JSON.stringify(s.records()),definitions=JSON.stringify(s.dishDefinitions()),dishes=s.commonDishes();
+ assert.equal(dishes.length,1);assert.equal(dishes[0].id,saved.id);assert.equal(dishes[0].brand,'合成甲店');
+ assert.deepEqual(dishes[0].recordIds,[first.id,second.id,third.id,fourth.id]);assert.equal(dishes[0].days,4);
+ assert.deepEqual(dishes[0].macros,fourth.analysis!.macros);assert.equal(JSON.stringify(s.records()),before);
+ assert.equal(JSON.stringify(s.dishDefinitions()),definitions);
+ assert.equal(s.recordsWithDishes().find(r=>r.id===third.id)?.dishId,saved.id);
+ s.close();state.store=new HealthStore(state.root,new FoodCatalog([]),state.root+'/inbox',false);
+ assert.equal(state.store.commonDishes().length,1);assert.equal(state.store.commonDishes()[0].id,saved.id);
+ assert.equal(JSON.stringify(state.store.records()),before);
+});

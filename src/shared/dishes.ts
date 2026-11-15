@@ -99,6 +99,11 @@ function definitionMatches(input:string|{id?:string;text:string},definitions:rea
   const branded=d.brand?names.flatMap(name=>[`${d.brand} ${name}`,`${d.brand}的${name}`]):[];
   return {d,score:Math.max(0,...[...names,...branded].map(alias=>dishNameSimilarity(info.name,alias)))};
  });
+ // Category wording alone cannot identify a merchant when the dish is shared
+ // by multiple explicitly saved brands.
+ const equivalent=scored.filter(item=>item.score>=2);
+ if(!brands.length&&new Set(equivalent.flatMap(item=>item.d.brand?[dishIdentityKey(item.d.brand)]:[])).size>1)
+  return equivalent.map(item=>item.d);
  const best=Math.max(0,...scored.map(item=>item.score));
  return best?scored.filter(item=>item.score===best).map(item=>item.d):[];
 }
@@ -119,7 +124,10 @@ function namedPreparedFood(info:DishNameInfo):boolean {
 function matchingName(name:string){
  const info=dishNameInfo(name);if(!info)return;
  const normalized=info.name.replace(/馄饨|混沌|抄手/gu,'云吞').replace(/鸡扒/gu,'鸡排').replace(/蟹子/gu,'蟹籽');
- const core=dishIdentityKey(normalized.replace(/\([^()]*\)/gu,''));
+ // A trailing category label can describe an already named dish. Keep literal
+ // names and persisted binding fingerprints intact, and normalize only matching.
+ const core=dishIdentityKey(normalized.replace(/\([^()]*\)/gu,''))
+  .replace(/(面|饭|米线|米粉|沙拉|便当|三明治|寿司|披萨|卷|碗|饼)轻食$/u,'$1');
  // Preparation/portion prose can vary. Explicit opposing recipes still matter.
  const qualifiers=[
   /(?:去皮|无皮|没(?:有)?(?:鸡)?皮)/u.test(normalized)?'skinless':/带皮|有鸡皮/u.test(normalized)?'skin':undefined,
