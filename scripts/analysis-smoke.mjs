@@ -25,10 +25,11 @@ try{
   safeStorage.isAsyncEncryptionAvailable=async()=>true;
   safeStorage.encryptStringAsync=async value=>Buffer.from(value);
   safeStorage.decryptStringAsync=async value=>({result:value.toString(),shouldReEncrypt:false});
-  globalThis.syntheticAnalysis={calls:[],failOne:true,failTraining:true,failMeal:false,slow:false};
+  globalThis.syntheticAnalysis={calls:[],records:[],hold:false,failOne:true,failTraining:true,failMeal:false,slow:false};
   net.fetch=async(_url,init)=>{
    const state=globalThis.syntheticAnalysis,payload=JSON.parse(JSON.parse(String(init.body)).messages[1].content[0].text),r=payload.record;
-   state.calls.push(r.id);
+   state.calls.push(r.id);state.records.push({id:r.id,text:r.text});
+   while(state.hold){await new Promise(resolve=>setTimeout(resolve,30));init.signal?.throwIfAborted();}
    await new Promise(resolve=>setTimeout(resolve,state.slow?700:55));
    init.signal?.throwIfAborted();
    if(r.id==='synthetic-followup-training'&&state.failTraining){state.failTraining=false;throw new TypeError('fetch failed');}
@@ -99,6 +100,28 @@ try{
  await expect(modal.locator('[aria-label="上次食材估算"]')).toHaveCount(0);
  await modal.getByRole('button',{name:'关闭',exact:true}).click();
  await page.getByRole('navigation').getByRole('button',{name:'助理',exact:true}).click();
+ // Keep one real service task in flight while editing and queueing other records.
+ const blocker=await page.evaluate(()=>window.health.invoke('record:create',{kind:'note',occurredAt:new Date().toISOString(),text:'合成追加队列阻塞记录',attachmentTokens:[]}));
+ await app.evaluate(()=>{globalThis.syntheticAnalysis.hold=true;});
+ await page.evaluate(id=>window.health.invoke('record:analyze',{ids:[id],enqueue:true}),blocker.id);
+ await page.getByRole('navigation').getByRole('button',{name:/^记录/}).click();await page.locator('.record-row').filter({hasText:'合成餐食补充回归'}).click();modal=page.getByRole('dialog');
+ for(const answer of ['米饭约120g','再补充：蔬菜也吃完了']){
+  await modal.getByLabel('回答待补充问题',{exact:true}).fill(answer);await expect(modal.getByRole('button',{name:'保存并重新分析',exact:true})).toBeEnabled();await modal.getByRole('button',{name:'保存并重新分析',exact:true}).click();
+  await expect(modal.locator('[aria-label="记录分析状态"]')).toContainText('补充已保存并加入分析队列');await expect(modal.getByLabel('回答待补充问题',{exact:true})).toHaveValue('');await expect(modal.locator('.original-text')).toContainText(answer);
+ }
+ await modal.getByRole('button',{name:'关闭',exact:true}).click();await page.locator('.record-row').filter({hasText:'合成训练：卧推 20kg 3x8'}).click();modal=page.getByRole('dialog');
+ await modal.getByLabel('回答待补充问题',{exact:true}).fill('再补充：今天力量训练42分钟');await modal.getByRole('button',{name:'保存并重新分析',exact:true}).click();await expect(modal.locator('[aria-label="记录分析状态"]')).toContainText('补充已保存并加入分析队列');await modal.getByRole('button',{name:'关闭',exact:true}).click();
+ await page.getByRole('navigation').getByRole('button',{name:'助理',exact:true}).click();await expect(page.locator('[aria-label="批量分析进度"]')).toContainText('排队 2 条');
+ await app.evaluate(()=>{globalThis.syntheticAnalysis.hold=false;});await expect(batch).toContainText('共 3 条，已完成 3 条');
+ const queued=await page.evaluate(async()=>{const s=await window.health.invoke('snapshot');return s.records.filter(r=>r.text.includes('合成餐食补充回归')||r.id==='synthetic-followup-training');});
+ if(queued.some(r=>r.analysisPending||r.analysisError)||queued.find(r=>r.kind==='meal').followups.length!==3)throw new Error('Queued supplements were lost or failed');
+ const inputs=await app.evaluate(()=>globalThis.syntheticAnalysis.records);if(inputs.filter(r=>r.id===meal.id&&r.text.includes('蔬菜也吃完了')).length!==1)throw new Error('Waiting supplements did not merge into a single latest analysis');
+ // Also edit the record whose older request is already in flight.
+ await app.evaluate(()=>{globalThis.syntheticAnalysis.hold=true;});await page.evaluate(id=>window.health.invoke('record:analyze',{ids:[id],enqueue:true}),meal.id);
+ await page.getByRole('navigation').getByRole('button',{name:/^记录/}).click();await page.locator('.record-row').filter({hasText:'合成餐食补充回归'}).click();modal=page.getByRole('dialog');
+ await modal.getByLabel('回答待补充问题',{exact:true}).fill('最后更正：米饭约100g');await modal.getByRole('button',{name:'保存并重新分析',exact:true}).click();await expect(modal.locator('[aria-label="记录分析状态"]')).toContainText('补充已保存并加入分析队列');
+ await app.evaluate(()=>{globalThis.syntheticAnalysis.hold=false;});await expect(modal.locator('[aria-label="记录分析状态"]')).toContainText('分析已完成，整理结果已更新');await expect(modal.getByRole('alert')).toHaveCount(0);await modal.getByRole('button',{name:'关闭',exact:true}).click();
+ await page.getByRole('navigation').getByRole('button',{name:'助理',exact:true}).click();await expect(batch).toContainText('共 2 条，已完成 1 条，跳过 1 条');
  await app.evaluate(()=>{globalThis.syntheticAnalysis.slow=true;});
  await page.evaluate(async()=>{for(let i=0;i<3;i++)await window.health.invoke('record:create',{kind:'note',occurredAt:new Date().toISOString(),text:`合成取消记录 ${i}`,attachmentTokens:[]});});
  await page.getByRole('button',{name:'分析 3 条新记录',exact:true}).click();
@@ -108,6 +131,6 @@ try{
  await page.setViewportSize({width:860,height:650});
  if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw new Error('Analysis UI overflows narrow window');
  if(errors.length)throw new Error(errors.join('\n'));
- console.log('Isolated analysis UI passed: 13-item queue, per-item failure and retry, saved followup after network failure, prior meal estimate preserved and labelled, omitted meal catalogue id, one-shot retry without duplication, cancellation and narrow layout. No model requests sent.');
+ console.log('Isolated analysis UI passed: 13-item queue, per-item failure and retry, saved followup after network failure, prior meal estimate preserved and labelled, omitted meal catalogue id, one-shot retry without duplication, immediate concurrent followup saves, merged latest-revision queue, stale-result protection, cancellation and narrow layout. No model requests sent.');
 }catch(error){if(app){const page=await app.firstWindow();await page.screenshot({path:path.join(tmpdir(),'bodyjournal-analysis-failure.png')}).catch(()=>{});console.error('Analysis UI failure:',errors,await page.locator('[role="dialog"]').allTextContents());}throw error;}
 finally{if(app)await app.close().catch(()=>{});rmSync(vault,{recursive:true,force:true});}

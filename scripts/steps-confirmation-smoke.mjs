@@ -19,6 +19,7 @@ try{
   return {date,today,runId:run.id};
  });
  await page.getByRole('navigation').getByRole('button',{name:'能量',exact:true}).click();
+  await page.getByRole('button',{name:'核对今天',exact:true}).click();
  await page.getByLabel('能量日期',{exact:true}).fill(fixture.date);
  const confirmation=page.getByLabel('当天活动已记齐，或明确没有专门训练',{exact:true});
  await expect(confirmation).toBeChecked();
@@ -29,7 +30,9 @@ try{
  await page.getByRole('button',{name:'保存当天补充',exact:true}).click();
  await expect.poll(()=>page.evaluate(async date=>(await window.health.invoke('energy:get',{date})).dayInput.steps,fixture.date)).toBe(6100);
  await expect(confirmation).toBeChecked();
+ await page.getByRole('button',{name:'看趋势',exact:true}).click();
  await page.getByLabel('能量趋势范围',{exact:true}).selectOption('30');
+ await page.getByRole('button',{name:'核对今天',exact:true}).click();
  await expect(confirmation).toBeChecked();
  await page.getByRole('button',{name:'补充平常步数',exact:true}).click();
  let modal=page.getByRole('dialog');

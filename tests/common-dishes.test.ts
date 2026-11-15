@@ -63,3 +63,79 @@ test('historical common dish views use only templates and estimates available by
  const {store:s}=setup(t);const first=meal(s,'synthetic-history-first',20,'合成南瓜包子六个',undefined,100),second=meal(s,'synthetic-history-second',21,'合成南瓜包子八个',undefined,150),future=meal(s,'synthetic-history-future',22,'合成南瓜包子十个',['合成大份包点'],300);
  assert.deepEqual(s.commonDishes(new Date('2026-10-20T23:00:00+08:00')),[]);const old=s.commonDishes(new Date('2026-10-21T23:00:00+08:00'))[0];assert.equal(old.latestRecordId,second.id);assert.deepEqual(old.macros,second.analysis!.macros);assert.deepEqual(new Set(old.recordIds),new Set([first.id,second.id]));assert.ok(!old.recordIds.includes(future.id));assert.equal(s.commonDishes()[0].latestRecordId,future.id);
 });
+
+test('dish ingredients stay nested while questions or a new followup await analysis',t=>{
+ const {store:s}=setup(t),{first,second}=pair(s);
+ const next=s.applyAnalysis(second.id,{...second.analysis,questions:['这一餐有没有剩下？']},'chatgpt',second.revision);
+ assert.equal(s.commonDishes().length,1);assert.ok(s.commonDishes()[0].recordIds.includes(next.id));assert.deepEqual(s.foodCandidates(false),[]);
+ s.revise(next.id,{followup:{answer:'吃完了，辅菜量比较少',questions:next.analysis!.questions}},next.revision);
+ const dish=s.commonDishes()[0];assert.ok(dish.recordIds.includes(second.id));assert.equal(dish.latestRecordId,first.id);assert.deepEqual(s.foodCandidates(false),[]);
+});
+
+test('optional dish brands survive edits, both backup formats and restart without changing meal estimates',t=>{
+ const state=setup(t),s=state.store;pair(s);const before=JSON.stringify(s.records()),id=s.commonDishes()[0].id;
+ s.saveDish({id,brand:'  合成甲店  '});assert.equal(s.commonDishes()[0].brand,'合成甲店');
+ s.saveDish({id,active:false});assert.equal(s.commonDishes()[0].brand,'合成甲店');s.saveDish({id,active:true});
+ const bundle=s.exportBundle(),definitions=s.dishDefinitions();s.saveDish({id,brand:''});assert.equal(s.commonDishes()[0].brand,undefined);
+ s.restore(bundle);assert.deepEqual(s.dishDefinitions(),definitions);assert.equal(s.commonDishes()[0].brand,'合成甲店');
+ const backupRoot=mkdtempSync(path.join(tmpdir(),'dish-brand-backup-'));t.after(()=>rmSync(backupRoot,{recursive:true,force:true}));const file=path.join(backupRoot,'brand.bodyjournal');
+ s.backup(file);s.saveDish({id,brand:'合成乙店'});s.restoreFile(file);assert.equal(s.commonDishes()[0].brand,'合成甲店');
+ assert.equal(JSON.stringify(s.records()),before);s.close();state.store=new HealthStore(state.root,new FoodCatalog([]),state.root+'/inbox',false);
+ assert.equal(state.store.commonDishes()[0].brand,'合成甲店');state.store.saveDish({id,brand:''});assert.equal(state.store.commonDishes()[0].brand,undefined);
+ assert.throws(()=>state.store.saveDish({id,brand:'长'.repeat(101)}));assert.equal(state.store.commonDishes()[0].brand,undefined);
+});
+
+test('same-named meals may belong to different brands and remain separate',t=>{
+ const {store:s}=setup(t),first=meal(s,'brand-a-meal',20,'合成鸡肉饭'),second=meal(s,'brand-b-meal',21,'合成鸡肉饭'),before=JSON.stringify(s.records());
+ const a=s.saveDish({name:'合成鸡肉饭',brand:'合成甲店',aliases:[],recordIds:[first.id]}),b=s.saveDish({name:'合成鸡肉饭',brand:'合成乙店',aliases:[],recordIds:[second.id]});
+ assert.notEqual(a.id,b.id);assert.equal(s.commonDishes().length,2);assert.deepEqual(s.commonDishes().find(d=>d.id===a.id)!.recordIds,[first.id]);assert.deepEqual(s.commonDishes().find(d=>d.id===b.id)!.recordIds,[second.id]);
+ assert.throws(()=>s.saveDish({id:b.id,brand:'合成甲店'}),/多个分组/);assert.equal(JSON.stringify(s.records()),before);
+});
+
+test('recurring pots with ingredient and serving descriptions become common dishes without changing meal nutrition',t=>{
+ const {store:s}=setup(t);
+ const first=meal(s,'synthetic-recurring-pot-first',20,'合成麻辣香锅，一碗米饭，有青菜和鸡肉',['合成青菜','合成鸡肉'],100);
+ const second=meal(s,'synthetic-recurring-pot-second',21,'合成麻辣香锅，按称一斤，有蔬菜、鹌鹑蛋、鸡胸肉，加一碗米饭',['合成蔬菜','合成鹌鹑蛋','合成鸡胸肉'],160),before=JSON.stringify(s.records());
+ const dishes=s.commonDishes();assert.equal(dishes.length,1);assert.equal(dishes[0].name,'合成麻辣香锅');assert.equal(dishes[0].days,2);assert.deepEqual(dishes[0].recordIds,[first.id,second.id]);assert.deepEqual(dishes[0].template,second.analysis!.ingredients);assert.deepEqual(dishes[0].macros,second.analysis!.macros);assert.deepEqual(s.foodCandidates(false),[]);assert.equal(JSON.stringify(s.records()),before);
+});
+
+test('dish components shared by unrelated meals do not return as standalone food suggestions',t=>{
+ const {store:s}=setup(t);
+ meal(s,'shared-dish-1',20,'合成甲店鸡排荞麦面',['合成玉米粒（熟）']);
+ meal(s,'shared-dish-2',21,'合成甲店鸡排荞麦面',['合成玉米粒（熟）']);
+ for(const [id,day,title] of [['shared-side-1',22,'合成乙店牛肉碗'],['shared-side-2',23,'依旧合成蔬菜拼盘']] as const){
+  const r=meal(s,id,day,title,['合成玉米粒（熟）']);
+  s.applyAnalysis(id,{...r.analysis,ingredients:r.analysis!.ingredients!.map(i=>({...i,role:'component',compositionGroup:'synthetic-sides'}))},'chatgpt',r.revision);
+ }
+ const state=()=>JSON.stringify([s.records(),s.memories(),s.dishDefinitions(),s.ignoredFoodCandidates()]),before=state();
+ assert.equal(s.commonDishes().length,1);assert.equal(s.foodCandidates().find(c=>c.name==='合成玉米粒（熟）')!.meals,4);
+ assert.deepEqual(s.foodCandidates(false),[]);
+ assert.equal(state(),before);
+});
+
+test('standalone suggestions count independent uses rather than components from other meals',t=>{
+ const {store:s}=setup(t);
+ const names=['合成零食','合成配菜','合成烹调油','合成旧配菜','合成重复拆分'];
+ for(const [id,day,title] of [['independent-first',20,'合成甲店便当'],['independent-second',21,'合成乙店沙拉']] as const){
+  const r=meal(s,id,day,title,names);
+  s.applyAnalysis(id,{...r.analysis,ingredients:r.analysis!.ingredients!.map((i,index)=>({...i,...(index===0?{role:'whole_dish' as const,compositionGroup:'synthetic-duplicate'}:index===1?{role:'component' as const}:index===2?{role:'added_fat' as const}:index===3?{compositionGroup:'synthetic-legacy-dish'}:{role:'component' as const,compositionGroup:'synthetic-duplicate'})}))},'chatgpt',r.revision);
+ }
+ // One independent serving must not combine with two component uses to reach the threshold.
+ const side=meal(s,'independent-once',22,'单独吃合成配菜',['合成配菜']);
+ s.applyAnalysis(side.id,{...side.analysis,ingredients:side.analysis!.ingredients!.map(i=>({...i,role:'whole_dish'}))},'chatgpt',side.revision);
+ assert.deepEqual(s.foodCandidates(false).map(c=>[c.name,c.meals]),[['合成零食',2]]);
+});
+
+test('legacy component names remain owned by a common dish after its latest ingredients change or it is archived',t=>{
+ const state=setup(t),s=state.store;
+ meal(s,'legacy-dish-1',20,'合成甲店鸡肉面',['合成旧配菜']);
+ meal(s,'legacy-dish-2',21,'合成甲店鸡肉面',['合成新配菜']);
+ meal(s,'legacy-other-1',22,'合成乙店便当',['合成旧配菜']);
+ meal(s,'legacy-other-2',23,'合成丙店沙拉',['合成旧配菜']);
+ const dish=s.commonDishes()[0];assert.equal(dish.template[0].name,'合成新配菜');
+ assert.deepEqual(s.foodCandidates(false),[]);
+ s.saveDish({id:dish.id,active:false});assert.deepEqual(s.foodCandidates(false),[]);
+ s.close();state.store=new HealthStore(state.root,new FoodCatalog([]),state.root+'/inbox',false);
+ assert.deepEqual(state.store.foodCandidates(false),[]);
+ assert.deepEqual(state.store.ignoredFoodCandidates(),[]);
+});

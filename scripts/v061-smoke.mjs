@@ -53,6 +53,7 @@ try{
   await expect(page.getByRole('dialog')).toContainText('UI 合成夜宵（已更正）');console.log('night detail correction passed');
   await page.getByRole('dialog').getByRole('button',{name:'关闭',exact:true}).click();
   await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'能量',exact:true}).click();
+  await page.getByRole('button',{name:'核对今天',exact:true}).click();
   await expect(page.getByLabel('能量日期')).toHaveValue('2026-11-02');
   await page.getByRole('button',{name:'能量下一天',exact:true}).click();await expect(page.getByLabel('能量日期')).toHaveValue('2026-11-03');
   await page.getByLabel('手动补充步数',{exact:true}).fill('4321');

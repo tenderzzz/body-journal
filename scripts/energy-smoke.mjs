@@ -47,6 +47,7 @@ async function launch(root,demo=false){app=await _electron.launch({executablePat
 try{
   let page=await launch(vault);
   await page.getByRole('navigation').getByRole('button',{name:'能量',exact:true}).click();
+  await page.getByRole('button',{name:'核对今天',exact:true}).click();
   await expect(page.getByText('再补一点资料，就能估算每天的消耗。',{exact:true})).toBeVisible();
   const today=await page.evaluate(async()=>(await window.health.invoke('energy:get')).today);
   await page.getByRole('button',{name:'记身体',exact:true}).click();
@@ -96,11 +97,13 @@ try{
   const energy=await page.evaluate(async()=>await window.health.invoke('energy:get'));
   if(energy.selected.target.kcal!==fixed)throw new Error('Training changed the fixed target');
   if(energy.selected.workouts.length!==2||!energy.selected.balance)throw new Error('Energy summary did not include completed workouts and complete intake');
+  await page.getByRole('button',{name:'看趋势',exact:true}).click();
   await page.getByRole('combobox',{name:'能量趋势范围'}).selectOption('30');
   await expect(page.locator('.energy-trend')).toBeVisible();
   await expect(page.locator('.energy-week-review')).toContainText('近四周核对');
   await expect(page.locator('.energy-week-review tbody tr')).toHaveCount(4);
   await page.locator('.energy-week-review').screenshot({path:'/tmp/bodyjournal-energy-week-review.png'});
+  await page.getByRole('button',{name:'核对今天',exact:true}).click();
   await page.getByText('查看计算方法、假设与缺失项',{exact:true}).click();
   await expect(page.getByText(/运动总消耗＝MET/)).toBeVisible();
   await page.evaluate(async r=>window.health.invoke('record:update',{id:r.id,revision:r.revision,text:r.text+'\n感受：今天有点累'}),fixture);
@@ -127,6 +130,7 @@ try{
   `],{cwd:process.cwd(),env:{...process.env,BODYJOURNAL_PHOTO_FIXTURE:photoVault},encoding:'utf8',stdio:'pipe'}).trim());
   page=await launch(photoVault);
   await page.getByRole('navigation').getByRole('button',{name:'能量',exact:true}).click();
+  await page.getByRole('button',{name:'核对今天',exact:true}).click();
   await page.getByLabel('能量日期',{exact:true}).fill(photoFixture.date);
   await expect(page.getByText('26.9 分钟 · 记录时长',{exact:true})).toBeVisible();
   const photoActivity=page.getByLabel('当天活动已记齐，或明确没有专门训练',{exact:true});
@@ -162,9 +166,8 @@ try{
   `],{cwd:process.cwd(),env:{...process.env,BODYJOURNAL_REVIEW_FIXTURE:reviewVault},stdio:'pipe'});
   page=await launch(reviewVault);
   await page.getByRole('navigation').getByRole('button',{name:'能量',exact:true}).click();
-  await page.getByText('饮食与训练建议',{exact:true}).click();
+  await page.getByRole('button',{name:'目标历史',exact:true}).click();
   await page.getByRole('button',{name:'采纳建议',exact:true}).click();
-  await page.getByText('饮食目标的生效记录',{exact:true}).click();
   await expect(page.getByText(/已安排 .*2400 kcal／天/)).toBeVisible();
   let reviewed=await page.evaluate(async()=>window.health.invoke('energy:get'));
   if(reviewed.selected.target.kcal!==2300||!reviewed.targets.some(t=>t.kcal===2400&&t.effectiveDate>reviewed.today&&!t.undoneAt))throw new Error('Adoption did not schedule the next-day goal');
@@ -174,6 +177,7 @@ try{
   await app.close();
   page=await launch(demoVault,true);
   await page.getByRole('navigation').getByRole('button',{name:'能量',exact:true}).click();
+  await page.getByRole('button',{name:'看趋势',exact:true}).click();
   await expect(page.locator('.energy-trend')).toBeVisible();
   mkdirSync('evidence',{recursive:true});await page.screenshot({path:'evidence/energy.png'});
   await page.locator('.energy-history').screenshot({path:'evidence/energy-trend.png'});

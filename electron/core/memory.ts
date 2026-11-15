@@ -1,3 +1,4 @@
+import {normalizeTopicKey} from '../../src/shared/memory-topic';
 import type {Memory} from '../../src/shared/types';
 import {validMemory} from '../../src/shared/stats';
 import {detectTrainingNotation} from './training-notation';
@@ -6,6 +7,7 @@ export type MemoryPurpose='chat'|'weekly'|'memory'|'meal'|'training';
 // Only collapse well understood settings. Unrecognised subjects retain their explicit key.
 export function memoryTopic(text:string,key?:string):string|undefined {
  const aliases:Record<string,string>={'profile.eating.environment':'eating.environment','training.time':'training.time_preference','training.schedule.time':'training.time_preference','communication.lang':'communication.language'};
+ if(key)key=normalizeTopicKey(key);
  key=key?aliases[key]??key:undefined;
  if((!key||/^recording\.(?:training_notation|conventions)$/.test(key))&&Object.keys(detectTrainingNotation(text)).length)return 'recording.training_notation';
  if((!key||key==='training.time_preference')&&/喜欢|偏好|习惯|默认|以后|不再/.test(text)&&/(?:晚上|早晨|早上|早起|上午|下午|中午|夜间).{0,8}(?:练|训练)|(?:训练|健身).{0,8}(?:晚上|早晨|早上|上午|下午|中午)/.test(text))return 'training.time_preference';

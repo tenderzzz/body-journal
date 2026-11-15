@@ -1,3 +1,4 @@
+import {todaySummary,setTodayRest} from './core/today';
 import {JournalQueries} from './core/queries';
 import {InboxSync} from './core/inbox';
 import {validateMutation} from './core/ipc';
@@ -40,6 +41,9 @@ async function chooseImages(){const picked=await dialog.showOpenDialog(win,{titl
 async function invoke(action:string,payload:any) {
   payload=validateMutation(action,payload);
   switch(action){
+    case 'today:get':return todaySummary(store);
+    case 'energy:overview':return store.energy.overview();
+    case 'today:rest':setTodayRest(store,payload);emit({type:'changed',scopes:['today']});return;
     case 'snapshot':return snapshot();
     case 'migration:get':return store.getConfig('dayMigrationReport');
     case 'overview':return overview();
@@ -66,7 +70,7 @@ async function invoke(action:string,payload:any) {
     case 'record:activityUpdate':{const r=store.updateActivity(payload);emit({type:'changed',scopes:['records','overview','energy','profile','trends','messages']});return r;}
     case 'record:undo':{const r=store.undoRecord(idSchema.parse(payload.id));emit({type:'changed',scopes:['records','overview','energy','profile','trends','messages']});return r;}
     case 'record:history':return store.history(idSchema.parse(payload.id));
-    case 'record:analyze':{const ids=z.array(idSchema).min(1).max(5000).parse(payload.ids);if(payload.analysis){if(ids.length!==1)throw new Error('请逐条修正分析');const r=store.applyAnalysis(ids[0],payload.analysis,'local',z.number().int().parse(payload.revision),z.boolean().optional().parse(payload.manualMeal)??false);emit({type:'changed',scopes:['records','overview','energy','profile','trends','messages']});return r;}return assistant.analyze(ids);}
+    case 'record:analyze':{const ids=z.array(idSchema).min(1).max(5000).parse(payload.ids);if(payload.analysis){if(ids.length!==1)throw new Error('请逐条修正分析');const r=store.applyAnalysis(ids[0],payload.analysis,'local',z.number().int().parse(payload.revision),z.boolean().optional().parse(payload.manualMeal)??false);emit({type:'changed',scopes:['records','overview','energy','profile','trends','messages']});return r;}return z.boolean().optional().parse(payload.enqueue)?assistant.enqueueAnalysis(ids):assistant.analyze(ids);}
     case 'record:analyzePending':return assistant.analyze(store.records().filter(needsAnalysis).map(r=>r.id),{pendingOnly:true});
     case 'record:importHistory':{const text=z.string().max(500000).parse(payload.text);const parsed=splitHistorical(text);if(payload.preview)return parsed;const result=store.importMany(parsed.map(p=>({version:1,id:randomUUID(),kind:'training',...p})));emit({type:'changed',scopes:['records','overview','energy','profile','trends','messages']});return result;}
     case 'record:importFiles':{const selected=await dialog.showOpenDialog(win,{properties:['openFile','multiSelections'],filters:[{name:'手机记录',extensions:['json']}]});if(selected.canceled)return 0;let count=0;for(const f of selected.filePaths){if(statSync(f).size>40*1024*1024)throw new Error('记录文件过大');if(!store.importEnvelope(JSON.parse(readFileSync(f,'utf8')),path.dirname(f),'文件导入').duplicate)count++;}emit({type:'changed',scopes:['records','overview','energy','profile','trends','messages']});return count;}

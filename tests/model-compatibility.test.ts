@@ -23,8 +23,10 @@ test('optional run nulls do not become zero, nullable food/weight fields keep th
 test('manual inputs and required model fields remain strict',t=>{
  const s=setup(t),r=record(s);assert.throws(()=>s.applyAnalysis(r.id,output(),'local',r.revision));assert.throws(()=>s.applyAnalysis(r.id,{...output(),training:{...output().training,completion:null}},'chatgpt',r.revision));assert.equal(s.record(r.id).revision,r.revision);
 });
-test('valid model memory operations still require genuine evidence and remain atomic',t=>{
- const s=setup(t),r=record(s),before=s.memories();assert.throws(()=>s.applyAnalysis(r.id,{...output(),memoryChanges:[{operation:'upsert',key:'training.preference',kind:'fact',text:'我喜欢早晨训练',evidenceQuote:'并不存在的原话'}]},'chatgpt',r.revision),/原文/);assert.deepEqual(s.memories(),before);assert.equal(s.record(r.id).revision,r.revision);
+test('invalid quoted evidence skips the memory but preserves a valid analysis',t=>{
+ const s=setup(t),r=record(s),before=s.memories();
+ const updated=s.applyAnalysis(r.id,{...output(),memoryChanges:[{operation:'upsert',key:'training.preference',kind:'fact',text:'我喜欢早晨训练',evidenceQuote:'并不存在的原话'}]},'chatgpt',r.revision);
+ assert.match(updated.analysis!.memoryWarnings![0],/原文/);assert.deepEqual(s.memories(),before);assert.equal(updated.revision,r.revision+1);
 });
 test('chat retains a valid answer and shows a local notice for unsupported memory operation',async t=>{
  const s=setup(t);s.setSettings({...s.getSettings(),chatgptModel:'synthetic-model'});const goals=s.getSettings().goals,original=globalThis.fetch;t.after(()=>{globalThis.fetch=original;});

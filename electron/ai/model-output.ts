@@ -18,8 +18,9 @@ function memoryCandidates(value:unknown,limit:number,allowed:string[]){
    warnings.push(`第${index+1}项附带记忆更新的操作类型无法识别，已跳过，未修改对应记忆或目标。`);continue;
   }
   const candidate={...optionalNulls(item,['subject','text','kind','food','targetId','split']) as ObjectValue,operation};
-  if(!memoryChangeSchema.safeParse(candidate).success){warnings.push(`第${index+1}项附带记忆的格式无效，已跳过。`);continue;}
-  accepted.push(candidate);
+  const parsed=memoryChangeSchema.safeParse(candidate);
+  if(!parsed.success){warnings.push(`第${index+1}项附带记忆的格式无效，已跳过。`);continue;}
+  accepted.push(parsed.data);
  }
  return {value:accepted,warnings};
 }

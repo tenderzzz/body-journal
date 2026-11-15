@@ -204,13 +204,46 @@ function walkingEstimate(day:HealthRecord[],runs:CompletedRun[],input:DailyEnerg
   return {walking,unresolved};
 }
 
-export function estimateDay(date:string,timezone:string,records:HealthRecord[],profile:EnergyProfile|undefined,input:DailyEnergyInput|undefined,target:EnergyTarget|null,historyReference?:StepReference):DailyEnergyEstimate{
-  const active=records.filter(r=>!r.deleted).map(r=>r.analysis?.run?{...r,analysis:{...r.analysis,run:recordCardio(r)}}:r),day=active.filter(r=>localDay(r.occurredAt,timezone)===date);
+function appendRecord(map:Map<string,HealthRecord[]>, date:string, record:HealthRecord) {
+  const group=map.get(date);
+  if(group)group.push(record);
+  else map.set(date,[record]);
+}
+
+/** Prepared once per read. Keep original documents for receipts and dependency hashes. */
+export function indexEnergyRecords(records:HealthRecord[], timezone:string) {
+  const journal=new Map<string,HealthRecord[]>(), civil=new Map<string,HealthRecord[]>();
+  const byId=new Map<string,HealthRecord>(), dates=new Map<string,string>();
+  const weights:HealthRecord[]=[];
+  const runIntervals:{record:HealthRecord;start:number;end:number}[]=[];
+  for(const original of records){
+    if(original.deleted)continue;
+    const r=original.analysis?.run?{...original,analysis:{...original.analysis,run:recordCardio(original)}}:original;
+    const date=localDay(r.occurredAt,timezone);
+    byId.set(r.id,original);
+    dates.set(r.id,date);
+    appendRecord(journal,date,r);
+    appendRecord(civil,stepDay(r,timezone),r);
+    if(r.kind==='body'&&r.body?.weightKg&&!r.timeSource)weights.push(r);
+    const run=r.analysis?.run;
+    if(run&&run.stepsIncluded!==false&&!r.timeSource&&runCompletion(r)==='completed'){
+      const start=Date.parse(run.startedAt??r.occurredAt);
+      runIntervals.push({record:r,start,end:start+(run.elapsedMinutes??reportedMinutes(run)??0)*60000});
+    }
+  }
+  weights.sort((a,b)=>Date.parse(b.occurredAt)-Date.parse(a.occurredAt));
+  return {journal,civil,byId,dates,weights,runIntervals};
+}
+export type EnergyRecordIndex=ReturnType<typeof indexEnergyRecords>;
+
+export function estimateDay(date:string,timezone:string,records:HealthRecord[]|EnergyRecordIndex,profile:EnergyProfile|undefined,input:DailyEnergyInput|undefined,target:EnergyTarget|null,historyReference?:StepReference):DailyEnergyEstimate{
+  const index=Array.isArray(records)?indexEnergyRecords(records,timezone):records;
+  const day=index.journal.get(date)??[];
   const meals=day.filter(r=>r.kind==='meal'),training=day.filter(r=>r.kind==='training'||!!r.analysis?.run||!!r.analysis?.sets?.length||!!r.analysis?.training?.durationMinutes)
     .sort((a,b)=>Number(!!b.analysis?.activityOverrides)-Number(!!a.analysis?.activityOverrides)||Date.parse(b.updatedAt)-Date.parse(a.updatedAt)||a.id.localeCompare(b.id));
   const activityRecords=day.filter(input?.dayPolicy?isJournalActivityRecord:isEnergyActivityRecord);
-  const measurements=active.filter(r=>r.kind==='body'&&r.body?.weightKg&&localDay(r.occurredAt,timezone)<=date&&!r.timeSource).sort((a,b)=>Date.parse(b.occurredAt)-Date.parse(a.occurredAt));
-  const measured=measurements[0],weight=measured?{id:measured.id,revision:measured.revision,kg:measured.body!.weightKg!,date:localDay(measured.occurredAt,timezone)}:undefined;
+  const measured=index.weights.find(r=>index.dates.get(r.id)!<=date);
+  const weight=measured?{id:measured.id,revision:measured.revision,kg:measured.body!.weightKg!,date:index.dates.get(measured.id)!}:undefined;
   const missing:string[]=[],assumptions=['活动档位为经验参数，含日常活动与进食相关消耗。','参考区间不是统计置信区间，也不是实测消耗。'];
   if(!profile)missing.push('尚未配置本日期生效的计算资料');
   if(!weight)missing.push('缺少本日期或之前已确认日期的体重');
@@ -290,8 +323,8 @@ export function estimateDay(date:string,timezone:string,records:HealthRecord[],p
     }
   }
   const civilBounds=dayBounds(date,date,timezone,'calendar');
-  const civilRecords=active.filter(r=>stepDay(r,timezone)===date);
-  const runCandidates=active.filter(r=>{if(!r.analysis?.run||r.analysis.run.stepsIncluded===false||runCompletion(r)!=='completed'||r.timeSource)return false;const start=Date.parse(r.analysis.run.startedAt??r.occurredAt),end=start+(r.analysis.run.elapsedMinutes??reportedMinutes(r.analysis.run)??0)*60000;return start<civilBounds.until&&end>civilBounds.from;});
+  const civilRecords=index.civil.get(date)??[];
+  const runCandidates=index.runIntervals.filter(r=>r.start<civilBounds.until&&r.end>civilBounds.from).map(r=>r.record);
   const civilRuns:CompletedRun[]=[];
   const runSources:HealthRecord[]=[];
   let civilOverlap=false;
@@ -309,7 +342,7 @@ export function estimateDay(date:string,timezone:string,records:HealthRecord[],p
   const unresolvedCivilRun=civilOverlap||civilDuplicateDetails.some(d=>!d.exact)||civilRecords.some(r=>(r.analysis?.run||(!r.analysis&&r.kind==='training'))&&(r.timeSource||r.status==='pending'||r.status==='needs_info'));
   const {walking,unresolved}=walkingEstimate(civilRecords,civilRuns,input,profile,weight?.kg,missing,assumptions,unresolvedCivilRun,historyReference);
   assumptions.push('饮食和训练按04:00换日，步数修正采用同日期00:00–24:00的自然日数据。');
-  if(profile?.baselineAnchor&&walking?.reference?.sources.some(s=>!active.some(r=>r.id===s.id&&r.revision===s.revision)))assumptions.push('固定步数参考的来源已有修订或移除；当前保留已确认的参考快照，请核对后保存新版计算资料。');
+  if(profile?.baselineAnchor&&walking?.reference?.sources.some(s=>index.byId.get(s.id)?.revision!==s.revision))assumptions.push('固定步数参考的来源已有修订或移除；当前保留已确认的参考快照，请核对后保存新版计算资料。');
   unsupported=unsupported||unresolved;
   const tooLong=workouts.reduce((sum,w)=>sum+w.minutes.high,0)>1440;
   if(tooLong){missing.push('当天训练时长合计超过24小时，请核对重复记录或时长');unsupported=true;}

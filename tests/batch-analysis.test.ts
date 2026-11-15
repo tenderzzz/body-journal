@@ -63,3 +63,55 @@ test('legacy local needs-info and failed explicit training are discoverable with
  const s=setup(t),r=add(s,'batch-local-followup','training'),updated=s.revise(r.id,{text:'卧推 50kg 3x8\n补充：今天感觉正常'},r.revision);assert.equal(needsAnalysis({...updated,analysisPending:undefined}),updated.status==='needs_info');
  const svc=service(s,async()=>{throw new TypeError('fetch failed');});await assert.rejects(()=>svc.analyze([r.id]),/网络/);assert.equal(needsAnalysis(s.record(r.id)),true);assert.ok(s.record(r.id).analysisError);
 });
+
+test('supplements join a running queue immediately and read the latest saved content',async t=>{
+ const s=setup(t),ids=['queue-active','queue-followup','queue-later'].map(id=>add(s,id).id),calls:string[]=[];
+ let release!:()=>void,started!:()=>void;const start=new Promise<void>(r=>started=r),gate=new Promise<void>(r=>release=r);
+ const svc=service(s,async(_url,init)=>{const p=JSON.parse(JSON.parse(String(init?.body)).input[0].content[0].text);calls.push(p.record.text);if(p.record.id===ids[0]){started();await gate;}return valid();});
+ const first=svc.analyze([ids[0]]);await start;
+ const original=s.record(ids[1]),saved=s.revise(original.id,{followup:{answer:'第一条补充',questions:[]}},original.revision);
+ const receipt=svc.enqueueAnalysis([saved.id,ids[2]]);assert.equal(receipt.queued,2);assert.equal(calls.length,1);
+ const latest=s.revise(saved.id,{followup:{answer:'再补充分量',questions:[]}},saved.revision);svc.enqueueAnalysis([latest.id]);
+ release();const result=await first;assert.equal(result.completed,3);assert.equal(result.total,3);assert.equal(calls.length,3);assert.match(calls[1],/第一条补充[\s\S]*再补充分量/);assert.equal(s.record(latest.id).analysisPending,false);
+});
+
+test('supplementing the currently analyzed record discards stale output and runs the latest revision once',async t=>{
+ const s=setup(t),r=add(s,'queue-same-record');let release!:()=>void,started!:()=>void,calls=0;
+ const start=new Promise<void>(r=>started=r),gate=new Promise<void>(r=>release=r);
+ const svc=service(s,async()=>{if(++calls===1){started();await gate;}return valid();});
+ const run=svc.analyze([r.id]);await start;
+ const first=s.revise(r.id,{followup:{answer:'补充一',questions:[]}},r.revision);svc.enqueueAnalysis([r.id]);
+ s.revise(r.id,{followup:{answer:'补充二',questions:[]}},first.revision);svc.enqueueAnalysis([r.id]);
+ release();const result=await run;assert.equal(calls,2);assert.equal(result.completed,1);assert.equal(result.failed,0);assert.equal(result.skipped,1);assert.equal(s.record(r.id).followups?.length,2);assert.equal(s.record(r.id).analysisPending,false);assert.equal(s.record(r.id).analysisError,undefined);
+});
+
+test('queued analysis waits behind another model operation without rejecting the saved supplement',async t=>{
+ const s=setup(t),r=add(s,'queue-behind-chat');let release!:()=>void;const gate=new Promise<void>(r=>release=r);let calls=0;
+ const svc=service(s,async()=>{calls++;return valid();});const active=svc.exclusive(()=>gate);
+ const waiting=svc.analyze([r.id]);assert.equal(calls,0);assert.equal(s.record(r.id).analysisPending,true);
+ release();await active;const result=await waiting;assert.equal(result.completed,1);assert.equal(calls,1);
+});
+
+test('appending a followup tolerates analysis finishing since the detail was opened',t=>{
+ const s=setup(t),r=add(s,'queue-followup-race');s.applyAnalysis(r.id,{summary:'背景分析完成',questions:[]},'chatgpt',r.revision);
+ const saved=s.revise(r.id,{followup:{answer:'补充不会丢失',questions:[]}},r.revision);assert.match(saved.text,/补充不会丢失/);
+ assert.throws(()=>s.revise(r.id,{followup:{answer:'来自过期页面的另一次修改',questions:[]}},r.revision),/记录已变化/);
+});
+
+test('appended tasks remain pending and uncharged after cancellation or a shared service failure',async t=>{
+ const s=setup(t);
+ for(const mode of ['cancel','network']){
+  const first=add(s,`appended-stop-${mode}`),next=add(s,`appended-next-${mode}`);let release!:()=>void,started!:()=>void,calls=0;
+  const gate=new Promise<void>(r=>release=r),start=new Promise<void>(r=>started=r);
+  const svc=service(s,async(_url,init)=>{calls++;started();await gate;if(mode==='network')throw new TypeError('fetch failed');init?.signal?.throwIfAborted();return valid();});
+  const running=svc.analyze([first.id],{pendingOnly:true});await start;svc.enqueueAnalysis([next.id]);if(mode==='cancel')svc.cancel();release();
+  const result=await running;assert.equal(calls,1);assert.ok(result.remaining.includes(next.id));assert.equal(s.record(next.id).analysisPending,true);assert.equal(s.record(next.id).analysisAttemptedRevision,undefined);
+ }
+});
+
+test('unchanged in-flight duplicate clicks share one analysis and one charge',async t=>{
+ const s=setup(t),r=add(s,'queue-unchanged-duplicate');let release!:()=>void,started!:()=>void,calls=0;
+ const gate=new Promise<void>(r=>release=r),start=new Promise<void>(r=>started=r);
+ const svc=service(s,async()=>{calls++;started();await gate;return valid();});const first=svc.analyze([r.id]);await start;const second=svc.analyze([r.id]);release();
+ const [a,b]=await Promise.all([first,second]);assert.equal(calls,1);assert.equal(a.total,1);assert.equal(a,b);
+});
