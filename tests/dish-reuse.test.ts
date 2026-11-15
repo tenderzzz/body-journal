@@ -13,11 +13,11 @@ function record(s:HealthStore,id:string,day:number){return s.importEnvelope({ver
 function seed(s:HealthStore){for(const [i,day] of [20,21].entries()){const r=record(s,`synthetic-reuse-${i}`,day);s.applyAnalysis(r.id,{summary:'合成历史餐食',questions:[],ingredients:[ingredient]},'chatgpt',r.revision);}}
 
 test('common whole-meal reference reaches model requests once; archiving disables reuse without making a label',async t=>{
- const s=setup(t);seed(s);const r=record(s,'synthetic-next-dish',22);let prompt:any;
+ const s=setup(t);seed(s);s.saveDish({id:s.commonDishes()[0].id,brand:'合成餐食品牌'});const r=record(s,'synthetic-next-dish',22);let prompt:any;
  const svc=new AssistantService(s,{accessToken:async()=> 'synthetic-token'} as unknown as ChatGPTAuth,{read:async()=>({}),write:async()=>{}},()=>{},x=>x,async(_url,init)=>{
   prompt=JSON.parse(JSON.parse(String(init?.body)).input[0].content[0].text);const events=[{type:'response.output_text.delta',delta:JSON.stringify({summary:'合成本餐',questions:[],ingredients:[ingredient]})},{type:'response.completed',response:{usage:{input_tokens:10,output_tokens:20}}}];return new Response(events.map(e=>'data: '+JSON.stringify(e)+'\n\n').join(''));
  });
- await svc.analyze([r.id]);assert.equal(prompt.commonDish.name,'合成餐牌菌菇面');assert.equal(prompt.commonDish.sourceRecordId,'synthetic-reuse-1');assert.equal(prompt.commonDish.ingredients[0].portionSource,'estimated');assert.ok(!prompt.personalMemories.some((m:any)=>m.subject===prompt.commonDish.id));assert.deepEqual(prompt.personalFoods,[]);assert.deepEqual(s.foodPresets(),[]);assert.deepEqual(s.foodCandidates(false),[]);
+ await svc.analyze([r.id]);assert.equal(prompt.commonDish.name,'合成餐牌菌菇面');assert.equal(prompt.commonDish.brand,'合成餐食品牌');assert.equal(prompt.commonDish.sourceRecordId,'synthetic-reuse-1');assert.equal(prompt.commonDish.ingredients[0].portionSource,'estimated');assert.ok(!prompt.personalMemories.some((m:any)=>m.subject===prompt.commonDish.id));assert.deepEqual(prompt.personalFoods,[]);assert.deepEqual(s.foodPresets(),[]);assert.deepEqual(s.foodCandidates(false),[]);
  s.saveDish({id:s.commonDishes()[0].id,active:false});const next=record(s,'synthetic-archived-dish',23);await svc.analyze([next.id]);assert.equal(prompt.commonDish,undefined);
 });
 

@@ -16,6 +16,7 @@ try{
   const today=await page.evaluate(async()=>(await window.health.invoke('energy:get')).today);
   await page.evaluate(async date=>window.health.invoke('record:create',{kind:'body',text:'合成体重',occurredAt:date+'T08:00:00+08:00',dateLocked:true,body:{weightKg:80},attachmentTokens:[]}),today);
   await page.getByRole('navigation').getByRole('button',{name:'能量',exact:true}).click();
+  await page.getByRole('button',{name:'核对今天',exact:true}).click();
   await page.getByRole('button',{name:'补充计算资料',exact:true}).click();
   let modal=page.getByRole('dialog');
   await modal.getByLabel('生效时年龄',{exact:true}).fill('30');

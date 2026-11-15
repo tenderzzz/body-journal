@@ -10,6 +10,8 @@ const staging=mkdtempSync(path.join(tmpdir(),'bodyjournal-package-'));
 const source=path.join(staging,'source'),resources=path.join(staging,'resources');
 mkdirSync(source);mkdirSync(resources);
 const original=JSON.parse(readFileSync('package.json','utf8'));
+// The pinned npm package ships the release hashes, including the Apple Silicon ZIP.
+const checksums=JSON.parse(readFileSync(new URL('../node_modules/electron/checksums.json',import.meta.url),'utf8'));
 writeFileSync(path.join(source,'package.json'),JSON.stringify({...original,dependencies:{},devDependencies:{},scripts:{}},null,2));
 for(const file of ['dist','dist-electron','LICENSE'])cpSync(file,path.join(source,file),{recursive:true});
 const manifest={};
@@ -24,7 +26,7 @@ for(const file of RESOURCE_FILES){
 }
 writeFileSync(path.join(resources,'resources-manifest.json'),JSON.stringify(manifest,null,2));
 try{
-  const paths=await packager({dir:source,out:path.join(staging,'build'),name:'身体手记',executableName:'BodyJournal',appBundleId:'local.bodyjournal.personal',platform:'darwin',arch:'arm64',overwrite:true,asar:true,icon:path.resolve('assets/icon.icns'),prune:false,electronVersion:original.devDependencies.electron,extraResource:['shortcuts','docs','data','assets','resources-manifest.json'].map(p=>path.join(resources,p)),osxSign:false});
+  const paths=await packager({dir:source,out:path.join(staging,'build'),name:'身体手记',executableName:'BodyJournal',appBundleId:'local.bodyjournal.personal',platform:'darwin',arch:'arm64',overwrite:true,asar:true,icon:path.resolve('assets/icon.icns'),prune:false,electronVersion:original.devDependencies.electron,download:{checksums},extraResource:['shortcuts','docs','data','assets','resources-manifest.json'].map(p=>path.join(resources,p)),osxSign:false});
   mkdirSync('release',{recursive:true});
   for(const output of paths){
     const bundle=path.join(output,'身体手记.app');verifyResources(bundle);

@@ -1,3 +1,4 @@
+import {isPersonalEvidence} from './memory-evidence';
 import {recordCardio} from '../../src/shared/cardio';
 import {migrateJournalDays} from './day-migration';
 import {journalDay,calendarDay,dayBounds,DAY_POLICY_VERSION} from '../../src/shared/dates';
@@ -5,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, statSync, lstatSync, realpathSync, copyFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
-import type { Analysis, Attachment, Envelope, HealthRecord, Memory, Message, Settings, CoachProfile, MemoryChange, ExerciseRules, FoodPreset, FoodCandidate, CommonDish, DishDefinition, SyncItem } from '../../src/shared/types';
+import type { Analysis, Attachment, Envelope, HealthRecord, Memory, Message, Settings, CoachProfile, MemoryChange, ModelRun, ExerciseRules, FoodPreset, FoodCandidate, CommonDish, DishDefinition, SyncItem } from '../../src/shared/types';
 import { analysisSchema, bodySchema, envelopeSchema, idSchema, memoryInputSchema, settingsSchema, readableError, coachProfileSchema, memoryChangeSchema, runSchema, dailyActivitySchema } from './validation';
 import { localRecordStatus, parseBody, parseTraining } from './parser';
 import { FoodCatalog } from './nutrition';
@@ -53,6 +54,7 @@ function withActivityOverrides<T extends Pick<Analysis,'run'|'training'|'dailyAc
   return next;
 }
 const recordProgressSchema=z.object({analysisPending:z.boolean().optional(),analysisError:z.string().max(2000).optional(),analysisAttemptedRevision:z.number().int().positive().optional(),followups:z.array(z.object({answer:z.string().min(1).max(10000),questions:z.array(z.string().max(500)).max(2),at:z.iso.datetime({offset:true}),previousAnalysis:analysisSchema.partial().optional()})).max(30).optional()});
+class MemoryCandidateError extends Error {}
 export class HealthStore {
   db: DatabaseSync;
   energy!:EnergyStore;
@@ -101,6 +103,10 @@ export class HealthStore {
     return {...remembered,...detectTrainingNotation(text)};
   }
   private localStatus(record:Pick<HealthRecord,'kind'|'text'|'body'>,at:string){return localRecordStatus(record,this.trainingNotation(record.text,at));}
+  markAnalysisQueued(id:string){
+    const r=this.record(id);if(r.deleted)return;
+    this.db.prepare('UPDATE records SET doc=? WHERE id=?').run(JSON.stringify({...r,analysisPending:true,analysisError:undefined}),id);
+  }
   markAnalysisStarted(id:string,sourceRevision:number){
     const r=this.record(id);if(r.deleted||r.revision!==sourceRevision)return;
     this.db.prepare('UPDATE records SET doc=? WHERE id=?').run(JSON.stringify({...r,analysisPending:true,analysisError:undefined,analysisAttemptedRevision:sourceRevision}),id);
@@ -225,7 +231,15 @@ export class HealthStore {
   }
   revise(id:string,changes:Partial<Pick<HealthRecord,'text'|'occurredAt'|'body'|'deleted'>>&{followup?:{answer:string;questions:string[]}},expectedRevision:number) {
     if(changes.deleted!==undefined) z.boolean().parse(changes.deleted);
-    const old=this.record(id); if(old.revision!==expectedRevision) throw new Error('记录已变化，请刷新后再修改。');
+    const old=this.record(id);
+    if(old.revision!==expectedRevision){
+      // An analysis may finish between opening the detail and saving an answer.
+      // Rebase append-only answers only if the user's underlying input is unchanged.
+      const row=changes.followup&&Object.keys(changes).every(key=>key==='followup'||changes[key as keyof typeof changes]===undefined)?this.db.prepare("SELECT doc FROM revisions WHERE entity='record' AND id=? AND json_extract(doc,'$.revision')=? ORDER BY seq DESC LIMIT 1").get(id,expectedRevision):undefined;
+      const prior=row?parseJSON<HealthRecord>(row.doc):undefined;
+      const input=(r:HealthRecord)=>JSON.stringify([r.text,r.occurredAt,r.body,r.attachments,r.deleted,r.followups]);
+      if(!prior||input(prior)!==input(old))throw new Error('记录已变化，请刷新后再修改。');
+    }
     const followup=changes.followup?z.object({answer:z.string().trim().min(1).max(10000),questions:z.array(z.string().max(500)).max(2)}).parse(changes.followup):undefined;
     const newText=followup?old.text+'\n\n补充：'+followup.answer:changes.text??old.text;
     const checked=envelopeSchema.parse({version:1,id:old.id,kind:old.kind,occurredAt:changes.occurredAt??old.occurredAt,timezone:old.timezone,text:newText,body:changes.body===null?undefined:changes.body??old.body??undefined});
@@ -261,10 +275,10 @@ export class HealthStore {
     this.refreshAutomaticMemories(); return result;
   }
   undoRecord(id:string) { const old=this.record(id); const row=this.db.prepare("SELECT doc FROM revisions WHERE entity='record' AND id=? ORDER BY seq DESC LIMIT 1").get(id); if(!row) throw new Error('这条记录还没有可撤销的修改'); const prior=parseJSON<HealthRecord>(row.doc);return this.commitRevision(old,{...prior,dateLocked:old.occurredAt!==prior.occurredAt?true:prior.dateLocked}); }
-  applyAnalysis(id:string,value:unknown,engine:Analysis['engine'],expectedRevision:number,manualMeal=false):HealthRecord {
-    return this.transaction(()=>this.applyAnalysisAtomic(id,value,engine,expectedRevision,manualMeal));
+  applyAnalysis(id:string,value:unknown,engine:Analysis['engine'],expectedRevision:number,manualMeal=false,modelRun?:ModelRun):HealthRecord {
+    return this.transaction(()=>this.applyAnalysisAtomic(id,value,engine,expectedRevision,manualMeal,modelRun));
   }
-  private applyAnalysisAtomic(id:string,value:unknown,engine:Analysis['engine'],expectedRevision:number,manualMeal=false):HealthRecord {
+  private applyAnalysisAtomic(id:string,value:unknown,engine:Analysis['engine'],expectedRevision:number,manualMeal=false,modelRun?:ModelRun):HealthRecord {
     const old=this.record(id); if(old.revision!==expectedRevision) throw new Error('分析期间记录已修改，本次结果未覆盖新内容，请重新分析。'); if(old.deleted) throw new Error('记录已删除');
     // Earlier meal prompts requested only the source id for an identical meal.
     // Supply the display text locally for that response; ordinary analyses still
@@ -274,37 +288,63 @@ export class HealthStore {
     const result=value&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:undefined;
     const copyResult=old.kind==='meal'&&result?.summary===undefined&&typeof result?.copyFromRecordId==='string';
     let a=withActivityOverrides(analysisSchema.parse(copyResult?{...result,summary:'按历史同款餐食复用'}:value),old.analysis?.activityOverrides);
-    if(engine!=='local')a={...a,memoryWarnings:normalized.memoryWarnings};
+    if(engine!=='local'){
+      a={...a,memoryWarnings:normalized.memoryWarnings};
+      if(a.sets){
+        const source=[old.text,...(old.followups??[]).map(f=>f.answer)].join('\n');
+        const sourceSets=old.attachments.length?[]:parseTraining(source)?.sets??[];
+        a.sets=a.sets.map(set=>{
+          const named=sourceSets.filter(s=>s.exercise===set.exercise||s.originalExercise===set.exercise||s.originalExercise===set.originalExercise&&!!set.originalExercise);
+          const missingWeight=named.length>0&&named.every(s=>s.kg===null)&&!/(?:kg|公斤|千克|磅|lb|斤)/i.test(source);
+          return {...set,...(set.loadBasis==='unknown'?{basisSource:'unresolved',confirmed:false}:{}),
+            ...(missingWeight&&set.kg!==null?{kg:null,confirmed:false}:{})};
+        });
+      }
+    }
     // 分析结果里附带的长期记忆（补剂标签、记法、偏好等）：先校验原文依据与数字，再自动保存。
     const pendingChanges=a.memoryChanges??[];
     if(pendingChanges.length){
       const saved:{id:string;text:string;kind:string}[]=[];
       for(const c of pendingChanges){
-        if(c.operation!=='upsert')throw new Error('记录分析只支持保存明确的记忆；停用或目标修改请通过对话或档案完成。');
-        if(c.kind!=='fact'&&c.kind!=='food')throw new Error('分析中的记忆只能提交长期事实或常用食物，本次未保存。');
-        if(!old.text.includes(c.evidenceQuote))throw new Error('分析中的记忆缺少原文依据，本次未保存。');
-        const quoteNums=(c.evidenceQuote.match(/\d+(?:\.\d+)?/g)??[]).map(Number);
-        if(c.kind==='food'){
-          if(!c.food)throw new Error('常用食物缺少名称或营养数据，本次未保存。');
-          const values=[labelBasisOf(c.food).quantity,c.food.perServing.kcal,c.food.perServing.protein,c.food.perServing.carbs,c.food.perServing.fat];
-          if(values.some(v=>!quoteNums.includes(v)))throw new Error('常用食物的数字必须来自记录原文，本次未保存。');
-          if(!normalizeFoodName(c.evidenceQuote).includes(normalizeFoodName(c.food.name)))throw new Error('常用食物的名称必须来自记录原文，本次未保存。');
-          const memory=this.saveMemory({kind:'food',text:foodText(c.food),topicKey:c.key,subject:c.subject,food:c.food,startsAt:old.occurredAt,expiresAt:null,sourceIds:[id],evidence:[{quote:c.evidenceQuote,origin:'record',recordId:id,recordRevision:old.revision+1,at:old.occurredAt}],active:true,confirmed:true});
-          saved.push({id:memory.id,text:memory.text,kind:memory.kind});
-        }else{
-          if(!c.text)throw new Error('分析中的长期事实缺少内容，本次未保存。');
-          if((c.text.match(/\d+(?:\.\d+)?/g)??[]).some(n=>!quoteNums.includes(Number(n))))throw new Error('分析中的记忆出现了原文未提供的数字，本次未保存。');
-          const evidence:NonNullable<Memory['evidence']>=[{quote:c.evidenceQuote,origin:'record',recordId:id,recordRevision:old.revision+1,at:old.occurredAt}];
-          const topic=memoryTopic(c.text,c.key),prior=this.memoriesAt(new Date(old.occurredAt)).find(m=>m.topicKey===topic&&m.subject===c.subject&&m.kind==='fact');
-          if(topic==='recording.training_notation'&&!Object.keys(detectTrainingNotation(c.evidenceQuote)).length)throw new Error('记法更新缺少明确的原话依据，未保存。');
-          const content=topic==='recording.training_notation'?mergeTrainingNotation(prior,{text:c.evidenceQuote,evidence}):{text:c.text,evidence};
-          const memory=this.saveMemory({kind:'fact',...content,topicKey:topic,subject:c.subject,startsAt:old.occurredAt,expiresAt:null,sourceIds:[...new Set([id,...content.evidence.flatMap(e=>e.recordId?[e.recordId]:[])])],active:true,confirmed:true});
-          saved.push({id:memory.id,text:memory.text,kind:memory.kind});
+        try{
+          if(c.operation!=='upsert')throw new MemoryCandidateError('记录分析只支持保存明确的记忆；停用或目标修改请通过对话或档案完成。');
+          if(c.kind!=='fact'&&c.kind!=='food')throw new MemoryCandidateError('分析中的记忆只能提交长期事实或常用食物，本次未保存。');
+          if(!old.text.includes(c.evidenceQuote))throw new MemoryCandidateError('引用没有出现在本次原文中');
+          if(c.kind!=='food'&&!isPersonalEvidence(old.text,c.evidenceQuote))throw new MemoryCandidateError('引用来自转述或截图，缺少本人确认');
+          const quoteNums=(c.evidenceQuote.match(/\d+(?:\.\d+)?/g)??[]).map(Number);
+          if(c.kind==='food'){
+            if(!c.food)throw new MemoryCandidateError('常用食物缺少名称或营养数据，本次未保存。');
+            const values=[labelBasisOf(c.food).quantity,c.food.perServing.kcal,c.food.perServing.protein,c.food.perServing.carbs,c.food.perServing.fat];
+            if(values.some(v=>!quoteNums.includes(v)))throw new MemoryCandidateError('常用食物的数字必须来自记录原文，本次未保存。');
+            if(!normalizeFoodName(c.evidenceQuote).includes(normalizeFoodName(c.food.name)))throw new MemoryCandidateError('常用食物的名称必须来自记录原文，本次未保存。');
+            const existing=this.memories().find(m=>m.kind==='food'&&m.food&&foodProductId(m.food)===foodProductId(c.food!));
+            const memory=this.saveMemory({kind:'food',text:foodText(c.food),topicKey:c.key,subject:c.subject,food:c.food,startsAt:old.occurredAt,expiresAt:null,sourceIds:[id],evidence:[{quote:c.evidenceQuote,origin:'record',recordId:id,recordRevision:old.revision+1,at:old.occurredAt}],active:true,confirmed:true},existing?.id);
+            saved.push({id:memory.id,text:memory.text,kind:memory.kind});
+          }else{
+            if(!c.text)throw new MemoryCandidateError('分析中的长期事实缺少内容，本次未保存。');
+            if((c.text.match(/\d+(?:\.\d+)?/g)??[]).some(n=>!quoteNums.includes(Number(n))))throw new MemoryCandidateError('分析中的记忆出现了原文未提供的数字，本次未保存。');
+            const evidence:NonNullable<Memory['evidence']>=[{quote:c.evidenceQuote,origin:'record',recordId:id,recordRevision:old.revision+1,at:old.occurredAt}];
+            const topic=memoryTopic(c.text,c.key),prior=this.memoriesAt(new Date(old.occurredAt)).find(m=>m.topicKey===topic&&m.subject===c.subject&&m.kind==='fact');
+            if(topic==='recording.training_notation'&&!Object.keys(detectTrainingNotation(c.evidenceQuote)).length)throw new MemoryCandidateError('记法更新缺少明确的原话依据，未保存。');
+            const content=topic==='recording.training_notation'?mergeTrainingNotation(prior,{text:c.evidenceQuote,evidence}):{text:c.text,evidence};
+            const memory=this.saveMemory({kind:'fact',...content,topicKey:topic,subject:c.subject,startsAt:old.occurredAt,expiresAt:null,sourceIds:[...new Set([id,...content.evidence.flatMap(e=>e.recordId?[e.recordId]:[])])],active:true,confirmed:true});
+            saved.push({id:memory.id,text:memory.text,kind:memory.kind});
+          }
+        }catch(error){
+          if(engine==='local'||!(error instanceof MemoryCandidateError))throw error;
+          normalized.memoryWarnings.push('已跳过附带记忆：'+error.message);
         }
       }
       a={...a,memoryChanges:[],memoryReceipt:saved};
     }
     // 明确说“和某天哪一餐一样”时，食材与分量整份复制，本地重新计算营养；模型的临时估算不采用。
+    const changedPortion=engine!=='local'&&a.copyFromRecordId&&/(?:但|改成|改为|这次).{0,20}(?:半|少|多|换|去掉|不加|没吃)/.test(old.text);
+    if(changedPortion){
+      a={...a,copyFromRecordId:undefined,...(!a.ingredients?.length?{questions:['和上次相比，哪些食材或分量有变化？']}: {})};
+    }
+    const mealClarification=old.kind==='meal'&&engine!=='local'&&!a.ingredients?.length&&!a.copyFromRecordId&&
+      /照旧|一样|同上|同款|相同/.test(old.text)?a.questions[0]:undefined;
+    if(mealClarification&&old.analysis?.ingredients?.length)a={...a,ingredients:old.analysis.ingredients};
     if(a.copyFromRecordId){
       let source;try{source=this.record(a.copyFromRecordId);}catch{throw new Error('引用的那餐记录不存在，请换一条或直接描述这餐。');}
       if(Date.parse(source.occurredAt)>Date.parse(old.occurredAt))throw new Error('不能使用发生日期之后的餐食作历史依据');
@@ -323,10 +363,11 @@ export class HealthStore {
       if(old.kind==='meal')a={...a,questions:this.catalog.mealQuestions(a.ingredients!,a.questions)};
     }
     const calc:Partial<ReturnType<FoodCatalog['calculate']>>=a.ingredients?this.catalog.calculate(a.ingredients):{};
-    if(old.kind==='meal'&&engine!=='local'&&(!a.ingredients?.length||('unmatched' in calc&&calc.unmatched?.length))){const detail=calc.unmatched?.slice(0,6).join('、')||'模型未返回可计算的食材';throw new Error(`食材暂时不能合计：${detail}。原记录已保留，请核对计量单位或营养估算依据。`);}
+    if(old.kind==='meal'&&engine!=='local'&&!mealClarification&&(!a.ingredients?.length||('unmatched' in calc&&calc.unmatched?.length))){const detail=calc.unmatched?.slice(0,6).join('、')||'模型未返回可计算的食材';throw new Error(`食材暂时不能合计：${detail}。原记录已保留，请核对计量单位或营养估算依据。`);}
+    if(mealClarification)a={...a,questions:[mealClarification]};
     const proposed=(a.memories??[]).map(m=>memoryInputSchema.parse({kind:m.kind,text:m.text,startsAt:old.occurredAt,expiresAt:m.kind==='state'?(m.expiresAt??new Date(Date.parse(old.occurredAt)+7*86400000).toISOString()):null,sourceIds:[id],evidence:[old.text.includes(m.text)?{quote:m.text,origin:'record',recordId:id,recordRevision:old.revision+1,at:old.occurredAt}:{quote:'',origin:'unknown'}],active:true,confirmed:false}));
-    const analysis:Analysis=normalizeAnalysis({...a,...calc,engine,at:iso()},old.text,this.exerciseAliases(),this.exerciseRules());
-    const r=this.commitRevision(old,{...old,analysis,analysisPending:false,analysisError:undefined,analysisAttemptedRevision:old.revision+1,status:old.kind==='meal'&&(!a.ingredients?.length||('unmatched' in calc&&calc.unmatched?.length))?'pending':a.questions.length?'needs_info':'ready'},{skipInvalidate:analysis.memoryReceipt?.map(m=>m.id)??[]});
+    const analysis:Analysis=normalizeAnalysis({...a,...calc,engine,...(engine!=='local'&&modelRun?{modelRun}:{}),at:iso()},old.text,this.exerciseAliases(),this.exerciseRules());
+    const r=this.commitRevision(old,{...old,analysis,analysisPending:false,analysisError:undefined,analysisAttemptedRevision:old.revision+1,status:mealClarification?'needs_info':old.kind==='meal'&&(!a.ingredients?.length||('unmatched' in calc&&calc.unmatched?.length))?'pending':a.questions.length?'needs_info':'ready'},{skipInvalidate:analysis.memoryReceipt?.map(m=>m.id)??[]});
     for(const m of proposed) this.saveMemory(m);
     return r;
   }
@@ -431,10 +472,10 @@ export class HealthStore {
   saveMemory(input:unknown,id?:string):Memory {
     const p=memoryInputSchema.parse(input);if(p.kind==='fact'&&!p.confirmed)throw new Error('长期事实需要来自你的确认');p.topicKey=memoryTopic(p.text,p.topicKey);if(p.kind==='fact'&&/这周|本周|这几天|暂时/.test(p.text)){p.kind='state';p.expiresAt??=new Date(Date.parse(p.startsAt)+7*86400000).toISOString();} if(p.kind==='fact'&&!p.confirmed) throw new Error('长期事实需要来自你的确认');
     p.sourceIds.forEach(i=>this.record(i));
-    const all=this.memories();const old=id?all.find(m=>m.id===id):(p.topicKey?all.find(m=>memoryTopic(m.text,m.topicKey)===p.topicKey&&m.subject===p.subject&&m.kind===p.kind):undefined); if(id&&!old) throw new Error('未找到这条记忆');
+    const all=this.memories();const old=id?all.find(m=>m.id===id):(p.kind!=='food'&&p.topicKey?all.find(m=>memoryTopic(m.text,m.topicKey)===p.topicKey&&m.subject===p.subject&&m.kind===p.kind):undefined); if(id&&!old) throw new Error('未找到这条记忆');
     if(p.kind==='food'){
+      if(!p.topicKey&&old?.topicKey)p.topicKey=memoryTopic(p.text,old.topicKey);
       if(!p.food) throw new Error('常用食物需要名称、每份克数和营养数据');
-      const name=normalizeFoodName(p.food.name);
       if(all.some(m=>m.id!==old?.id&&m.kind==='food'&&m.food&&foodProductId(m.food)===foodProductId(p.food!))) throw new Error('已有同名常用食物，请直接编辑那一条。');
     } else if(!old){
       const text=normalizeFoodName(p.text);
@@ -446,12 +487,13 @@ export class HealthStore {
   foodPresets(at=new Date()):FoodPreset[]{return this.memoriesAt(at).filter(m=>m.kind==='food'&&m.food&&validMemory(m,at)).map(m=>m.food!);}
   dishDefinitions():DishDefinition[]{return this.getConfig<DishDefinition[]>('dishDefinitions')??[];}
   commonDishes(at?:Date):CommonDish[]{
-    const records=this.records().filter(r=>r.kind==='meal'&&r.status==='ready'&&r.analysis?.ingredients?.length&&r.analysis.macros&&!r.analysis.unmatched?.length&&(!at||Date.parse(r.occurredAt)<=+at));
+    const records=this.records().filter(r=>r.kind==='meal'&&(!at||Date.parse(r.occurredAt)<=+at));
     return groupDishRecords(records,this.dishDefinitions()).flatMap(group=>{
       const days=new Set(group.records.map(r=>journalDay(r.occurredAt,this.getSettings().timezone))).size;
       if(!group.definition&&days<2)return [];
-      const latest=group.records.at(-1)!;
-      return [{id:group.id,name:group.name,aliases:[...new Set([...(group.definition?.aliases??[]),...group.records.map(r=>primaryDishName(r.text)).filter((v):v is string=>!!v)])],recordIds:group.records.map(r=>r.id),days,latestAt:latest.occurredAt,latestRecordId:latest.id,template:structuredClone(latest.analysis!.ingredients!),macros:structuredClone(latest.analysis!.macros!),active:group.definition?.active!==false,auto:!group.definition}];
+      const latest=group.records.findLast(r=>r.analysis?.ingredients?.length&&r.analysis.macros&&!r.analysis.unmatched?.length);
+      if(!latest)return [];
+      return [{id:group.id,name:group.name,...(group.definition?.brand?{brand:group.definition.brand}:{}),aliases:[...new Set([...(group.definition?.aliases??[]),...group.records.map(r=>primaryDishName(r.text)).filter((v):v is string=>!!v)])],recordIds:group.records.map(r=>r.id),days,latestAt:latest.occurredAt,latestRecordId:latest.id,template:structuredClone(latest.analysis!.ingredients!),macros:structuredClone(latest.analysis!.macros!),active:group.definition?.active!==false,auto:!group.definition}];
     }).sort((a,b)=>b.latestAt.localeCompare(a.latestAt));
   }
   recordsWithDishes(includeDeleted=false):HealthRecord[]{
@@ -461,13 +503,14 @@ export class HealthStore {
   saveDishes(values:unknown[]){return this.transaction(()=>values.map(value=>this.saveDish(value)));}
   saveDish(value:unknown){
     const p=dishInputSchema.parse(value),definitions=this.dishDefinitions(),derived=this.commonDishes();
-    const wantedId=p.id??(p.name?stableDishId(p.name):undefined),base=wantedId?definitions.find(d=>d.id===wantedId)??derived.find(d=>d.id===wantedId):undefined;
+    const wantedId=p.id??(p.name?stableDishId(p.name,p.brand):undefined),base=wantedId?definitions.find(d=>d.id===wantedId)??derived.find(d=>d.id===wantedId):undefined;
     if(p.id&&!base)throw new Error('未找到这组餐食，请刷新后重试。');
     const name=p.name??base?.name;if(!name)throw new Error('请填写这款餐食的名称。');
-    const id=p.id??stableDishId(name),recordIds=[...new Set(p.recordIds??base?.recordIds??[])];if(!recordIds.length)throw new Error('至少需要一条已有餐食记录作为依据。');
+    const brand=p.brand===undefined?base?.brand:p.brand||undefined;
+    const id=p.id??stableDishId(name,brand),recordIds=[...new Set(p.recordIds??base?.recordIds??[])];if(!recordIds.length)throw new Error('至少需要一条已有餐食记录作为依据。');
     const records=recordIds.map(id=>this.record(id));if(records.some(r=>r.kind!=='meal'))throw new Error('只有饮食记录可归为同款餐食。');
     const aliases=[...new Set(p.aliases??[...(base?.aliases??[]),...(base?.name&&base.name!==name?[base.name]:[]),...records.map(r=>primaryDishName(r.text)).filter((v):v is string=>!!v)])];
-    const next:DishDefinition={id,name,aliases,recordIds,recordKeys:Object.fromEntries(records.map(r=>[r.id,dishRecordKey(r)])),active:p.active??base?.active??true};
+    const next:DishDefinition={id,name,...(brand?{brand}:{}),aliases,recordIds,recordKeys:Object.fromEntries(records.map(r=>[r.id,dishRecordKey(r)])),active:p.active??base?.active??true};
     const checked=dishDefinitionsSchema.parse([...definitions.filter(d=>d.id!==id),next]);
     return this.transaction(()=>{this.setConfig('dishDefinitions',checked);this.refreshAutomaticMemories();return this.commonDishes().find(d=>d.id===id)??next;});
   }
@@ -477,13 +520,16 @@ export class HealthStore {
     if(!ignored.includes(name))this.setConfig('ignoredFoodCandidates',[...ignored,name]);
     return {ignored:this.ignoredFoodCandidates()};
   }
-  // 反复出现的食材只作为“可加入常用食物”的候选，不自动写入；用户确认后才成为标签数据。
+  // 档案中的推荐只统计独立食物；餐食配菜和烹调油不因出现在其他记录中就成为独立食品。
   foodCandidates(includeDishComponents=true):FoodCandidate[]{
-    const presets=this.foodPresets(),ignored=new Set(this.ignoredFoodCandidates()),wholeRecords=new Set(this.commonDishes().filter(d=>d.active).flatMap(d=>d.recordIds)),groups=new Map<string,{name:string;meals:Set<string>;days:Set<string>;latestAt:string;grams:Set<string>;per100g:FoodCandidate['per100g']|null;source:FoodCandidate['source']}>();
-    for(const r of this.records().filter(x=>!x.deleted&&x.kind==='meal'&&(includeDishComponents||!wholeRecords.has(x.id)))){
+    const presets=this.foodPresets(),ignored=new Set(this.ignoredFoodCandidates()),records=this.records().filter(x=>!x.deleted&&x.kind==='meal'),wholeRecords=new Set(includeDishComponents?[]:this.commonDishes().flatMap(d=>d.recordIds)),groups=new Map<string,{name:string;meals:Set<string>;days:Set<string>;latestAt:string;grams:Set<string>;per100g:FoodCandidate['per100g']|null;source:FoodCandidate['source']}>();
+    // Older analyses may lack roles. Keep all known dish ingredients, including those absent from its latest template.
+    const dishIngredients=new Set(records.filter(r=>wholeRecords.has(r.id)).flatMap(r=>(r.analysis?.ingredients??[]).map(i=>normalizeFoodName(i.name))));
+    for(const r of records.filter(x=>includeDishComponents||!wholeRecords.has(x.id))){
       for(const ing of r.analysis?.ingredients??[]){
         if(!ing.nutrition&&ing.foodId===null)continue;
         const key=normalizeFoodName(ing.name);if(!key||ignored.has(ing.name))continue;
+        if(!includeDishComponents&&(ing.excludedFromTotal||ing.role==='component'||ing.role==='added_fat'||ing.role!=='whole_dish'&&(ing.compositionGroup||dishIngredients.has(key))))continue;
         const group=groups.get(key)??{name:ing.name,meals:new Set(),days:new Set(),latestAt:'',grams:new Set(),per100g:null,source:'estimate' as FoodCandidate['source']};
         group.meals.add(r.id);group.days.add(journalDay(r.occurredAt,this.getSettings().timezone));
         if(r.occurredAt>=group.latestAt){
@@ -626,47 +672,61 @@ export class HealthStore {
   completeChat(reply:Message,changes:MemoryChange[],user:Message,expected:Memory[],expectedGoals:Settings['goals'],energyProposal?:{value:{kcal:number;reason:string};hash:string}) {
     const updates=changes.map(c=>{const p=memoryChangeSchema.parse(c);return {...p,subject:p.subject??(/赶课|考试|期中|期末/.test(p.evidenceQuote)&&/^training\./.test(p.key)?'study_busy':undefined),...(p.kind==='fact'&&p.operation==='upsert'&&/这周|本周|这几天|暂时/.test(p.evidenceQuote)?{kind:'state' as const}:{}),key:memoryTopic(p.text??p.evidenceQuote,p.key)!};});const current=this.memories();
     const changed:{id:string;before:Memory|null;after:Memory}[]=[];let goals={...expectedGoals};
+    const warnings=[...(reply.memoryWarnings??[])];
     for(const c of updates){
-      if(!user.text.includes(c.evidenceQuote))throw new Error('记忆更新缺少你的原话依据，未保存。');
-      const explicit=/记住|记下|记一下|记录一下|保存|添加|加一个|更新|更正|改成|改为|改一下|纠正|以后|默认|常用食物|补剂|我(?:不)?(?:喜欢|习惯|偏好|希望|目标|现在|最近|这周|目前|通常|一般|经常)|不再|忘掉|停用|不用再|最多|每次/.test(c.evidenceQuote)||/^\s*(?:请|帮我)?(?:记住|记下|记一下|记录一下|保存)/.test(user.text)||/(?:添加|加一个|更新|录入|设置).{0,12}(?:记忆|常用食物|食物|补剂|偏好|档案)/.test(user.text);
-      // 自动记忆：常用食物带标签数字即可直接保存；长期主题的事实用户明确陈述时保存；临时状态/待验证判断写入短期记忆。
-      const durableDomains=/^(communication|eating|training|nutrition|food|supplement|meal|diet|recording|health|profile)\./;
-      const looksQuestion=/[？?]|吗|多少|怎么|如何|是否/.test(c.evidenceQuote);
-      const labelLike=/(每\s*100\s*g|每100克|每份|每勺|每袋|每片)/i.test(c.evidenceQuote)&&/\d/.test(c.evidenceQuote);
-      const durableAuto=c.kind==='food'||labelLike||(durableDomains.test(c.key)&&!/^\s*$/.test(c.evidenceQuote)&&(/我|我的|常用|固定|每天|每份|以后|默认/.test(c.evidenceQuote))&&!looksQuestion);
-      const ephemeral=c.kind==='state'||c.kind==='hypothesis';
-      if(!explicit&&!durableAuto&&!ephemeral)throw new Error('没有识别到可长期保存的信息或原话依据，未改动档案；可以说“记住：……”或补充更明确的说法。');
-      if(c.kind==='food'){
-        if(!c.food)throw new Error('常用食物需要名称、每份克数和四项营养，未保存。');
-        const foodNums=[labelBasisOf(c.food).quantity,c.food.perServing.kcal,c.food.perServing.protein,c.food.perServing.carbs,c.food.perServing.fat];
-        const quoteNums=(c.evidenceQuote.match(/\d+(?:\.\d+)?/g)??[]).map(Number);
-        if(foodNums.some(v=>!quoteNums.includes(v)))throw new Error('常用食物的数字必须来自你的原话，未保存。');
-        if(!normalizeFoodName(c.evidenceQuote).includes(normalizeFoodName(c.food.name)))throw new Error('常用食物的名称必须来自你的原话，未保存。');
+      try{
+        if(!user.text.includes(c.evidenceQuote))throw new MemoryCandidateError('引用没有出现在本次原文中');
+        if(c.kind!=='food'&&!isPersonalEvidence(user.text,c.evidenceQuote))throw new MemoryCandidateError('引用来自转述或截图，缺少本人确认');
+        const explicit=/记住|记下|记一下|记录一下|保存|添加|加一个|更新|更正|改成|改为|改一下|纠正|以后|默认|常用食物|补剂|我(?:不)?(?:喜欢|习惯|偏好|希望|目标|现在|最近|这周|目前|通常|一般|经常)|不再|忘掉|停用|不用再|最多|每次/.test(c.evidenceQuote)||/^\s*(?:请|帮我)?(?:记住|记下|记一下|记录一下|保存)/.test(user.text)||/(?:添加|加一个|更新|录入|设置).{0,12}(?:记忆|常用食物|食物|补剂|偏好|档案)/.test(user.text);
+        // 自动记忆：常用食物带标签数字即可直接保存；长期主题的事实用户明确陈述时保存；临时状态/待验证判断写入短期记忆。
+        const durableDomains=/^(communication|eating|training|nutrition|food|supplement|meal|diet|recording|health|profile)\./;
+        const looksQuestion=/[？?]|吗|多少|怎么|如何|是否/.test(c.evidenceQuote);
+        const labelLike=/(每\s*100\s*g|每100克|每份|每勺|每袋|每片)/i.test(c.evidenceQuote)&&/\d/.test(c.evidenceQuote);
+        const durableAuto=c.kind==='food'||labelLike||(durableDomains.test(c.key)&&!/^\s*$/.test(c.evidenceQuote)&&(/我|我的|常用|固定|每天|每份|以后|默认/.test(c.evidenceQuote))&&!looksQuestion);
+        const ephemeral=c.kind==='state'||c.kind==='hypothesis';
+        if(!explicit&&!durableAuto&&!ephemeral)throw new MemoryCandidateError('没有识别到可长期保存的信息或原话依据，未改动档案；可以说“记住：……”或补充更明确的说法。');
+        if(c.kind==='food'){
+          if(!c.food)throw new MemoryCandidateError('常用食物需要名称、每份克数和四项营养，未保存。');
+          const foodNums=[labelBasisOf(c.food).quantity,c.food.perServing.kcal,c.food.perServing.protein,c.food.perServing.carbs,c.food.perServing.fat];
+          const quoteNums=(c.evidenceQuote.match(/\d+(?:\.\d+)?/g)??[]).map(Number);
+          if(foodNums.some(v=>!quoteNums.includes(v)))throw new MemoryCandidateError('常用食物的数字必须来自你的原话，未保存。');
+          if(!normalizeFoodName(c.evidenceQuote).includes(normalizeFoodName(c.food.name)))throw new MemoryCandidateError('常用食物的名称必须来自你的原话，未保存。');
+        }
+        const before=c.targetId?current.find(m=>m.id===c.targetId):(c.kind==='food'&&c.food?current.find(m=>m.kind==='food'&&m.food&&foodProductId(m.food)===foodProductId(c.food!)):current.find(m=>memoryTopic(m.text,m.topicKey)===c.key&&m.kind===(c.kind??'fact')&&m.subject===c.subject));
+        if(c.targetId&&!before)throw new Error('要更新的记忆已不存在。');
+        if(before){const snapshot=expected.find(m=>m.id===before.id);if(!snapshot||JSON.stringify(snapshot)!==JSON.stringify(before))throw new Error('记忆在回答期间已变化，本次未覆盖，请重新提出修改。');}
+        const duplicate=changed.some(x=>x.id===before?.id||(c.kind==='food'&&c.food
+          ?x.after.kind==='food'&&x.after.food&&foodProductId(x.after.food)===foodProductId(c.food!)
+          :x.after.kind===c.kind&&x.after.topicKey===c.key&&x.after.subject===c.subject));
+        if(duplicate)throw new MemoryCandidateError('同一条记忆收到重复更新，未保存。');
+        if(c.operation==='deactivate'){
+          if(!before)throw new MemoryCandidateError('尚未找到要停用的记忆，请明确是哪一条。');
+          changed.push({id:before.id,before,after:{...before,revision:memoryRevision(before)+1,updatedAt:iso(),active:false,autoManaged:false,sourceMessageIds:[...(before.sourceMessageIds??[]),user.id]}});continue;
+        }
+        if(c.split&&(c.key!=='training.split'||c.kind!=='fact'||!/分化|顺序|轮转|循环/.test(c.evidenceQuote)))throw new MemoryCandidateError('训练顺序需要明确的顺序设置，未改动轮转。');
+        if(!c.text&&c.kind!=='food')throw new MemoryCandidateError('记忆内容为空，未保存。');
+        const text=c.kind==='food'?foodText(c.food!):c.text!;
+        const quoteNumbers:string[]=c.evidenceQuote.match(/\d+(?:\.\d+)?/g)??[];if((text.match(/\d+(?:\.\d+)?/g)??[]).some(n=>!quoteNumbers.includes(n)))throw new MemoryCandidateError('记忆中出现了原话未提供的数字，未保存。');
+        if(c.operation==='set_goal'){
+          if(!/目标|训练安排/.test(c.evidenceQuote)||!/改|更新|设|希望|目标是/.test(c.evidenceQuote))throw new MemoryCandidateError('修改目标需要你的明确表达。');
+          if(c.key!=='goals.goal'&&c.key!=='goals.training')throw new MemoryCandidateError('这类目标请在我的档案中设置。');
+        }
+        const temporal=temporalScope(c.evidenceQuote,user.createdAt,this.getSettings().timezone);
+        const startsAt=c.kind==='state'?temporal.occurredAt:user.createdAt,expiresAt=c.kind==='state'?(temporal.expiresAt??c.expiresAt):null;
+        const evidence:NonNullable<Memory['evidence']>=[{quote:c.evidenceQuote,origin:'user',messageId:user.id,at:user.createdAt}];
+        if(c.key==='recording.training_notation'&&!Object.keys(detectTrainingNotation(c.evidenceQuote)).length)throw new MemoryCandidateError('记法更新缺少明确的原话依据，未保存。');
+        const content=c.key==='recording.training_notation'?mergeTrainingNotation(before,{text:c.evidenceQuote,evidence}):{text,evidence};
+        const checked=memoryInputSchema.parse({kind:c.kind??'fact',text:content.text,startsAt,expiresAt,sourceIds:[...new Set(content.evidence.flatMap(e=>e.recordId?[e.recordId]:[]))],active:true,confirmed:c.kind!=='hypothesis',...(c.food?{food:c.food}:{})});
+        const id=before?.id??randomUUID();const after:Memory={...before,...checked,id,subject:c.subject??before?.subject,versionStartsAt:c.kind==='state'?startsAt:user.createdAt,recordedAt:user.createdAt,revision:before?memoryRevision(before)+1:1,updatedAt:iso(),supersedesRevision:before?memoryRevision(before):undefined,evidence:content.evidence,topicKey:c.key,sourceMessageIds:[...(before?.sourceMessageIds??[]),user.id].slice(-20),autoManaged:false,stale:false,...(c.split?{policy:{split:c.split}}:{})};
+        if(c.operation==='set_goal'){
+          if(c.key==='goals.goal')goals.goal=text;
+          else goals.training=text;
+        }
+        changed.push({id,before:before??null,after});
+      }catch(error){
+        if(!(error instanceof MemoryCandidateError))throw error;
+        warnings.push('已跳过附带记忆：'+error.message);
       }
-      const before=c.targetId?current.find(m=>m.id===c.targetId):(c.kind==='food'&&c.food?current.find(m=>m.kind==='food'&&m.food&&foodProductId(m.food)===foodProductId(c.food!)):undefined)??current.find(m=>memoryTopic(m.text,m.topicKey)===c.key&&m.kind===(c.kind??'fact')&&m.subject===c.subject);
-      if(c.targetId&&!before)throw new Error('要更新的记忆已不存在。');
-      if(before){const snapshot=expected.find(m=>m.id===before.id);if(!snapshot||JSON.stringify(snapshot)!==JSON.stringify(before))throw new Error('记忆在回答期间已变化，本次未覆盖，请重新提出修改。');}
-      if(changed.some(x=>x.id===before?.id||x.after.topicKey===c.key&&x.after.subject===c.subject))throw new Error('同一条记忆收到重复更新，未保存。');
-      if(c.operation==='deactivate'){
-        if(!before)throw new Error('尚未找到要停用的记忆，请明确是哪一条。');
-        changed.push({id:before.id,before,after:{...before,revision:memoryRevision(before)+1,updatedAt:iso(),active:false,autoManaged:false,sourceMessageIds:[...(before.sourceMessageIds??[]),user.id]}});continue;
-      }
-      if(c.split&&(c.key!=='training.split'||c.kind!=='fact'||!/分化|顺序|轮转|循环/.test(c.evidenceQuote)))throw new Error('训练顺序需要明确的顺序设置，未改动轮转。');
-      if(!c.text&&c.kind!=='food')throw new Error('记忆内容为空，未保存。');
-      const text=c.kind==='food'?foodText(c.food!):c.text!;
-      const quoteNumbers:string[]=c.evidenceQuote.match(/\d+(?:\.\d+)?/g)??[];if((text.match(/\d+(?:\.\d+)?/g)??[]).some(n=>!quoteNumbers.includes(n)))throw new Error('记忆中出现了原话未提供的数字，未保存。');
-      if(c.operation==='set_goal'){
-        if(!/目标|训练安排/.test(c.evidenceQuote)||!/改|更新|设|希望|目标是/.test(c.evidenceQuote))throw new Error('修改目标需要你的明确表达。');
-        if(c.key==='goals.goal')goals.goal=text;else if(c.key==='goals.training')goals.training=text;else throw new Error('这类目标请在我的档案中设置。');
-      }
-      const temporal=temporalScope(c.evidenceQuote,user.createdAt,this.getSettings().timezone);
-      const startsAt=c.kind==='state'?temporal.occurredAt:user.createdAt,expiresAt=c.kind==='state'?(temporal.expiresAt??c.expiresAt):null;
-      const evidence:NonNullable<Memory['evidence']>=[{quote:c.evidenceQuote,origin:'user',messageId:user.id,at:user.createdAt}];
-      if(c.key==='recording.training_notation'&&!Object.keys(detectTrainingNotation(c.evidenceQuote)).length)throw new Error('记法更新缺少明确的原话依据，未保存。');
-      const content=c.key==='recording.training_notation'?mergeTrainingNotation(before,{text:c.evidenceQuote,evidence}):{text,evidence};
-      const checked=memoryInputSchema.parse({kind:c.kind??'fact',text:content.text,startsAt,expiresAt,sourceIds:[...new Set(content.evidence.flatMap(e=>e.recordId?[e.recordId]:[]))],active:true,confirmed:c.kind!=='hypothesis',...(c.food?{food:c.food}:{})});
-      const id=before?.id??randomUUID();const after:Memory={...before,...checked,id,subject:c.subject??before?.subject,versionStartsAt:c.kind==='state'?startsAt:user.createdAt,recordedAt:user.createdAt,revision:before?memoryRevision(before)+1:1,updatedAt:iso(),supersedesRevision:before?memoryRevision(before):undefined,evidence:content.evidence,topicKey:c.key,sourceMessageIds:[...(before?.sourceMessageIds??[]),user.id].slice(-20),autoManaged:false,stale:false,...(c.split?{policy:{split:c.split}}:{})};
-      changed.push({id,before:before??null,after});
     }
     if(updates.some(c=>c.operation==='set_goal')&&JSON.stringify(this.getSettings().goals)!==JSON.stringify(expectedGoals))throw new Error('目标已在回答期间修改，本次未覆盖。');
     const receipt=changed.length?{changed,...(JSON.stringify(goals)!==JSON.stringify(expectedGoals)?{beforeGoals:expectedGoals,afterGoals:goals}:{})}:undefined;
@@ -675,12 +735,12 @@ export class HealthStore {
       this.invalidateMemoryAnswers();
       if(receipt?.afterGoals)this.setSettings({...this.getSettings(),goals});
       const proposal=energyProposal?this.energy.createProposal(energyProposal.value,reply.id,energyProposal.hash):undefined;
-      const complete={...reply,memoryDependency:reply.memoryDependency?.map(d=>{const updated=changed.find(c=>c.id===d.id);return updated?memoryDependency(updated.after):d;}),memoryReceipt:receipt,...(proposal?{goalProposalId:proposal.id}:{})};this.putMessage(complete);return complete;
+      const complete={...reply,memoryWarnings:warnings,memoryDependency:reply.memoryDependency?.map(d=>{const updated=changed.find(c=>c.id===d.id);return updated?memoryDependency(updated.after):d;}),memoryReceipt:receipt,...(proposal?{goalProposalId:proposal.id}:{})};this.putMessage(complete);return complete;
     });
   }
   undoChatMemory(messageId:string){
     const message=this.messages().find(m=>m.id===messageId),receipt=message?.memoryReceipt;if(!message||!receipt||receipt.undone)throw new Error('这次记忆更新已撤销或不存在。');
-    for(const c of receipt.changed){const current=this.memories().find(m=>m.id===c.id);const effective=(value:Memory|undefined)=>{if(!value)return '';const {revision,updatedAt,supersedesRevision,versionStartsAt,...rest}=value;return JSON.stringify(rest);};if(effective(current)!==effective(c.after))throw new Error('记忆已被后续更新，请在我的档案中修改，避免覆盖新内容。');}
+    for(const c of receipt.changed){const current=this.memories().find(m=>m.id===c.id);const effective=(value:Memory|undefined)=>{if(!value)return '';const {revision,updatedAt,supersedesRevision,versionStartsAt,...rest}=value;return JSON.stringify({...rest,topicKey:memoryTopic(rest.text,rest.topicKey)});};if(effective(current)!==effective(c.after))throw new Error('记忆已被后续更新，请在我的档案中修改，避免覆盖新内容。');}
     if(receipt.afterGoals&&JSON.stringify(this.getSettings().goals)!==JSON.stringify(receipt.afterGoals))throw new Error('目标已有后续变化，请在我的档案中调整。');
     return this.transaction(()=>{for(const c of receipt.changed){const restored={...(c.before??{...c.after,active:false}),revision:memoryRevision(c.after)+1,updatedAt:iso()};this.db.prepare('INSERT INTO revisions(entity,id,doc,at) VALUES(?,?,?,?)').run('memory',c.id,JSON.stringify(c.after),iso());this.db.prepare('UPDATE memories SET doc=? WHERE id=?').run(JSON.stringify(restored),c.id);}if(receipt.beforeGoals)this.setSettings({...this.getSettings(),goals:receipt.beforeGoals});this.invalidateMemoryAnswers();this.putMessage({...message,memoryReceipt:{...receipt,undone:true}});});
   }
@@ -815,12 +875,14 @@ export class HealthStore {
       const ids=new Set([...memories.flatMap(m=>m.sourceIds),...[...question.matchAll(/\[记录:([a-zA-Z0-9_-]+)\]/g)].map(m=>m[1])]);
       relevant=all.filter(r=>Date.parse(r.occurredAt)<=+at&&(ids.has(r.id)||long||Date.parse(r.occurredAt)>=+at-days*86400000));
     }
-    const energy=!query.historical&&purpose!=='memory'&&(/能量|热量|消耗|摄入|饮食|吃|蛋白|目标|下一次.*练|下次.*练/.test(question)||purpose==='weekly')?this.energy.chatContext(question,now):undefined;
-    const energyHistory=query.historical&&query.period&&/能量|热量|消耗|摄入|蛋白|目标/.test(question)?Array.from({length:Math.min(31,Math.round((Date.parse(query.period.to)-Date.parse(query.period.from))/86400000)+1)},(_,i)=>this.energy.day(new Date(Date.parse(query.period!.from+'T12:00:00Z')+i*86400000).toISOString().slice(0,10))):undefined;
+    let energyRead:ReturnType<EnergyStore['read']>|undefined;
+    const readEnergy=()=>energyRead??=this.energy.read(all);
+    const energy=!query.historical&&purpose!=='memory'&&(/能量|热量|消耗|摄入|饮食|吃|蛋白|目标|下一次.*练|下次.*练/.test(question)||purpose==='weekly')?this.energy.chatContext(question,now,readEnergy()):undefined;
+    const energyHistory=query.historical&&query.period&&/能量|热量|消耗|摄入|蛋白|目标/.test(question)?Array.from({length:Math.min(31,Math.round((Date.parse(query.period.to)-Date.parse(query.period.from))/86400000)+1)},(_,i)=>this.energy.day(new Date(Date.parse(query.period!.from+'T12:00:00Z')+i*86400000).toISOString().slice(0,10),readEnergy())):undefined;
     const energyIds=new Set([...(energy?[...energy.selected.sources,...energy.days.flatMap(d=>d.sources)]:[]),...(energyHistory?.flatMap(d=>d.sources)??[])].map(s=>s.id));
     const stepQuery=/步数|走了|走多少|步行距离/.test(question)?queryPeriod(question,zone,now,'calendar'):undefined;
     const stepDate=stepQuery?.period?.to??calendarDay(now.toISOString(),zone);
-    const stepEnergy=stepQuery?this.energy.day(stepDate):undefined;
+    const stepEnergy=stepQuery?this.energy.day(stepDate,readEnergy()):undefined;
     const records=relevant.map(r=>({...r,text:sanitizeSource(r.text,blockedFor(undefined,r.id))}));
     const evidenceRecords=[...new Map([...records,...all.filter(r=>energyIds.has(r.id)||stepEnergy?.sources.some(s=>s.id===r.id)).map(r=>({...r,text:sanitizeSource(r.text,blockedFor(undefined,r.id))}))].map(r=>[r.id,r])).values()];
     const historicalRecords=all.filter(r=>Date.parse(r.occurredAt)<=+at);

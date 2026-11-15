@@ -66,6 +66,7 @@ export function resolveLoadBasis(name:string,ctx:BasisContext,rules:ExerciseRule
  const machine=/绳索|器械|蝴蝶机|龙门/.test(name)||MACHINE_ACTIONS.has(name)||ctx.equipment==='绳索'||ctx.equipment==='器械'||ctx.equipment==='蝴蝶机';
  if(total)return {loadBasis:'total',basisSource:'auto'};
  if(dumbbell&&explicit)return {loadBasis:'total',basisSource:'reported'};
+ if(ctx.basisSource==='unresolved'&&ctx.loadBasis==='unknown')return {loadBasis:'unknown',basisSource:'unresolved'};
  if(dumbbell)return {loadBasis:'per_hand',basisSource:'auto'};
  if(machine)return {loadBasis:'machine',basisSource:'auto'};
  if(ctx.kg!==null&&ctx.kg!==undefined)return {loadBasis:'total',basisSource:'auto'};

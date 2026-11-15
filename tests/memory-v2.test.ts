@@ -61,7 +61,7 @@ test('chat can remember a supplement from explicit label numbers, and rejects in
  assert.equal(foods.length,1);assert.equal(foods[0].food!.servingGrams,30);assert.match(foods[0].text!,/测试蛋白粉/);
  const bad=quote; // 模型声称 999kcal，但原话里没有这个数字
  globalThis.fetch=async()=>sse({answerMarkdown:'已记住。',memoryChanges:[{operation:'upsert',key:'supplement.whey',kind:'food',food:preset({perServing:{kcal:999,protein:24,carbs:3,fat:1.5}}),evidenceQuote:bad}]});
- await assert.rejects(()=>svc.chat(bad),/原话/);
+ await svc.chat(bad);assert.match(store.messages().at(-1)!.memoryWarnings![0],/原话/);assert.deepEqual(store.foodPresets()[0].perServing,preset().perServing);
  assert.equal(store.memories().filter(m=>m.kind==='food').length,1);
 });
 

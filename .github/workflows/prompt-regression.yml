@@ -1,0 +1,28 @@
+name: 提示词离线回归
+on:
+  pull_request:
+    paths:
+      - 'electron/ai/**'
+      - 'tests/fixtures/**'
+      - 'tests/prompt-golden.test.ts'
+      - 'scripts/prompt-regression.mjs'
+  push:
+    paths:
+      - 'electron/ai/**'
+      - 'tests/fixtures/**'
+      - 'tests/prompt-golden.test.ts'
+      - 'scripts/prompt-regression.mjs'
+permissions:
+  contents: read
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: node --import tsx --test tests/prompt-golden.test.ts
+      - run: npm run test:prompts

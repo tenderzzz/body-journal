@@ -1,3 +1,4 @@
+import {isPersonalEvidence} from './memory-evidence';
 import { createHash } from 'node:crypto';
 import type { HealthRecord, Memory } from '../../src/shared/types';
 import { normalizeSet,baselineKey,baselineLabel,inferSession } from '../../src/shared/exercises';
@@ -32,7 +33,7 @@ export function automaticMemories(records:HealthRecord[],existing:Memory[]=[],di
   for(const s of r.kind==='training'&&(r.analysis?.training??inferSession(r.text,r.analysis?.sets)).completion==='completed'?(r.analysis?.sets??[]).map(x=>normalizeSet(x)):[])if(s.confirmed&&s.setType!=='warmup'&&!s.classificationNeeded){const k=`${s.exerciseId}:${baselineKey(s)}`;const list=training.get(k)??[];if(!list.includes(r))list.push(r);training.set(k,list);}
   if(r.kind==='meal'&&!namedIds.has(r.id)&&r.analysis?.ingredients?.length&&!r.analysis.unmatched?.length){const k=r.analysis.ingredients.map(ingredientIdentity).sort().join('|');const list=meals.get(k)??[];list.push(r);meals.set(k,list);}
   for(const rawSentence of sentences(r.text)) {
-   const sentence=preferenceStatement(rawSentence);if(!sentence)continue;
+   const sentence=preferenceStatement(rawSentence);if(!sentence||!isPersonalEvidence(r.text,sentence))continue;
    if(isTrainingNotationLine(sentence)){notationStatements.push({record:r,text:sentence});continue;}
    // 补充说明和问答碎片不是长期偏好，避免把“补充：是的；自重”这类句子存成记忆。
    if(/^(补充|更正|纠正)[：:]/.test(rawSentence)||/^(是的|对的|可以|没错|只有|都是)/.test(sentence))continue;
@@ -63,11 +64,11 @@ export function automaticMemories(records:HealthRecord[],existing:Memory[]=[],di
   const all=group.records.filter(r=>r.status==='ready'&&r.analysis?.ingredients?.length&&r.analysis.macros&&!r.analysis.unmatched?.length);
   if(new Set(all.map(r=>localDay(r.occurredAt,zone))).size<2)continue;
   const refs=all.slice(-5),latest=refs.at(-1)!,macros=latest.analysis!.macros!;
-  drafts.push(make(refs,`meal:${group.id}`,'meal',`常吃餐食：${group.name}。已在${new Set(all.map(r=>localDay(r.occurredAt,zone))).size}天的记录中出现；最近一餐的整份估算：能量${macros.kcal.low}–${macros.kcal.high} kcal，蛋白质${macros.protein.low}–${macros.protein.high}g。按整餐归组，实际分量和配菜仍以本次记录为准，重复记录不提高估算可信程度。`,{mealTemplate:latest.analysis!.ingredients,active:group.definition?.active!==false,topicKey:'eating.common_dish',subject:group.id,evidence:refs.map(r=>({quote:r.text.split('\n')[0].slice(0,3000),origin:'record',recordId:r.id,recordRevision:r.revision,at:r.occurredAt}))}));
+  drafts.push(make(refs,`meal:${group.id}`,'meal',`常吃餐食：${group.name}${group.definition?.brand?`（品牌：${group.definition.brand}）`:""}。已在${new Set(all.map(r=>localDay(r.occurredAt,zone))).size}天的记录中出现；最近一餐的整份估算：能量${macros.kcal.low}–${macros.kcal.high} kcal，蛋白质${macros.protein.low}–${macros.protein.high}g。按整餐归组，实际分量和配菜仍以本次记录为准，重复记录不提高估算可信程度。`,{mealTemplate:latest.analysis!.ingredients,active:group.definition?.active!==false,topicKey:'eating.common_dish',subject:group.id,evidence:refs.map(r=>({quote:r.text.split('\n')[0].slice(0,3000),origin:'record',recordId:r.id,recordRevision:r.revision,at:r.occurredAt}))}));
  }
  for(const [k,all] of meals){if(new Set(all.map(r=>localDay(r.occurredAt,zone))).size<2)continue;const distinct=new Map(all.map(r=>[localDay(r.occurredAt,zone),r]));const refs=[...distinct.values()].slice(-5),latest=refs.at(-1)!,items=latest.analysis!.ingredients!;
   drafts.push(make(refs,`meal:${key(k)}`,'meal',`重复记录的餐食：${items.map(i=>i.name).join('、')}。最近 ${refs.length} 天的记录中重复出现；最近分量：${items.map(i=>{const amount=ingredientAmount(i);return `${i.name} ${amount.low}–${amount.high}${FOOD_UNIT_NAMES[amount.unit]}（${i.portionSource==='measured'?'有称量依据':i.portionSource==='reported'?'用户报告':'估计分量'}）`;}).join('，')}。仅作下次估算参照，实际分量仍以新记录为准。`,{mealTemplate:items}));
  }
- for(const [topic,all] of preferences){const refs=all.slice(-5),latest=refs.at(-1)!;const content=sentences(latest.text).map(preferenceStatement).filter((s):s is string=>!!s).filter(s=>((/这周|本周|这几天|暂时/.test(s)?'state:':'')+(memoryTopic(s)??s))===topic).at(-1)??topic;drafts.push(make(refs,`preference:${key(topic)}`,'preference',content,{kind:topic.startsWith('state:')?'state':'fact',expiresAt:topic.startsWith('state:')?new Date(Date.parse(latest.occurredAt)+7*86400000).toISOString():null,confirmed:true,topicKey:memoryTopic(content),startsAt:latest.occurredAt,evidence:[{quote:content,origin:'record',recordId:latest.id,recordRevision:latest.revision,at:latest.occurredAt}]}));}
+ for(const [topic,all] of preferences){const refs=all.slice(-5),latest=refs.at(-1)!;const content=sentences(latest.text).map(preferenceStatement).filter((s):s is string=>!!s&&isPersonalEvidence(latest.text,s)).filter(s=>((/这周|本周|这几天|暂时/.test(s)?'state:':'')+(memoryTopic(s)??s))===topic).at(-1)??topic;drafts.push(make(refs,`preference:${key(topic)}`,'preference',content,{kind:topic.startsWith('state:')?'state':'fact',expiresAt:topic.startsWith('state:')?new Date(Date.parse(latest.occurredAt)+7*86400000).toISOString():null,confirmed:true,topicKey:memoryTopic(content),startsAt:latest.occurredAt,evidence:[{quote:content,origin:'record',recordId:latest.id,recordRevision:latest.revision,at:latest.occurredAt}]}));}
  return drafts;
 }
