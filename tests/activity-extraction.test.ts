@@ -113,3 +113,17 @@ test('step goals stay out of actual activity and training envelopes can hold dai
  const report=parseTraining('全天步数8000步')!;
  assert.equal(report.dailyActivity?.steps,8000);assert.equal(report.dailyActivity?.coverage,'full');assert.equal(report.run,undefined);
 });
+
+test('dated step notes import locally, preserve zero and use capture time to select the latest total',t=>{
+ const root=mkdtempSync(path.join(tmpdir(),'bodyjournal-dated-steps-')),s=new HealthStore(root,new FoodCatalog([]),root+'/inbox',false);
+ t.after(()=>{s.close();rmSync(root,{recursive:true,force:true});});
+ const add=(id:string,steps:number,at:string,coverage='全天')=>s.importEnvelope({version:1,id,kind:'note',dateLocked:true,occurredAt:'2026-11-13T12:00:00+08:00',timezone:'Asia/Shanghai',textBase64:Buffer.from('步数日期：2026-11-13\n'+coverage+'步数：'+steps+' 步\n记录时间：'+at+'\n来源：手动记录').toString('base64')}).record;
+ const first=add('dated-steps-first',0,'2026-11-15T12:00:00+08:00');assert.equal(first.status,'ready');
+ assert.deepEqual(first.analysis?.dailyActivity,{reportDate:'2026-11-13',steps:0,scope:'all',coverage:'full',asOf:'2026-11-15T12:00:00+08:00',sourceApp:'手动记录'});
+ add('dated-steps-later',6240,'2026-11-15T13:00:00+08:00');
+ add('dated-steps-older',4200,'2026-11-15T11:00:00+08:00');
+ assert.equal(s.energy.day('2026-11-13').walking?.steps,6240);
+ const partial=add('dated-steps-partial',6300,'2026-11-15T14:00:00+08:00','截至目前');assert.equal(partial.analysis?.dailyActivity?.coverage,'partial');
+ assert.equal(s.energy.day('2026-11-12').walking,null);
+ assert.equal(parseDailyActivity('步数日期：2026-02-30\n全天步数：6000 步'),undefined);
+});

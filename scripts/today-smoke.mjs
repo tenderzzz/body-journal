@@ -51,15 +51,22 @@ try{
   await card.getByRole('button',{name:/上次可比记录/}).click();await expect(page.getByRole('dialog')).toContainText('高位下拉');
   await page.getByRole('dialog').getByRole('button',{name:'关闭',exact:true}).click();
   await page.getByRole('navigation').getByRole('button',{name:'能量',exact:true}).click();
-  await expect(card).toContainText('130 g 待补');await expect(page.locator('.energy-detail')).toHaveCount(0);
+  await expect(page.getByRole('region',{name:'今日维持'})).toHaveCount(0);await expect(page.locator('.energy-detail')).toHaveCount(0);
   const links=page.getByRole('region',{name:'能量详情入口'});
   await expect(links.getByRole('button')).toHaveCount(3);
   for(const [width,height] of [[860,650],[1300,900]]){
     await page.setViewportSize({width,height});
-    await expect(page.locator('.energy-tile')).toHaveCount(4);
+    await expect(page.getByRole('region',{name:'步数',exact:true})).toHaveCount(1);
+    await expect(page.getByRole('heading',{name:'蛋白质',exact:true})).toHaveCount(0);
     const fits=await page.locator('.energy-page').evaluate(el=>el.scrollWidth<=el.clientWidth+1);
     if(!fits)throw Error('能量摘要发生横向溢出 '+width+' × '+height);
   }
+  await page.getByRole('button',{name:'记步数',exact:true}).click();
+  let stepDialog=page.getByRole('dialog',{name:'记录步数'});
+  await stepDialog.getByLabel('当天总步数',{exact:true}).fill('6240');
+  await stepDialog.getByLabel('步数数据范围',{exact:true}).selectOption('full');
+  await stepDialog.getByRole('button',{name:'保存步数',exact:true}).click();
+  await expect(page.getByRole('region',{name:'步数',exact:true})).toContainText('6,240');
   const date=await page.locator('.plot-column').first().getAttribute('aria-label');
   await page.locator('.plot-column').first().click();
   await expect(page.getByLabel('能量日期',{exact:true})).toHaveValue(date.slice(0,10));

@@ -1,38 +1,36 @@
 .energy-dashboard,.today-card {
-  --digest-ink:#203528; --digest-muted:#586858; --digest-line:#e6ebe2; --digest-green:#47765a;
-  --digest-terra:#b77658; --digest-amber:#b6802e; --digest-slate:#587487;
+  --digest-ink:var(--ink); --digest-muted:var(--muted); --digest-line:var(--line); --digest-green:var(--green);
+  --digest-terra:#a58a50; --digest-amber:#a58a50;
   color:var(--digest-ink); font-variant-numeric:tabular-nums;
 }
 .digest-card {
-  min-width:0; background:#fff; border:1px solid #e2e8df; border-radius:20px;
-  box-shadow:0 1px 2px #21342009,0 6px 22px #263b2b09;
+  min-width:0; background:var(--paper); border:1px solid var(--line); border-radius:12px;
 }
 .digest-card h2,.dashboard-heading h1 {margin:0; color:var(--digest-ink)}
 .digest-card button {font-family:inherit}
-.digest-card button:focus-visible {outline:2px solid #47765a;outline-offset:-3px}
-.metric-icon {width:34px;height:34px;flex:none;border-radius:10px;display:inline-grid;place-items:center}
-.tone-green {color:#355d43;background:#e6f0e5}
-.tone-amber {color:#906420;background:#faf0d9}
-.tone-slate {color:#4e6979;background:#e8eef1}
-.tone-terra {color:#a2573b;background:#f8eae3}
+.digest-card button:focus-visible {outline:2px solid var(--green);outline-offset:-3px}
+.metric-icon {width:30px;height:30px;flex:none;border-radius:8px;display:inline-grid;place-items:center}
+.tone-green {color:var(--green);background:var(--tint)}
+.tone-amber {color:#886c34;background:#f6f1e7}
+.tone-slate {color:#5c786c;background:var(--soft)}
 .today-card {padding:5px 0;overflow:hidden}
 .today-card-head {padding:8px 19px 5px;display:flex;align-items:center;justify-content:space-between;gap:10px}
-.today-card-head h2,.energy-overview-card h2 {font-size:16px;font-weight:700;letter-spacing:-.02em}
-.day-choice {display:inline-flex;padding:2px;gap:2px;border:1px solid #e4eadf;background:#f1f4ee;border-radius:99px}
+.today-card-head h2,.energy-overview-card h2 {font-size:14px;font-weight:600;letter-spacing:0}
+.day-choice {display:inline-flex;padding:2px;gap:2px;border:1px solid var(--line);background:var(--soft);border-radius:99px}
 .day-choice button {border:0;background:transparent;border-radius:99px;min-height:27px;padding:3px 10px;
-  font-size:12px;font-weight:560;color:#576959;cursor:pointer}
-.day-choice button[aria-pressed=true] {background:white;color:#25492f;box-shadow:0 1px 4px #233d2626}
+  font-size:12px;font-weight:560;color:var(--muted);cursor:pointer}
+.day-choice button[aria-pressed=true] {background:var(--paper);color:var(--green);box-shadow:0 1px 3px #233d2610}
 .day-choice button:disabled {cursor:default}
 .summary-row {display:flex;align-items:center;gap:12px;width:100%;min-width:0;padding:10px 19px;color:inherit;background:none;border:0;text-align:left}
 .summary-row+.summary-row {border-top:1px solid var(--digest-line)}
 button.summary-row,.energy-action-list button {cursor:pointer;transition:background .14s}
-button.summary-row:hover,.energy-action-list button:hover,.energy-action-list button[aria-expanded=true] {background:#f6f8f3}
+button.summary-row:hover,.energy-action-list button:hover,.energy-action-list button[aria-expanded=true] {background:var(--soft)}
 .summary-main {display:flex;flex:1;min-width:0;flex-direction:column;align-items:stretch;gap:2px}
-.summary-label,.summary-main>small,.tile-foot .metric-empty,.plot-note {color:var(--digest-muted);font-size:12px;line-height:1.45}
-.summary-value,.tile-value {font-size:22px;font-weight:740;letter-spacing:-.035em;line-height:1.24;color:var(--digest-ink)}
+.summary-label,.summary-main>small,.plot-note {color:var(--digest-muted);font-size:12px;line-height:1.45}
+.summary-value,.tile-value {font-size:21px;font-weight:600;letter-spacing:-.02em;line-height:1.24;color:var(--digest-ink)}
 .summary-value small,.tile-value small {font-size:13px;letter-spacing:0;font-weight:560;color:var(--digest-muted)}
-.summary-pill {display:inline-block;flex:none;padding:3px 9px;border-radius:99px;font-size:11.5px;line-height:1.4;font-weight:650}
-.row-chevron {color:#829280;flex:none}
+.summary-pill {display:inline-block;flex:none;padding:3px 9px;border-radius:6px;font-size:11px;line-height:1.4;font-weight:500}
+ .row-chevron {color:var(--muted);flex:none}
 .protein-bar {position:relative;display:block;overflow:hidden;height:6px;border-radius:99px;background:#f0eee6}
 .protein-bar i,.protein-bar b {position:absolute;left:0;top:0;bottom:0;border-radius:99px}
 .protein-bar i {background:#e2c693}
@@ -41,60 +39,36 @@ button.summary-row:hover,.energy-action-list button:hover,.energy-action-list bu
 .chat-scroll.assistant-scroll {padding:16px 4px 22px;scroll-padding:12px}
 .assistant-scroll .today-card {margin:0 0 8px}
 .assistant-scroll .assistant-heading {margin-top:16px}
-.energy-page.page-scroll {max-width:none;margin:0;background:#f4f6f1;padding:24px clamp(20px,3.25vw,48px) 40px;container-type:inline-size;scroll-padding-top:16px}
+.energy-page.page-scroll {max-width:1260px;width:100%;margin:0 auto;container-type:inline-size;scroll-padding-top:16px}
 .energy-dashboard,.dashboard-detail {width:100%;max-width:1180px;margin-inline:auto}
 .energy-dashboard {display:grid;gap:14px}
-.dashboard-heading {display:flex;align-items:baseline;justify-content:space-between;gap:14px;margin-bottom:1px}
-.dashboard-heading h1 {font-size:27px;line-height:1.4;font-weight:730;letter-spacing:-.045em}
+.dashboard-heading.page-heading {display:flex;align-items:baseline;justify-content:space-between;gap:14px;margin-bottom:8px}
+.dashboard-heading h1 {font-size:27px;line-height:1.4;font-weight:600;letter-spacing:-.8px}
 .dashboard-heading time {font-size:13px;color:var(--digest-muted)}
-.energy-lead {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+.energy-lead {display:grid;grid-template-columns:minmax(0,1.7fr) minmax(0,1fr);gap:14px}
 .energy-overview-card {display:flex;flex-direction:column;justify-content:space-between;padding:18px 20px}
 .overview-heading {display:flex;justify-content:space-between;align-items:baseline;gap:8px}
 .overview-heading small {color:var(--digest-muted);font-size:11px}
 .ring-and-values {display:flex;align-items:center;gap:clamp(12px,1.5vw,24px);margin:9px 0 12px}
-.energy-ring {width:clamp(108px,10.8vw,148px);aspect-ratio:1;flex:none;position:relative}
+.energy-ring {width:120px;aspect-ratio:1;flex:none;position:relative}
 .energy-ring svg {width:100%;height:100%;display:block}
-.energy-ring circle {fill:none;stroke-width:12}
-.ring-track {stroke:#e9eee5}
+.energy-ring circle {fill:none;stroke-width:10}
+.ring-track {stroke:var(--tint)}
 .ring-fill {stroke:var(--digest-green);stroke-linecap:round}
 .energy-ring>span {position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
-.energy-ring strong {font-size:clamp(24px,2.2vw,33px);font-weight:750;letter-spacing:-.045em;line-height:1.2}
+.energy-ring strong {font-size:28px;font-weight:550;letter-spacing:-.03em;line-height:1.2}
 .energy-ring small,.energy-totals dd small {font-size:11px;color:var(--digest-muted);font-weight:500}
 .energy-totals {margin:0;min-width:0;flex:1}
 .energy-totals>div {display:flex;align-items:baseline;justify-content:space-between;gap:5px;padding:10px 0}
 .energy-totals>div+div {border-top:1px solid var(--digest-line)}
 .energy-totals dt,.plot-legend,.plot-legend span {display:flex;align-items:center;gap:6px;color:var(--digest-muted);font-size:12px}
-.energy-totals dd {font-weight:700;font-size:16px;margin:0;white-space:nowrap}
+.energy-totals dd {font-weight:550;font-size:17px;margin:0;white-space:nowrap}
 .energy-totals dd span {font-size:13px;font-weight:550;color:var(--digest-muted)}
 .plot-color {display:inline-block;width:8px;height:8px;border-radius:3px;flex:none}
 .plot-color.green,.plot-bar.green {background:var(--digest-green)}
 .plot-color.terra,.plot-bar.terra {background:var(--digest-terra)}
 .plot-color.amber {background:var(--digest-amber)}
-.energy-verdict {margin:0;background:#edf3e9;color:#34573d;padding:10px 12px;border-radius:10px;font-size:13px;font-weight:550;line-height:1.5}
-.energy-metric-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
-.energy-tile,.energy-week-chart {padding:15px 19px 16px}
-.energy-tile {display:flex;flex-direction:column}
-.energy-tile h2,.plot-heading h2 {display:flex;align-items:center;gap:9px;font-weight:650;font-size:14px}
-.energy-tile h2>span:last-child:not(.metric-icon) {font-size:11px;font-weight:500;color:var(--digest-muted);margin-left:auto}
-.energy-tile .metric-icon,.plot-heading .metric-icon {width:28px;height:28px;border-radius:8px}
-.energy-tile .metric-icon svg,.plot-heading .metric-icon svg {width:16px;height:16px}
-.tile-value {font-size:29px;margin-top:6px}
-.energy-tile p,.plot-readout {font-size:12.5px;color:var(--digest-muted);line-height:1.5;margin:3px 0 0}
-.tile-foot {margin-top:auto;padding-top:10px}
-.tile-foot .protein-bar {height:7px}
-.weight-spark {display:block;width:100%;height:32px;overflow:visible}
-.weight-spark circle {fill:var(--digest-slate)}
-.spark-line,.spark-base {stroke:var(--digest-slate);stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
-.spark-base {stroke:var(--digest-line);stroke-width:1}
-.week-markers {display:flex;gap:clamp(5px,.8vw,12px)}
-.week-markers span {width:24px;height:24px;border-radius:50%;background:#f0f3ec;color:#5d6f5e;display:grid;place-items:center;font-size:11px}
-.week-markers .trained {background:var(--digest-green);color:white}
-.week-markers .current {outline:1.5px solid var(--digest-green);outline-offset:2px}
-.step-bars {height:39px;display:flex;gap:8px;align-items:end}
-.step-bars>span {display:flex;align-items:end;justify-content:center;flex:1;height:100%;border-bottom:1px solid #e4e9df}
-.step-bars i {width:70%;max-width:34px;background:#87a28b;border-radius:3px 3px 0 0}
-.step-bars i.partial {background:repeating-linear-gradient(135deg,#9db29d 0 3px,#d9e4d9 3px 5px)}
-.step-bars b {width:7px;height:2px;background:#bac6b8;transform:translateY(-3px)}
+.energy-verdict {margin:0;background:var(--soft);color:var(--green);padding:10px 12px;border-radius:10px;font-size:13px;font-weight:400;line-height:1.6}
 .plot-heading {display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}
 .plot-legend {gap:14px}
 .plot-area {display:flex;gap:8px;align-items:stretch}
@@ -104,9 +78,9 @@ button.summary-row:hover,.energy-action-list button:hover,.energy-action-list bu
 .plot-column {z-index:1;display:flex;flex-direction:column;align-items:stretch;min-width:0;border:0;border-radius:5px;background:transparent;padding:0;cursor:pointer}
 .plot-column:hover,.plot-column:focus-visible {background:#6881650c}
 .bar-pair {height:104px;display:flex;align-items:flex-end;justify-content:center;gap:4px}
-.plot-bar {width:min(20px,28%);border-radius:4px 4px 0 0}
+.plot-bar {width:min(20px,28%);border-radius:3px 3px 0 0}
 .plot-day {font-size:11px;color:var(--digest-muted);padding-top:5px}
-.plot-column.active .plot-day {color:#245739;font-weight:700}
+.plot-column.active .plot-day {color:var(--green);font-weight:700}
 .plot-readout {margin:10px 0 0}
 .plot-readout strong {color:var(--digest-ink);margin-right:3px}
 .plot-note {display:block;font-size:11px;margin-top:1px}
@@ -115,20 +89,18 @@ button.summary-row:hover,.energy-action-list button:hover,.energy-action-list bu
 .energy-action-list button {display:flex;align-items:center;gap:12px;width:100%;border:0;background:transparent;padding:12px 19px;text-align:left;color:var(--digest-ink)}
 .energy-action-list button+button {border-top:1px solid var(--digest-line)}
 .energy-action-list button>span:nth-child(2) {display:flex;flex-direction:column;gap:2px;flex:1}
-.energy-action-list strong {font-size:14px;font-weight:650}
+.energy-action-list strong {font-size:14px;font-weight:550}
 .energy-action-list small {font-size:12px;color:var(--digest-muted)}
 .energy-action-list [aria-expanded=true] .row-chevron {transform:rotate(90deg)}
 .dashboard-detail {margin-top:18px;scroll-margin-top:10px}
 .energy-detail-loading {min-height:calc(100vh - 108px);padding:8px 4px;color:var(--digest-muted,#586858)}
-@container (max-width:840px) {
+@container (max-width:720px) {
   .energy-lead {grid-template-columns:1fr}
-  .energy-ring {width:126px}
+  .energy-ring {width:110px}
   .ring-and-values {gap:28px}
   .energy-overview-card {padding:15px 19px}
-  .energy-lead .summary-row {padding-block:8px}
 }
 @container (max-width:540px) {
-  .energy-metric-grid {grid-template-columns:1fr}
   .dashboard-heading {align-items:center}
   .dashboard-heading h1 {font-size:23px}
   .energy-ring {width:100px}
@@ -139,3 +111,21 @@ button.summary-row:hover,.energy-action-list button:hover,.energy-action-list bu
   .assistant-scroll .summary-row {padding-block:8px}
   .assistant-scroll .journal-calendar {padding-top:8px}
 }
+
+.energy-week-chart {padding:17px 20px}
+.plot-heading h2,.steps-heading h2 {display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600}
+.plot-heading .metric-icon {width:26px;height:26px}
+.tile-value {font-size:27px;font-weight:550;line-height:1.4;letter-spacing:-.02em}
+.tile-value small {font-size:12px;font-weight:400;color:var(--muted);letter-spacing:0}
+.energy-steps-card {display:flex;flex-direction:column;padding:18px 20px}
+.steps-heading {display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:7px}
+.steps-heading .text-button {display:flex;align-items:center;gap:3px;white-space:nowrap;font-size:12px}
+.energy-steps-card>p {margin:2px 0 12px;color:var(--muted);font-size:12px}
+.step-bars {height:65px;display:flex;align-items:end;gap:6px;margin-top:auto;padding-bottom:17px}
+.step-bars button {position:relative;flex:1;height:100%;display:flex;align-items:end;justify-content:center;border:0;border-bottom:1px solid var(--line);background:transparent;padding:0;cursor:pointer}
+.step-bars button:hover {background:var(--soft)}
+.step-bars i {width:65%;max-width:25px;background:#91ad9a;border-radius:2px 2px 0 0;display:block}
+.step-bars i.partial {background:repeating-linear-gradient(135deg,#91ad9a 0 3px,#e1eae3 3px 5px)}
+.step-bars b {width:5px;height:2px;background:var(--line);transform:translateY(-2px)}
+.step-day {position:absolute;top:calc(100% + 4px);font-size:10px;line-height:1;color:var(--muted);white-space:nowrap}
+.steps-form-hint {margin:0;color:var(--muted);font-size:12px;line-height:1.7}

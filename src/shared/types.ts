@@ -44,8 +44,6 @@ export type EnergyOverview={
   date:string;stepDate:string;
   days:{date:string;intake:Range|null;expenditure:Range|null;mealComplete:boolean}[];
   balance:Range|null;balanceState:DailyEnergyEstimate['balanceState'];activityComplete:boolean;
-  weights:{date:string;kg:number}[];
-  training:{goal:number|null;week:{date:string;count:number}[]};
   steps:{date:string;count:number|null;scope?:WalkingEstimate['scope'];coverage?:WalkingEstimate['coverage'];conflict:boolean}[];
 };
 export type Snapshot = { records: HealthRecord[]; memories: Memory[]; messages: Message[]; settings: Settings; connection: Connection; sync: { imported: number; pending: number; errors: string[]; at?: string; items?:SyncItem[];queued?:number }; usage: { month: string; inputTokens: number; outputTokens: number; cost: number; uncertain: boolean }; vault: string; version: string; summary?:OverviewSummary;migration?:DayMigrationReport;conversationStart?:string;coachProfile?:CoachProfile;exerciseAliases?:{raw:string;name:string}[];exerciseRules?:ExerciseRules; foodCandidates?:FoodCandidate[];commonDishes?:CommonDish[] };

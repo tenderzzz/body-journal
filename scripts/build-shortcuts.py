@@ -11,7 +11,7 @@ import uuid
 import argparse
 
 parser=argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--only',choices=['meal','training','body','note'],help='仅重新生成指定入口，保留其他快捷指令文件')
+parser.add_argument('--only',choices=['meal','training','body','note','steps'],help='仅重新生成指定入口，保留其他快捷指令文件')
 selected=parser.parse_args().only
 
 root=Path(__file__).resolve().parents[1]/'shortcuts'
@@ -75,8 +75,8 @@ class Workflow:
         stamp=self.add('format.date',WFDate=text(date),WFDateFormatStyle='Custom',WFDateFormat='yyyyMMddHHmmssSSS')
         rand=self.add('number.random',WFRandomNumberMinimum=1000000,WFRandomNumberMaximum=9999999)
         self.set('记录编号',self.add('gettext',WFTextActionText=text(stamp,'-',rand)))
-    def finish(self):
-        envelope=self.add('gettext',WFTextActionText=text('{"version":1,"id":"',variable('记录编号'),'","kind":"'+self.kind+'","occurredAt":"',variable('记录时间'),'","timezone":"Asia/Shanghai","textBase64":"',variable('记录文字'),'","imageBase64":"',variable('记录照片'),'"}'))
+    def finish(self,entry=None):
+        envelope=self.add('gettext',WFTextActionText=text('{"version":1,'+('"dateLocked":true,' if entry=='steps' else '')+'"id":"',variable('记录编号'),'","kind":"'+self.kind+'","occurredAt":"',variable('记录时间'),'","timezone":"Asia/Shanghai","textBase64":"',variable('记录文字'),'","imageBase64":"',variable('记录照片'),'"}'))
         named=self.add('setitemname',WFInput=attachment(envelope),WFName=text(variable('记录编号'),'.health.json'),WFDontIncludeFileExtension=False)
         save_index=len(self.actions)
         saved=self.add('documentpicker.save',WFInput=attachment(named),WFAskWhereToSave=False,WFFileDestinationPath=text(variable('记录编号'),'.health.json'),WFSaveFileOverwrite=False)
@@ -94,7 +94,7 @@ class Workflow:
             'WFWorkflowImportQuestions':[{'Category':'Parameter','ActionIndex':save_index,'ParameterKey':'WFFolder','Text':'选择保存位置：iCloud Drive → Shortcuts → BodyJournal → inbox。先在 Mac 应用“连接与数据”建立收件箱。'}],
             'WFWorkflowActions':self.actions,
         }
-        if selected and selected!=self.kind: return
+        if selected and selected!=(entry or self.kind): return
         (root/'unsigned'/f'{self.name}.shortcut').write_bytes(plistlib.dumps(workflow,fmt=plistlib.FMT_BINARY,sort_keys=False))
         (root/'unsigned'/f'{self.name}.json').write_text(json.dumps(workflow,ensure_ascii=False,indent=2))
         print(self.name,len(self.actions),'actions')
@@ -134,3 +134,23 @@ body.endmenu(g);body.finish()
 
 note=Workflow('身体手记·随手记','note');note.init()
 note.require_text(note.ask('记下一点睡眠、疲劳、压力或生活安排。可以使用键盘听写。',default=incoming));note.finish()
+
+# Daily step totals are entered as shown by Health, then imported locally without a model call.
+steps=Workflow('身体手记·记步数','note');steps.init()
+steps.set('采集时间',variable('记录时间'))
+chosen=steps.add('ask',WFAskActionPrompt='记录哪天的步数？请选择今天或以前的日期。',WFInputType='Date')
+steps.set('步数日期',steps.add('format.date',WFDate=text(chosen),WFDateFormatStyle='Custom',WFDateFormat='yyyy-MM-dd'))
+steps.set('记录时间',steps.add('gettext',WFTextActionText=text(variable('步数日期'),'T12:00:00+08:00')))
+count=steps.ask('填入健康 App 中所选日期的总步数（包含运动中的步数）。',number=True)
+steps.set('步数',count)
+valid=steps.add('text.match',WFInput=attachment(count),WFMatchTextPattern='^(?:[0-9]{1,5}|100000)$')
+g=steps.condition(valid)
+steps.otherwise(g)
+steps.add('showresult',Text='步数须为 0 到 100000 的整数，本次未保存。')
+steps.add('exit');steps.endif(g)
+g=steps.menu('这份步数覆盖什么时段？',['完整一天','截至目前'])
+for label in ['完整一天','截至目前']:
+    steps.branch(g,label)
+    prefix='全天步数：' if label=='完整一天' else '截至目前步数：'
+    steps.encode_text(steps.add('gettext',WFTextActionText=text('步数日期：',variable('步数日期'),'\n',prefix,variable('步数'),' 步\n记录时间：',variable('采集时间'),'\n来源：手动记录')))
+steps.endmenu(g);steps.finish(entry='steps')

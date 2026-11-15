@@ -1,8 +1,9 @@
-import {daySchema} from './energy-validation';
+import {daySchema,energyStepsInput} from './energy-validation';
 import {z} from 'zod';
 import {bodySchema,idSchema,timeSchema,memoryInputSchema,settingsSchema} from './validation';
 
 export const mutationSchemas={
+  'energy:stepsSave':energyStepsInput,
   'today:rest':z.object({date:daySchema,timezone:z.string().min(1).max(100),rest:z.boolean()}).strict(),
   'record:update':z.object({id:idSchema,revision:z.number().int().positive(),text:z.string().max(100000).optional(),occurredAt:timeSchema.optional(),body:bodySchema.nullable().optional(),deleted:z.boolean().optional(),followup:z.object({answer:z.string().min(1).max(100000),questions:z.array(z.string().max(5000)).max(20)}).strict().optional()}).strict(),
   'record:setDeleted':z.object({id:idSchema,deleted:z.boolean()}).strict(),
