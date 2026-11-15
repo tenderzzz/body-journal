@@ -49,7 +49,7 @@ test('overlapping 28-day windows reuse each unanchored sample and keep the origi
   e.saveDay({date:addDays(date,-6),steps:8000,stepsScope:'nonTraining',stepCoverage:'full',mealComplete:false,activityComplete:true},now);
   assert.equal(e.view({date},now).suggestedUsualSteps,4750);
 });
-test('dashboard reads the archive once without loading review; training, measured weights and civil steps retain their own dates',t=>{
+test('dashboard reads the archive once without loading review and keeps journal and civil dates separate',t=>{
   const s=fixture(t),e=s.energy;
   e.saveProfile({...profile,strengthPerWeek:4},now);
   const add=(id:string,kind:'body'|'training',day:string,text:string,kg?:number)=>s.importEnvelope({version:1,id:'synthetic-'+id,kind,occurredAt:day+'T12:00:00+08:00',timezone:zone,dateLocked:true,text,body:kg?{weightKg:kg}:undefined});
@@ -65,9 +65,24 @@ test('dashboard reads the archive once without loading review; training, measure
   const v=e.overview(overnight);
   assert.equal(reads,1);assert.equal(v.date,date);assert.equal(v.stepDate,'2026-10-23');
   assert.equal(v.days.length,7);assert.equal(v.days[0].date,'2026-10-16');
-  assert.deepEqual(v.weights,[{date,kg:71}]);assert.equal(v.balance,null);assert.ok(v.days.at(-1)?.expenditure);
+  assert.equal(v.balance,null);assert.ok(v.days.at(-1)?.expenditure);
   assert.equal(v.days.at(-1)?.intake,null);
-  assert.equal(v.training.goal,4);assert.equal(v.training.week[0].date,'2026-10-19');
-  assert.equal(v.training.week.reduce((n,d)=>n+d.count,0),1);assert.equal(v.training.week[1].count,1);
   assert.equal(v.steps.at(-1)?.count,0);assert.equal(v.steps.at(-1)?.coverage,'partial');assert.equal(v.steps.at(-2)?.count,null);
+});
+
+test('quick step entry preserves existing confirmations and clears obsolete manual distance without confirming unreviewed changes',t=>{
+  const s=fixture(t),e=s.energy;e.saveProfile(profile,now);
+  const meal=s.importEnvelope({version:1,id:'synthetic-meal-confirmation',kind:'meal',occurredAt:date+'T12:00:00+08:00',timezone:zone,text:'午餐'}).record;
+  e.saveDay({date,walkingKm:3,steps:4000,mealComplete:true,activityComplete:true},now);
+  const saved=e.saveSteps({date,timezone:zone,steps:6200,coverage:'full'},now);
+  assert.equal(saved.walkingKm,undefined);assert.equal(saved.stepSourceId,undefined);
+  assert.equal(saved.mealComplete,true);assert.equal(saved.activityComplete,true);
+  s.revise(meal.id,{text:'午餐补充'},meal.revision);
+  const revised=e.saveSteps({date,timezone:zone,steps:6500,coverage:'partial'},now);
+  assert.equal(revised.mealComplete,false);assert.equal(revised.activityComplete,true);
+  assert.equal(e.overview(now).steps.at(-1)?.count,6500);
+  assert.equal(e.overview(now).steps.at(-1)?.coverage,'partial');
+  assert.throws(()=>e.saveSteps({date,timezone:'UTC',steps:1,coverage:'full'},now),/时区/);
+  for(const steps of [-1,1.5,100001])assert.throws(()=>e.saveSteps({date,timezone:zone,steps,coverage:'full'},now));
+  assert.throws(()=>e.saveSteps({date:'2026-10-23',timezone:zone,steps:1,coverage:'full'},now),/日期/);
 });

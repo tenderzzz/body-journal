@@ -5,8 +5,8 @@ import path from 'node:path';
 
 export const RESOURCE_FILES=[
   'assets/icon.icns','assets/connection-test.png','data/foods.json','data/README.md',
-  'docs/使用说明.html','shortcuts/开始安装.md',
-  ...['记一餐','记训练','记身体','随手记'].flatMap(name=>['json','shortcut'].map(ext=>`shortcuts/unsigned/身体手记·${name}.${ext}`)),
+  'docs/使用说明.html','shortcuts/开始安装.md','shortcuts/安装记步数.command',
+  ...['记一餐','记训练','记身体','随手记','记步数'].flatMap(name=>['json','shortcut'].map(ext=>`shortcuts/unsigned/身体手记·${name}.${ext}`)),
 ];
 function files(dir,prefix=''){
   return readdirSync(dir,{withFileTypes:true}).flatMap(e=>e.isDirectory()?files(path.join(dir,e.name),prefix+e.name+'/'):[prefix+e.name]);

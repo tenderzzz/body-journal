@@ -28,7 +28,10 @@ export function parseDailyActivity(text:string):DailyActivity|undefined {
  const full=!partial&&/(?:全天|全日|最终|已记齐|记齐了|昨日|昨天)/.test(text);
  const scope=/非跑步|非训练|不含跑步|排除跑步/.test(text)?'nonTraining':'all';
  const asOf=text.match(/(?:截至|截止)\s*((?:\d{1,2}[:：]\d{2})|[^，,。；;\n步数]{1,20})/);
- return {...(steps!==undefined?{steps}:{}),scope,coverage:full?'full':'partial',...(distance?{walkingKm:+distance[1]}:{}),...(asOf?{asOf:asOf[1]}:{}),...(activitySource(text)?{sourceApp:activitySource(text)}:{})};
+ const reportDate=text.match(/步数日期\s*[:：]\s*(\d{4}-\d{2}-\d{2})/)?.[1];
+ if(reportDate&&(!Number.isFinite(Date.parse(reportDate))||new Date(reportDate).toISOString().slice(0,10)!==reportDate))return;
+ const recordedAt=text.match(/记录时间\s*[:：]\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))/)?.[1];
+ return {...(reportDate?{reportDate}:{}),...(steps!==undefined?{steps}:{}),scope,coverage:full?'full':'partial',...(distance?{walkingKm:+distance[1]}:{}),...(recordedAt&&Number.isFinite(Date.parse(recordedAt))?{asOf:recordedAt}:asOf?{asOf:asOf[1]}:{}),...(activitySource(text)?{sourceApp:activitySource(text)}:{})};
 }
 function activitySource(text:string):string|undefined {
  const source=text.match(/(?:来源|App|应用)\s*[:：]\s*([^，,。；;\n]{1,60})/i)?.[1]?.trim();

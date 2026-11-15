@@ -2,10 +2,9 @@ import {createHash,randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import type {HealthStore} from './store';
 import type {DailyEnergyInput,EnergyProfile,EnergyTarget,GoalProposal,EnergyReview,EnergyView,EnergyGoal,StepReference,ActivityLevel,EnergyBaselineAnchor,EnergyTrendWeek,DailyEnergyEstimate,EnergyOverview} from '../../src/shared/types';
-import {inferSession} from '../../src/shared/exercises';
 import {journalDay as localDay,calendarDay,DAY_POLICY_VERSION} from '../../src/shared/dates';
 import {addDays,dateDistance,indexEnergyRecords,estimateDay,initialEnergySuggestion,refs,sameRefs,ENERGY_MODEL_VERSION,isEnergyActivityRecord,ACTIVITY_LEVELS,ASSUMED_REFERENCE_STEPS,stepDay,isJournalActivityRecord} from '../../src/shared/energy';
-import {daySchema,energyDayInput,energyProfileInput,energyTargetInput,energyBackupSchema,energyGoalSchema} from './energy-validation';
+import {daySchema,energyDayInput,energyStepsInput,energyProfileInput,energyTargetInput,energyBackupSchema,energyGoalSchema} from './energy-validation';
 const TABLES={profiles:'energy_profiles',targets:'energy_targets',days:'energy_days',proposals:'energy_proposals'} as const;
 const digest=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const median=(values:number[])=>{const a=[...values].sort((x,y)=>x-y),n=a.length;return n?(n%2?a[(n-1)/2]:(a[n/2-1]+a[n/2])/2):null;};
@@ -100,6 +99,14 @@ export class EnergyStore{
     const profile:EnergyProfile={...p,id:randomUUID(),createdAt:now.toISOString()};
     profile.baselineAnchor=this.fixedAnchor(profile,p.effectiveDate,now);
     this.put('profiles',profile.id,profile);this.invalidate();return profile;
+  }
+  saveSteps(value:unknown,now=new Date()){
+    const p=energyStepsInput.parse(value),zone=this.host.getSettings().timezone;
+    if(p.timezone!==zone)throw new Error('档案时区已变化，请重新打开步数记录。');
+    if(p.date>calendarDay(now.toISOString(),zone))throw new Error('请选择今天或之前的日期。');
+    const read=this.read(),estimate=this.day(p.date,read),previous=read.inputs.get(p.date);
+    return this.saveDay({...previous,date:p.date,steps:p.steps,stepsScope:'all',stepCoverage:p.coverage,
+      walkingKm:undefined,stepSourceId:undefined,mealComplete:estimate.mealConfirmed,activityComplete:estimate.activityConfirmed},now);
   }
   saveDay(value:unknown,now=new Date()){
     const p=energyDayInput.parse(value),zone=this.host.getSettings().timezone;
@@ -226,31 +233,14 @@ export class EnergyStore{
       const estimate=this.day(day,read);
       return {date:day,intake:estimate.intake.kcal,expenditure:estimate.expenditure,mealComplete:estimate.intake.complete};
     });
-    const current=this.day(date,read),monday=addDays(date,-((new Date(date+'T12:00:00Z').getUTCDay()+6)%7));
-    const week=Array.from({length:7},(_,i)=>{
-      const day=addDays(monday,i);
-      if(day>date)return {date:day,count:0};
-      const excluded=new Set([...(read.inputs.get(day)?.excludedWorkoutIds??[]),...this.day(day,read).duplicates.map(d=>d.recordId)]);
-      const completed=(read.index.journal.get(day)??[]).filter(record=>{
-        if(record.kind!=='training'||record.timeSource||excluded.has(record.id))return false;
-        const a=record.analysis;
-        if(!a?.sets?.length&&!a?.training?.durationMinutes)return false;
-        const raw=inferSession(record.text,a.sets);
-        return (a.training??raw).completion==='completed'&&raw.completion!=='planned';
-      });
-      return {date:day,count:completed.length};
-    });
-    const weights=Array.from({length:28},(_,i)=>addDays(date,i-27)).flatMap(day=>{
-      const kg=median(read.weights.get(day)??[]);
-      return kg===null?[]:[{date:day,kg}];
-    });
+    const current=this.day(date,read);
     const steps=Array.from({length:7},(_,i)=>{
       const day=addDays(stepDate,i-6),estimate=this.day(day,read),walking=estimate.walking;
       return {date:day,count:walking?.steps??null,scope:walking?.scope,coverage:walking?.coverage,
         conflict:!walking&&estimate.missing.some(reason=>reason.includes('选择步数来源')||reason.includes('步数来源已删除'))};
     });
     return {date,stepDate,days,balance:current.balance,balanceState:current.balanceState,activityComplete:current.activityComplete,
-      training:{week,goal:this.profileAt(date,read)?.strengthPerWeek??null},weights,steps};
+      steps};
   }
   view(payload:unknown={},now=new Date()):EnergyView{
     const p=z.object({date:daySchema.optional(),days:z.union([z.literal(7),z.literal(30)]).default(7),mode:energyGoalSchema.optional()}).parse(payload),today=this.today(now),date=p.date??today;

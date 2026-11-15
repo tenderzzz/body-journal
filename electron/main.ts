@@ -57,6 +57,7 @@ async function invoke(action:string,payload:any) {
     case 'dish:forRecord':{const id=idSchema.parse(payload.id);return store.commonDishes().filter(d=>d.recordIds.includes(id));}
     case 'exercise:examples':return store.db.prepare("SELECT json_extract(j.value,'$.originalExercise') AS raw,j.value FROM records r,json_each(r.doc,'$.analysis.sets') j WHERE coalesce(json_extract(r.doc,'$.deleted'),0)=0 GROUP BY coalesce(json_extract(j.value,'$.originalExercise'),json_extract(j.value,'$.exercise'))").all().map((r,i)=>({id:String(i),analysis:{sets:[JSON.parse(String(r.value))]}}));
     case 'energy:get':return store.energy.view(payload??{});
+    case 'energy:stepsSave':{const result=store.energy.saveSteps(payload);emit({type:'changed',scopes:['energy','overview','messages']});return result;}
     case 'energy:sourceOpen':{const source=z.enum(['resting','met','protein']).parse(payload.source);return shell.openExternal({resting:'https://pubmed.ncbi.nlm.nih.gov/2305711/',met:'https://pacompendium.com/adult-compendium/',protein:'https://pmc.ncbi.nlm.nih.gov/articles/PMC5477153/'}[source]);}
     case 'energy:profileSave':{const result=store.energy.saveProfile(payload);emit({type:'changed',scopes:['energy','overview','messages']});return result;}
     case 'energy:daySave':{const result=store.energy.saveDay(payload);emit({type:'changed',scopes:['energy','overview','messages']});return result;}
@@ -93,6 +94,7 @@ async function invoke(action:string,payload:any) {
     case 'inbox:prepare':{const p=store.getSettings().inbox;mkdirSync(p,{recursive:true,mode:0o700});await shell.openPath(p);await restartInbox();emit({type:'changed',scopes:['overview']});return p;}
     case 'vault:open':return shell.openPath(root);
     case 'shortcuts:open':return shell.openPath(resource('shortcuts'));
+    case 'steps:shortcutInstall':{const error=await shell.openPath(resource('shortcuts/安装记步数.command'));if(error)throw new Error(error);return;}
     case 'docs:open':return shell.openPath(resource('docs/使用说明.html'));
     case 'backup:save':{assertAvailable();const r=await dialog.showSaveDialog(win,{title:'保存完整备份',defaultPath:`身体手记-${new Date().toISOString().slice(0,10)}.bodyjournal`,filters:[{name:'身体手记备份',extensions:['bodyjournal']}]});if(r.canceled||!r.filePath)return;store.backup(r.filePath);return r.filePath;}
     case 'backup:restore':{assertAvailable();const r=await dialog.showOpenDialog(win,{properties:['openFile'],filters:[{name:'身体手记备份',extensions:['bodyjournal']}]});if(r.canceled)return;const confirm=await dialog.showMessageBox(win,{type:'question',buttons:['取消','恢复备份'],defaultId:0,cancelId:0,message:'用所选备份恢复档案？',detail:'当前档案会先自动备份。账号密钥不会被导入或覆盖。'});if(confirm.response!==1)return;await inboxSync.stop();let backup;try{backup=store.restoreFile(r.filePaths[0]);}finally{await restartInbox();}emit({type:'changed'});return backup;}

@@ -50,7 +50,7 @@ export function useJournalData(options:Options){
   const refresh=useCallback((scopes?:string[])=>{
     const p=current.current,has=(scope:string)=>!scopes||scopes.includes(scope);
     const requests:Promise<void>[]=[];
-    if((p.page==='assistant'||p.page==='energy')&&(has('today')||has('records')||has('energy')||has('profile')))requests.push(load('today'));
+    if(p.page==='assistant'&&(has('today')||has('records')||has('energy')||has('profile')))requests.push(load('today'));
     if(p.page==='energy'&&(has('records')||has('energy')||has('profile')))requests.push(load('energy'));
     if(has('overview')||has('sync'))requests.push(load('overview'));
     if(has('records')&&p.page==='records')requests.push(load('records'));
@@ -59,7 +59,7 @@ export function useJournalData(options:Options){
     if(has('records')&&p.page==='assistant')requests.push(load('calendar'));
     return Promise.all(requests);
   },[load]);
-  useEffect(()=>{if(options.page==='assistant'||options.page==='energy')void load('today');},[options.page,load]);
+  useEffect(()=>{if(options.page==='assistant')void load('today');},[options.page,load]);
   useEffect(()=>{if(options.page==='energy')void load('energy');},[options.page,load]);
   useEffect(()=>{void load('overview');},[load]);
   useEffect(()=>{if(options.page==='records')void load('records');},[options.page,options.date,options.kind,options.search,options.includeDeleted,load]);
