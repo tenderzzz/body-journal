@@ -65,18 +65,21 @@ function WeekChart({days,today,date,onDay}:{days:Overview['days'];today:string;d
 
 function StepsCard({overview,onAdd}:{overview:Overview;onAdd:(date:string)=>void}){
   const step=overview.steps.at(-1)!;
-  const stepMax=Math.max(1,...overview.steps.map(d=>d.count??0));
+  const stepMax=Math.max(2000,Math.ceil(Math.max(0,...overview.steps.map(d=>d.count??0))/2000)*2000);
   const stepLabel=(d:typeof step)=>d.count!==null?(d.scope==='nonTraining'?'非训练步数':'总步数')+' · '+(d.coverage==='partial'?'截至目前':'全天'):d.conflict?'来源待核对':'未记录';
   return <section className="digest-card energy-steps-card" aria-label="步数">
     <header className="steps-heading"><h2><MetricIcon tone="green" icon={Footprints}/>步数</h2>
       <button type="button" className="text-button" onClick={()=>onAdd(overview.stepDate)}><Plus size={14}/>记步数</button></header>
     <strong className="tile-value">{step.count===null?(step.conflict?'待核对':'待记录'):number.format(step.count)} {step.count!==null&&<small>步</small>}</strong>
     <p>{shortDate(overview.stepDate)} · {stepLabel(step)}</p>
-    <div className="step-bars" aria-label="近七个自然日步数">{overview.steps.map(d=><button type="button" key={d.date}
+    <div className="step-chart" aria-label="近七个自然日步数"><span className="step-chart-unit" aria-hidden="true">步</span>
+      <div className="step-chart-plot"><div className="step-axis" aria-hidden="true">{[stepMax,stepMax/2,0].map((n,i)=><span key={n} style={{top:i*50+'%'}}>{number.format(n)}</span>)}</div>
+        <div className="step-bars">{overview.steps.map(d=><button type="button" key={d.date}
       aria-label={'记录 '+d.date+' 的步数，'+(d.count===null?stepLabel(d):d.count+' 步 · '+stepLabel(d))} onClick={()=>onAdd(d.date)}>
-        {d.count!==null?<i className={d.coverage==='partial'?'partial':''} style={{height:Math.max(2,d.count/stepMax*100)+'%'}}/>:<b/>}
+        {d.count!==null?<i className={d.coverage==='partial'?'partial':''} style={{height:d.count/stepMax*100+'%',minHeight:d.count>0?2:0}}/>:<b/>}
         <span className="step-day">{d.date===overview.stepDate?'今天':shortDate(d.date)}</span>
-      </button>)}</div>
+      </button>)}</div></div>
+    </div>
   </section>;
 }
 const actions=[
