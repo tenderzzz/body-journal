@@ -1,4 +1,4 @@
-import {useState} from 'react';
+import {useEffect,useState} from 'react';
 import {ChartNoAxesColumn,ChevronLeft,ChevronRight,CircleCheck,Footprints,Plus,Target,TrendingUp} from 'lucide-react';
 import type {EnergyOverview as Overview,Range} from '../shared/types';
 import {addDays,mid} from '../shared/energy';
@@ -45,6 +45,7 @@ function EnergyRing({overview,date,onDate}:{overview:Overview;date:string;onDate
 
 function WeekChart({days,today,date,onDay}:{days:Overview['days'];today:string;date:string;onDay:(d:string)=>void}){
   const [active,setActive]=useState<string|null>(null);
+  useEffect(()=>setActive(null),[date]);
   const selected=days.find(d=>d.date===active)??days.at(-1)!;
   const values=days.flatMap(d=>[d.intake,d.expenditure]).filter((v):v is Range=>v!==null).map(mid);
   const max=Math.max(500,Math.ceil(Math.max(0,...values)/500)*500);

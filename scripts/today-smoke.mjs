@@ -67,6 +67,13 @@ try{
   await expect(stepDialog.getByLabel('步数数据范围',{exact:true})).toHaveCount(0);
   await stepDialog.getByRole('button',{name:'保存步数',exact:true}).click();
   await expect(page.getByRole('region',{name:'步数',exact:true})).toContainText('6,240');
+  await page.locator('.plot-column').first().hover();
+  const previous=addDays(await page.getByLabel('总览日期',{exact:true}).inputValue(),-1);
+  await page.getByRole('button',{name:'总览上一天',exact:true}).click();
+  await expect(page.getByLabel('总览日期',{exact:true})).toHaveValue(previous);
+  await expect(page.locator('.plot-readout strong')).toHaveText(previous.slice(5).replace('-','/'));
+  await page.getByRole('button',{name:'今天',exact:true}).click();
+  await expect(page.getByRole('button',{name:'总览下一天',exact:true})).toBeDisabled();
   const date=await page.locator('.plot-column').first().getAttribute('aria-label');
   await page.locator('.plot-column').first().click();
   await expect(page.getByLabel('总览日期',{exact:true})).toHaveValue(date.slice(0,10));
