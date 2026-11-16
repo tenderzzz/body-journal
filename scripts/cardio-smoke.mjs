@@ -21,7 +21,7 @@ try{
  const legacy=store.record(r.id);legacy.analysis.run={km:1.8,minutes:24,terrain:'hilly',completion:'completed'};legacy.analysisPending=false;store.db.prepare('UPDATE records SET doc=? WHERE id=?').run(JSON.stringify(legacy),r.id);
  const beforeSets=JSON.stringify(legacy.analysis.sets);store.energy.saveDay({date,steps:9000,mealComplete:false,activityComplete:true});store.close();
  let page=await launch();await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'能量',exact:true}).click();
-  await page.getByRole('button',{name:'核对今天',exact:true}).click();
+  await page.getByRole('button',{name:'当天明细',exact:true}).click();
  await page.getByLabel('能量日期',{exact:true}).fill(date);
  await expect(page.locator('.energy-breakdown').getByRole('button',{name:'有氧',exact:true})).toBeVisible();
  await expect(page.locator('.energy-step-flow')).toContainText('有氧步数');await expect(page.locator('.energy-step-flow')).toContainText('距离与步长估算');

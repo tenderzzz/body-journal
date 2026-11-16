@@ -70,13 +70,13 @@ test('dashboard reads the archive once without loading review and keeps journal 
   assert.equal(v.steps.at(-1)?.count,0);assert.equal(v.steps.at(-1)?.coverage,'partial');assert.equal(v.steps.at(-2)?.count,null);
 });
 
-test('quick step entry preserves existing confirmations and clears obsolete manual distance without confirming unreviewed changes',t=>{
+test('quick step entry derives readiness and clears obsolete distance without approving pending meal estimates',t=>{
   const s=fixture(t),e=s.energy;e.saveProfile(profile,now);
   const meal=s.importEnvelope({version:1,id:'synthetic-meal-confirmation',kind:'meal',occurredAt:date+'T12:00:00+08:00',timezone:zone,text:'午餐'}).record;
   e.saveDay({date,walkingKm:3,steps:4000,mealComplete:true,activityComplete:true},now);
   const saved=e.saveSteps({date,timezone:zone,steps:6200,coverage:'full'},now);
   assert.equal(saved.walkingKm,undefined);assert.equal(saved.stepSourceId,undefined);
-  assert.equal(saved.mealComplete,true);assert.equal(saved.activityComplete,true);
+  assert.equal(saved.mealComplete,false);assert.equal(saved.activityComplete,true);
   s.revise(meal.id,{text:'午餐补充'},meal.revision);
   const revised=e.saveSteps({date,timezone:zone,steps:6500,coverage:'partial'},now);
   assert.equal(revised.mealComplete,false);assert.equal(revised.activityComplete,true);
@@ -85,4 +85,19 @@ test('quick step entry preserves existing confirmations and clears obsolete manu
   assert.throws(()=>e.saveSteps({date,timezone:'UTC',steps:1,coverage:'full'},now),/时区/);
   for(const steps of [-1,1.5,100001])assert.throws(()=>e.saveSteps({date,timezone:zone,steps,coverage:'full'},now));
   assert.throws(()=>e.saveSteps({date:'2026-10-23',timezone:zone,steps:1,coverage:'full'},now),/日期/);
+});
+
+test('overview selects any valid historical journal day and preserves current civil steps with a single archive read',t=>{
+  const s=fixture(t),e=s.energy;e.saveProfile(profile,now);
+  const records=s.records.bind(s);let reads=0;s.records=()=>{reads++;return records();};
+  const past=e.overview(now,'2026-10-01');assert.equal(reads,1);
+  assert.equal(past.date,'2026-10-01');assert.equal(past.today,date);assert.equal(past.stepDate,date);
+  assert.equal(past.days[0].date,'2026-09-25');assert.equal(past.days.at(-1)?.date,'2026-10-01');
+  assert.throws(()=>e.overview(now,'2026-02-30'));assert.throws(()=>e.overview(now,'2026-10-23'),/手记日期/);
+  const overnight=new Date('2026-10-23T02:00:00+08:00');
+  const todaySteps=e.saveSteps({date:'2026-10-23',timezone:zone,steps:0},overnight);
+  assert.equal(todaySteps.stepCoverage,'partial');assert.equal(todaySteps.activityComplete,false);
+  const history=e.saveSteps({date:'2026-10-21',timezone:zone,steps:6500},overnight);
+  assert.equal(history.stepCoverage,'full');assert.equal(e.overview(overnight).steps.at(-1)?.count,0);
+  assert.throws(()=>e.overview(overnight,'2026-10-23'),/手记日期/);
 });

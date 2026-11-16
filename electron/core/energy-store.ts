@@ -3,7 +3,7 @@ import {z} from 'zod';
 import type {HealthStore} from './store';
 import type {DailyEnergyInput,EnergyProfile,EnergyTarget,GoalProposal,EnergyReview,EnergyView,EnergyGoal,StepReference,ActivityLevel,EnergyBaselineAnchor,EnergyTrendWeek,DailyEnergyEstimate,EnergyOverview} from '../../src/shared/types';
 import {journalDay as localDay,calendarDay,DAY_POLICY_VERSION} from '../../src/shared/dates';
-import {addDays,dateDistance,indexEnergyRecords,estimateDay,initialEnergySuggestion,refs,sameRefs,ENERGY_MODEL_VERSION,isEnergyActivityRecord,ACTIVITY_LEVELS,ASSUMED_REFERENCE_STEPS,stepDay,isJournalActivityRecord} from '../../src/shared/energy';
+import {addDays,dateDistance,indexEnergyRecords,estimateDay,initialEnergySuggestion,refs,sameRefs,ENERGY_MODEL_VERSION,ENERGY_RECORD_POLICY_VERSION,isEnergyActivityRecord,ACTIVITY_LEVELS,ASSUMED_REFERENCE_STEPS,stepDay,isJournalActivityRecord} from '../../src/shared/energy';
 import {daySchema,energyDayInput,energyStepsInput,energyProfileInput,energyTargetInput,energyBackupSchema,energyGoalSchema} from './energy-validation';
 const TABLES={profiles:'energy_profiles',targets:'energy_targets',days:'energy_days',proposals:'energy_proposals'} as const;
 const digest=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -38,8 +38,10 @@ export class EnergyStore{
       if(group)group.push(r.body!.weightKg!);
       else weights.set(date,[r.body!.weightKg!]);
     }
-    const confirmedDays=new Map(days.flatMap((day,order)=>day.timezone===zone&&day.activityComplete?[[day.date,{day,order}] as const]:[]));
-    return {zone,records,index,profiles,targets,days,weights,confirmedDays,
+    const stepDates=new Set(days.filter(day=>day.timezone===zone).map(day=>day.date));
+    for(const [date,group] of index.civil)if(group.some(record=>record.analysis?.dailyActivity))stepDates.add(date);
+    const sampleDays=new Map([...stepDates].map((date,order)=>[date,{date,order}]));
+    return {zone,records,index,profiles,targets,days,weights,sampleDays,
       inputs:new Map(days.filter(d=>d.timezone===zone).map(d=>[d.date,d])),
       estimates:new Map<string,DailyEnergyEstimate>(),samples:new Map<string,DailyEnergyEstimate>(),hashes:new Map<string,string>()};
   }
@@ -49,18 +51,18 @@ export class EnergyStore{
     const profile=this.profileAt(date,read)??fallbackProfile;
     if(!profile)return;
     const activity=activityOverride??read.inputs.get(date)?.activity??profile.activity;
-    if(!read.confirmedDays.size)return;
-    const window=Array.from({length:28},(_,i)=>read.confirmedDays.get(addDays(date,-i-1)));
-    // Preserve the original evidence order if a user filled old days retrospectively.
+    if(!read.sampleDays.size)return;
+    const window=Array.from({length:28},(_,i)=>read.sampleDays.get(addDays(date,-i-1)));
+    // Preserve saved evidence order when old days were entered retrospectively.
     const candidates=window.filter(v=>v!==undefined).sort((a,b)=>a.order-b.order);
-    const samples=candidates.flatMap(({day:input})=>{
-      const p=this.profileAt(input.date,read)??fallbackProfile;if(!p||(input.activity??p.activity)!==activity)return [];
-      // Call the pure calculation directly: reference extraction must not recursively consume older references.
-      const key=p.id+'/'+input.date;
+    const samples=candidates.flatMap(({date})=>{
+      const input=read.inputs.get(date),p=this.profileAt(date,read)??fallbackProfile;if(!p||(input?.activity??p.activity)!==activity)return [];
+      // Reference extraction consumes each candidate once and does not recurse into older references.
+      const key=p.id+'/'+date;
       let day=read.samples.get(key);
-      if(!day){day=estimateDay(input.date,read.zone,read.index,p,input,null);read.samples.set(key,day);}
-      return day.activityConfirmed&&day.activityComplete&&day.walking?.coverage==='full'&&day.walking.nonTrainingSteps!==undefined&&!day.walking.nonTrainingStepRange&&!day.walking.pending
-        ?[{date:input.date,steps:day.walking.nonTrainingSteps,sources:[...input.activitySources,...(input.stepSources??[])]}]:[];
+      if(!day){day=estimateDay(date,read.zone,read.index,p,input,null);read.samples.set(key,day);}
+      return day.activityComplete&&day.walking?.coverage==='full'&&day.walking.nonTrainingSteps!==undefined&&!day.walking.nonTrainingStepRange&&!day.walking.pending
+        ?[{date,steps:day.walking.nonTrainingSteps,sources:day.sources}]:[];
     });
     if(samples.length<7)return;
     const steps=Math.round(median(samples.map(s=>s.steps))!);
@@ -105,8 +107,8 @@ export class EnergyStore{
     if(p.timezone!==zone)throw new Error('档案时区已变化，请重新打开步数记录。');
     if(p.date>calendarDay(now.toISOString(),zone))throw new Error('请选择今天或之前的日期。');
     const read=this.read(),estimate=this.day(p.date,read),previous=read.inputs.get(p.date);
-    return this.saveDay({...previous,date:p.date,steps:p.steps,stepsScope:'all',stepCoverage:p.coverage,
-      walkingKm:undefined,stepSourceId:undefined,mealComplete:estimate.mealConfirmed,activityComplete:estimate.activityConfirmed},now);
+    return this.saveDay({...previous,date:p.date,steps:p.steps,stepsScope:'all',stepCoverage:p.coverage??(p.date<calendarDay(now.toISOString(),zone)?'full':'partial'),
+      walkingKm:undefined,stepSourceId:undefined,mealComplete:p.date<=this.today(now)&&estimate.mealConfirmed,activityComplete:p.date<=this.today(now)&&estimate.activityConfirmed},now);
   }
   saveDay(value:unknown,now=new Date()){
     const p=energyDayInput.parse(value),zone=this.host.getSettings().timezone;
@@ -160,7 +162,7 @@ export class EnergyStore{
     const priorWeight=index.weights.find(r=>index.dates.get(r.id)!<from);
     const prior=priorWeight&&index.byId.get(priorWeight.id);
     const priorTraining=refs(records.filter(r=>r.kind==='training'&&index.dates.get(r.id)!<from));
-    const hash=digest({model:ENERGY_MODEL_VERSION,dayPolicy:DAY_POLICY_VERSION,zone,records:[...new Map([...selected,...anchorRecords,...(prior?[prior]:[])].map(r=>[r.id,r])).values()].sort((a,b)=>a.id.localeCompare(b.id)).map(r=>{const {analysisPending,analysisError,analysisAttemptedRevision,...evidence}=r;return evidence;}),priorTraining,profiles,targets,days:days.filter(d=>d.timezone===zone&&(anchorDates.has(d.date)||d.date>=inputStart&&d.date<=to))});
+    const hash=digest({model:ENERGY_MODEL_VERSION,recordPolicy:ENERGY_RECORD_POLICY_VERSION,dayPolicy:DAY_POLICY_VERSION,zone,records:[...new Map([...selected,...anchorRecords,...(prior?[prior]:[])].map(r=>[r.id,r])).values()].sort((a,b)=>a.id.localeCompare(b.id)).map(r=>{const {analysisError,analysisAttemptedRevision,...evidence}=r;return evidence;}),priorTraining,profiles,targets,days:days.filter(d=>d.timezone===zone&&(anchorDates.has(d.date)||d.date>=inputStart&&d.date<=to))});
     read.hashes.set(key,hash);
     return hash;
   }
@@ -226,8 +228,10 @@ export class EnergyStore{
       this.invalidate();
     });
   }
-  overview(now=new Date()):EnergyOverview {
-    const read=this.read(),date=localDay(now.toISOString(),read.zone),stepDate=calendarDay(now.toISOString(),read.zone);
+  overview(now=new Date(),selectedDate?:string):EnergyOverview {
+    const today=this.today(now),date=selectedDate===undefined?today:daySchema.parse(selectedDate);
+    if(date>today)throw new Error('请选择今天或之前的手记日期。');
+    const read=this.read(),stepDate=calendarDay(now.toISOString(),read.zone);
     const dates=Array.from({length:7},(_,i)=>addDays(date,i-6));
     const days=dates.map(day=>{
       const estimate=this.day(day,read);
@@ -239,7 +243,7 @@ export class EnergyStore{
       return {date:day,count:walking?.steps??null,scope:walking?.scope,coverage:walking?.coverage,
         conflict:!walking&&estimate.missing.some(reason=>reason.includes('选择步数来源')||reason.includes('步数来源已删除'))};
     });
-    return {date,stepDate,days,balance:current.balance,balanceState:current.balanceState,activityComplete:current.activityComplete,
+    return {date,today,stepDate,days,balance:current.balance,balanceState:current.balanceState,activityComplete:current.activityComplete,
       steps};
   }
   view(payload:unknown={},now=new Date()):EnergyView{

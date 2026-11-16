@@ -2,7 +2,7 @@ import {z} from 'zod';
 import {idSchema,timeSchema,zoneSchema} from './validation';
 export const daySchema=z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(day=>{const d=new Date(day+'T12:00:00Z');return Number.isFinite(+d)&&d.toISOString().slice(0,10)===day;},'日期不存在');
 export const activitySchema=z.enum(['seated','walking','physical']);
-export const energyStepsInput=z.object({date:daySchema,timezone:zoneSchema,steps:z.number().int().min(0).max(100000),coverage:z.enum(['full','partial'])}).strict();
+export const energyStepsInput=z.object({date:daySchema,timezone:zoneSchema,steps:z.number().int().min(0).max(100000),coverage:z.enum(['full','partial']).optional()}).strict();
 export const energyGoalSchema=z.enum(['maintain','lose','gain']);
 const minutesRange=z.object({low:z.number().min(1).max(360),high:z.number().min(1).max(360)}).refine(r=>r.high>=r.low,'常规时长上限不能小于下限');
 export const energyProfileInput=z.object({effectiveDate:daySchema,age:z.number().int().min(18).max(100),heightCm:z.number().min(100).max(250),sex:z.enum(['male','female']),activity:activitySchema,strengthMinutes:minutesRange,strengthPerWeek:z.number().min(0).max(14),runMinutes:z.number().min(1).max(360),runPerWeek:z.number().min(0).max(14),runPace:z.number().min(160).max(860),generalAdult:z.boolean(),usualSteps:z.number().int().min(0).max(100000).optional(),strideCm:z.number().finite().min(20).max(150).optional()}).refine(p=>p.strengthMinutes.high*p.strengthPerWeek+p.runMinutes*p.runPerWeek<=7*1440,'常规一周训练时长不合理');

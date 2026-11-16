@@ -3,6 +3,7 @@ import type {ActivityLevel, DailyEnergyEstimate, DailyEnergyInput, EnergyGoal, E
 import {journalDay as localDay,calendarDay,dayBounds,atTime} from './dates';
 import {inferSession,runCompletion} from './exercises';
 
+export const ENERGY_RECORD_POLICY_VERSION='analyzed-records-v1';
 export const ENERGY_MODEL_VERSION='mifflin-compendium2024-fixed-steps-v5';
 export const LEGACY_ENERGY_MODEL_VERSION='mifflin-compendium2024-steps-v4';
 export const ACTIVITY_LEVELS:Record<ActivityLevel,{label:string;factor:Range}>={
@@ -241,7 +242,6 @@ export function estimateDay(date:string,timezone:string,records:HealthRecord[]|E
   const day=index.journal.get(date)??[];
   const meals=day.filter(r=>r.kind==='meal'),training=day.filter(r=>r.kind==='training'||!!r.analysis?.run||!!r.analysis?.sets?.length||!!r.analysis?.training?.durationMinutes)
     .sort((a,b)=>Number(!!b.analysis?.activityOverrides)-Number(!!a.analysis?.activityOverrides)||Date.parse(b.updatedAt)-Date.parse(a.updatedAt)||a.id.localeCompare(b.id));
-  const activityRecords=day.filter(input?.dayPolicy?isJournalActivityRecord:isEnergyActivityRecord);
   const measured=index.weights.find(r=>index.dates.get(r.id)!<=date);
   const weight=measured?{id:measured.id,revision:measured.revision,kg:measured.body!.weightKg!,date:index.dates.get(measured.id)!}:undefined;
   const missing:string[]=[],assumptions=['活动档位为经验参数，含日常活动与进食相关消耗。','参考区间不是统计置信区间，也不是实测消耗。'];
@@ -262,6 +262,7 @@ export function estimateDay(date:string,timezone:string,records:HealthRecord[]|E
   for(const duplicate of duplicates.filter(d=>d.exact))assumptions.push(`重复训练仅计一次：${duplicate.recordId}，与${duplicate.duplicateOf}同源`);
   for(const r of training){
     if(excluded.has(r.id)){assumptions.push(`已排除当天训练记录：${r.id}`);continue;}
+    if(r.analysisPending){missing.push(`训练正在等待分析：${r.id}`);unsupported=true;}
     const a=r.analysis,session=a?.training??inferSession(r.text,a?.sets);
     if(skip.has(r.id)&&!a?.run)continue;
     const rawSession=inferSession(r.text,a?.sets);
@@ -343,7 +344,7 @@ export function estimateDay(date:string,timezone:string,records:HealthRecord[]|E
   const {walking,unresolved}=walkingEstimate(civilRecords,civilRuns,input,profile,weight?.kg,missing,assumptions,unresolvedCivilRun,historyReference);
   assumptions.push('饮食和训练按04:00换日，步数修正采用同日期00:00–24:00的自然日数据。');
   if(profile?.baselineAnchor&&walking?.reference?.sources.some(s=>index.byId.get(s.id)?.revision!==s.revision))assumptions.push('固定步数参考的来源已有修订或移除；当前保留已确认的参考快照，请核对后保存新版计算资料。');
-  unsupported=unsupported||unresolved;
+  unsupported=unsupported||(unresolved&&walking?.pending!=='partial');
   const tooLong=workouts.reduce((sum,w)=>sum+w.minutes.high,0)>1440;
   if(tooLong){missing.push('当天训练时长合计超过24小时，请核对重复记录或时长');unsupported=true;}
   const dailyBaseline=baseline?{low:Math.max(resting!,baseline.low+(walking?.correction?.low??0)),high:Math.max(resting!,baseline.high+(walking?.correction?.high??0))}:null;
@@ -351,14 +352,11 @@ export function estimateDay(date:string,timezone:string,records:HealthRecord[]|E
   if(baseline&&resting!==null&&baseline.low+(walking?.correction?.low??0)<resting)assumptions.push('步数调整后的日常消耗下限低于静息参考，已按静息参考截取；请核对平常步数与活动档位是否匹配。');
   const estimated=meals.filter(r=>r.analysis?.macros);
   const sumMacro=(key:'kcal'|'protein'):Range|null=>estimated.length?{low:estimated.reduce((s,r)=>s+r.analysis!.macros![key].low,0),high:estimated.reduce((s,r)=>s+r.analysis!.macros![key].high,0)}:null;
-  const foodReady=meals.length>0&&estimated.length===meals.length&&meals.every(r=>r.status==='ready'&&!r.analysis?.unmatched?.length&&!r.timeSource);
-  const mealConfirmed=!!input?.mealComplete&&sameRefs(input.mealSources,refs(meals));
-  const stepSourcesMatch=input?.steps!==undefined||input?.walkingKm!==undefined||!input?.stepSources||sameRefs(input.stepSources,refs(civilRecords.filter(r=>!!r.analysis?.dailyActivity)));
-  const activityConfirmed=!!input?.activityComplete&&sameRefs(input.activitySources,refs(activityRecords))&&stepSourcesMatch;
-  const mealComplete=mealConfirmed&&foodReady;
-  const activityComplete=activityConfirmed&&!unsupported;
-  if(!mealComplete)missing.push('饮食尚未确认记齐，或存在待分析／修订的餐食');
-  if(!activityComplete)missing.push('活动尚未确认记齐，或存在待确认的训练');
+  const foodReady=meals.length>0&&estimated.length===meals.length&&meals.every(r=>r.status==='ready'&&!r.analysisPending&&!r.analysis?.unmatched?.length&&!r.timeSource);
+  const mealConfirmed=foodReady,activityConfirmed=!unsupported;
+  const mealComplete=mealConfirmed,activityComplete=activityConfirmed;
+  if(!mealComplete)missing.push(meals.length?'餐食存在待分析或待补充的记录':'当天还没有餐食记录');
+  if(!activityComplete)missing.push('活动记录存在待分析或待补充的信息');
   if(profile&&!profile.generalAdult)assumptions.push('当前不属于一般成年健身场景，仅展示记录与估算，不自动提供饮食目标。');
   const protein=sumMacro('protein'),kcal=sumMacro('kcal'),balance=mealComplete&&activityComplete&&kcal&&expenditure?{low:kcal.low-expenditure.high,high:kcal.high-expenditure.low}:null;
   return {date,timezone,modelVersion:profile?.baselineAnchor?.modelVersion??LEGACY_ENERGY_MODEL_VERSION,profileId:profile?.id,weight,resting,baseline,dailyBaseline,expenditure,workouts,walking,duplicates,intake:{kcal,protein,meals:meals.length,estimated:estimated.length,complete:mealComplete},mealConfirmed,activityConfirmed,activityComplete,balance,balanceState:balance?(balance.high<0?'deficit':balance.low>0?'surplus':'uncertain'):'incomplete',target,targetDifference:target&&kcal?{low:target.kcal-kcal.high,high:target.kcal-kcal.low}:null,proteinDifference:target?.protein&&protein?{low:target.protein-protein.high,high:target.protein-protein.low}:null,sources:[...new Map([...refs([...day,...civilRecords,...runSources,...(measured&&!day.some(r=>r.id===measured.id)?[measured]:[])]),...(walking?.reference?.sources??[])].map(r=>[r.id,r])).values()],missing,assumptions};

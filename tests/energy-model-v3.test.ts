@@ -65,15 +65,15 @@ test('latest complete report per source replaces cumulative screenshots and part
  const late=report('late',{steps:10000,scope:'nonTraining',coverage:'full',sourceApp:'phone'},{occurredAt:date+'T22:00:00+08:00'});
  const partial=report('partial',{steps:12000,scope:'nonTraining',coverage:'partial',asOf:'12:00',sourceApp:'phone'},{occurredAt:date+'T23:00:00+08:00'});
  const day=estimate([early,late,partial]);assert.equal(day.walking!.steps,10000);assert.equal(day.walking!.source!.id,'late');
- const onlyPartial=estimate([partial]);assert.equal(onlyPartial.walking!.correction,null);assert.equal(onlyPartial.activityComplete,false);assert.match(onlyPartial.walking!.basis,/12:00/);
+ const onlyPartial=estimate([partial]);assert.equal(onlyPartial.walking!.correction,null);assert.equal(onlyPartial.activityComplete,true);assert.match(onlyPartial.walking!.basis,/12:00/);
 });
-test('manual values and explicit source selection resolve conflicts; changed and deleted source invalidates confirmation',()=>{
+test('manual values resolve conflicts and automatic readiness follows changed or deleted sources',()=>{
  const a=report('a',{steps:8000,scope:'nonTraining',coverage:'full',sourceApp:'phone'}),b=report('b',{steps:12000,scope:'nonTraining',coverage:'full',sourceApp:'other'});
  const conflict=estimate([a,b]);assert.equal(conflict.walking,null);assert.equal(conflict.activityComplete,false);
  const selected=estimate([a,b],{stepSourceId:'b'});assert.equal(selected.walking!.steps,12000);
  const manual=estimate([a,b],{steps:9000,stepsScope:'nonTraining'});assert.equal(manual.walking!.steps,9000);assert.equal(manual.walking!.source,undefined);
- const oldRefs=refs([a]);const changed=estimate([{...a,revision:2}],{activitySources:oldRefs});assert.equal(changed.activityComplete,false);
- const deleted=estimate([{...a,deleted:true}],{activitySources:oldRefs});assert.equal(deleted.walking,null);assert.equal(deleted.activityComplete,false);
+ const oldRefs=refs([a]);const changed=estimate([{...a,revision:2}],{activitySources:oldRefs});assert.equal(changed.activityComplete,true);
+ const deleted=estimate([{...a,deleted:true}],{activitySources:oldRefs});assert.equal(deleted.walking,null);assert.equal(deleted.activityComplete,true);
 });
 test('reported nontraining distance is used before height-derived step distance',()=>{
  const day=estimate([],{steps:10000,stepsScope:'nonTraining',walkingKm:4});

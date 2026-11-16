@@ -41,7 +41,7 @@ export type TodaySummary={
   weight:{latest:{id:string;date:string;kg:number}|null;change:number|null};
 };
 export type EnergyOverview={
-  date:string;stepDate:string;
+  date:string;today:string;stepDate:string;
   days:{date:string;intake:Range|null;expenditure:Range|null;mealComplete:boolean}[];
   balance:Range|null;balanceState:DailyEnergyEstimate['balanceState'];activityComplete:boolean;
   steps:{date:string;count:number|null;scope?:WalkingEstimate['scope'];coverage?:WalkingEstimate['coverage'];conflict:boolean}[];

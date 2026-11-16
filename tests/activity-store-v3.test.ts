@@ -28,7 +28,7 @@ test('manual corrections and cleared fields survive re-extraction, backup, resta
  assert.equal(store.undoRecord(r.id).analysis!.run!.minutes,35);
 });
 
-test('daily report revisions invalidate activity confirmation and source-dependent answers',t=>{
+test('daily report revisions update automatic activity readiness and invalidate source-dependent answers',t=>{
  const store=setup(t);store.energy.saveProfile(profile,now);weight(store);
  let r=record(store,'steps-v3','note',day,'全天步数8000步');
  r=store.applyAnalysis(r.id,{summary:'步数',questions:[],assumptions:[],dailyActivity:{steps:8000,scope:'nonTraining',coverage:'full',sourceApp:'测试App'}},'local',r.revision);
@@ -37,10 +37,10 @@ test('daily report revisions invalidate activity confirmation and source-depende
  const dependency={from:day,to:day,hash:store.energy.hash(day,day)};
  store.putMessage({id:'answer-v3',role:'assistant',text:'测试回答',createdAt:now.toISOString(),status:'complete',sources:[],provider:'local',stale:false,energyDependency:dependency});
  store.updateActivity({id:r.id,revision:r.revision,dailyActivity:{steps:9000}});
- assert.equal(store.energy.day(day).activityComplete,false);assert.equal(store.messages().find(m=>m.id==='answer-v3')?.stale,true);
+ assert.equal(store.energy.day(day).activityComplete,true);assert.equal(store.messages().find(m=>m.id==='answer-v3')?.stale,true);
  assert.equal(store.energy.day(day).walking?.nonTrainingSteps,9000);
  store.energy.saveDay({date:day,mealComplete:false,activityComplete:true},now);assert.equal(store.energy.day(day).activityComplete,true);
- store.revise(r.id,{deleted:true},store.record(r.id).revision);assert.equal(store.energy.day(day).walking,null);assert.equal(store.energy.day(day).activityComplete,false);
+ store.revise(r.id,{deleted:true},store.record(r.id).revision);assert.equal(store.energy.day(day).walking,null);assert.equal(store.energy.day(day).activityComplete,true);
 });
 
 test('reference steps suggestion needs seven complete historical days and is a median',t=>{
