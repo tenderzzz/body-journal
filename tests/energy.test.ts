@@ -122,15 +122,15 @@ test('standalone plan headings and action-prefixed plans never count as complete
   training(store,'卧推 50kg 3x8\n计划跑步3km 配速6\'');
   assert.deepEqual(store.energy.day(today).workouts.map(w=>w.kind),['strength']);
 });
-test('incomplete meals never yield a deficit; complete interval spanning zero is uncertain',t=>{
+test('analyzed meals calculate automatically and pending meals pause the balance',t=>{
   const store=setup(t);store.energy.saveProfile(profile,now);weight(store);meal(store);
-  assert.equal(store.energy.day(today).balance,null);complete(store);
   assert.equal(store.energy.day(today).balanceState,'uncertain');
+  assert.equal(store.energy.day(today).mealConfirmed,true);assert.equal(store.energy.day(today).activityConfirmed,true);
   const partial=store.importEnvelope({version:1,id:randomUUID(),kind:'meal',occurredAt:today+'T20:00:00+08:00',timezone:'Asia/Shanghai',text:'还有一餐没有分析'}).record;
   assert.equal(store.energy.day(today).intake.complete,false);complete(store);assert.equal(store.energy.day(today).balance,null);
   store.revise(partial.id,{deleted:true},1);complete(store);assert.equal(store.energy.day(today).balanceState,'uncertain');
 });
-test('complete intake and expenditure use full interval subtraction and require reconfirmation after edits',t=>{
+test('complete estimates use full interval subtraction and wait for new analysis after edits',t=>{
   const store=setup(t);store.energy.saveProfile(profile,now);weight(store);const m=meal(store,today,{low:100,high:200});complete(store);
   assert.equal(store.energy.day(today).balanceState,'deficit');
   assert.deepEqual(store.energy.day(today).balance,{low:100-2403,high:200-2136});
@@ -159,6 +159,8 @@ test('review needs 21 unchanged target days, 15 complete food days and three wei
   const store=setup(t);assert.equal(store.energy.review(now).eligible,false);
   assert.equal(eligible(store).eligible,true);
   store.energy.saveDay({date:'2026-10-06',mealComplete:false,activityComplete:true},now);
+  assert.equal(store.energy.review(now).completeDays,21);
+  store.importEnvelope({version:1,id:randomUUID(),kind:'meal',occurredAt:'2026-10-06T18:00:00+08:00',timezone:'Asia/Shanghai',text:'该日还有待分析餐食'});
   assert.equal(store.energy.review(now).completeDays,20);
   store.energy.saveProfile({...profile,generalAdult:false},now);assert.equal(store.energy.review(now).eligible,false);
 });
@@ -232,8 +234,8 @@ test('energy questions use the same local results as the page, and never change 
   const store=setup(t);store.energy.saveProfile(profile,now);const w=weight(store);meal(store);let calls=0;
   const service=assistant(t,store,body=>{calls++;const context=JSON.parse(body.input[0].content[0].text).context;
     assert.deepEqual(context.energy.selected.expenditure,store.energy.day(today).expenditure);
-    assert.equal(context.energy.selected.balance,null);assert.match(body.instructions,/不要自己重算TDEE/);
-    return sse({answerMarkdown:`饮食还没有记齐，先看已记部分。[记录:${w.id}]`,memoryChanges:[],goalProposal:null});});
+    assert.deepEqual(context.energy.selected.balance,store.energy.day(today).balance);assert.ok(context.energy.selected.balance);assert.match(body.instructions,/不要自己重算TDEE/);
+    return sse({answerMarkdown:`按已分析餐食查看本日估算。[记录:${w.id}]`,memoryChanges:[],goalProposal:null});});
   store.energy.view({},now);assert.equal(calls,0);await service.chat('今天怎么吃？');
   assert.equal(calls,1);assert.equal(store.energy.targets().length,0);assert.ok(store.messages().at(-1)?.energyDependency);
 });
@@ -258,4 +260,27 @@ test('legacy duration repair preserves raw text and history and is idempotent',t
   store.db.prepare('UPDATE records SET doc=? WHERE id=?').run(JSON.stringify(legacy),r.id);
   const raw=readFileSync(path.join(store.root,'raw',r.id+'.json'),'utf8');
   assert.equal(store.migrateEnergyParsing(),1);assert.equal(store.record(r.id).analysis?.run?.minutes,18);assert.equal(store.history(r.id).length,1);assert.equal(readFileSync(path.join(store.root,'raw',r.id+'.json'),'utf8'),raw);assert.equal(store.migrateEnergyParsing(),0);
+});
+
+test('historical analyzed days use automatic readiness even with legacy unchecked inputs, then update after additions',t=>{
+  const store=setup(t);store.energy.saveProfile(profile,now);weight(store,'2026-10-20');
+  const m=meal(store,'2026-10-20',{low:1500,high:1700});
+  store.energy.saveDay({date:'2026-10-20',mealComplete:false,activityComplete:false},now);
+  const historical=store.energy.overview(now,'2026-10-20');
+  assert.equal(historical.days.at(-1)?.mealComplete,true);assert.ok(historical.balance);assert.equal(historical.activityComplete,true);
+  const extra=meal(store,'2026-10-20',{low:200,high:300});
+  assert.deepEqual(store.energy.overview(now,'2026-10-20').days.at(-1)?.intake,{low:1700,high:2000});
+  store.revise(extra.id,{text:'修改分量待重分析'},extra.revision);
+  assert.equal(store.energy.day('2026-10-20').mealConfirmed,false);assert.equal(store.energy.day('2026-10-20').balance,null);
+  store.revise(extra.id,{deleted:true},store.record(extra.id).revision);
+  assert.deepEqual(store.energy.overview(now,'2026-10-20').days.at(-1)?.intake,m.analysis!.macros!.kcal);
+  assert.ok(store.energy.day('2026-10-20').balance);assert.equal(store.energy.day('2026-10-19').intake.kcal,null);
+});
+
+test('queued reanalysis changes energy evidence while preserving the recorded intake estimate',t=>{
+  const store=setup(t);store.energy.saveProfile(profile,now);weight(store);const m=meal(store);
+  const before=store.energy.hash(today,today);assert.ok(store.energy.day(today).balance);
+  store.markAnalysisQueued(m.id);
+  assert.notEqual(store.energy.hash(today,today),before);assert.equal(store.energy.day(today).balance,null);
+  assert.deepEqual(store.energy.day(today).intake.kcal,m.analysis!.macros!.kcal);
 });

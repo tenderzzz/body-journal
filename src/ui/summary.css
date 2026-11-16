@@ -129,3 +129,9 @@ button.summary-row:hover,.energy-action-list button:hover,.energy-action-list bu
 .step-bars b {width:5px;height:2px;background:var(--line);transform:translateY(-2px)}
 .step-day {position:absolute;top:calc(100% + 4px);font-size:10px;line-height:1;color:var(--muted);white-space:nowrap}
 .steps-form-hint {margin:0;color:var(--muted);font-size:12px;line-height:1.7}
+.overview-date-nav {display:flex;align-items:center;justify-content:flex-end;gap:2px;flex-wrap:wrap}
+.overview-date-nav input {width:127px;padding:4px 3px;border:0;background:transparent;color:var(--ink);font:inherit;font-size:12px}
+.overview-date-nav .icon-button {width:27px;height:27px;padding:3px}
+.overview-date-nav .text-button {font-size:11px;margin-left:4px}
+.overview-reading {min-height:172px;display:grid;place-items:center;color:var(--muted);font-size:13px}
+.overview-basis {align-self:flex-end;margin-top:7px;color:var(--muted);font-size:10px}

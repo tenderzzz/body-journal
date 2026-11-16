@@ -1,7 +1,7 @@
 import {useCallback,useEffect,useRef,useState,useMemo} from 'react';
 import type {Snapshot,RecordPage,MessagePage,TodaySummary,EnergyOverview} from '../shared/types';
 
-type Options={page:string;date:string;kind:string;search:string;includeDeleted:boolean;history:boolean;anchor:string};
+type Options={page:string;date:string;energyDate:string;kind:string;search:string;includeDeleted:boolean;history:boolean;anchor:string};
 export function useJournalData(options:Options){
   const [today,setToday]=useState<TodaySummary|null>(null);
   const [energyOverview,setEnergyOverview]=useState<EnergyOverview|null>(null),[energyError,setEnergyError]=useState('');
@@ -21,7 +21,7 @@ export function useJournalData(options:Options){
         const result=await window.health.invoke<TodaySummary>('today:get');
         if(seq===sequence.current.today)setToday(result);
       }else if(resource==='energy'){
-        const result=await window.health.invoke<EnergyOverview>('energy:overview');
+        const result=await window.health.invoke<EnergyOverview>('energy:overview',p.energyDate?{date:p.energyDate}:undefined);
         if(seq===sequence.current.energy){setEnergyOverview(result);setEnergyError('');}
       }else if(resource==='overview'){
         const result=await window.health.invoke<Snapshot&{demo:boolean}>('overview');
@@ -60,7 +60,7 @@ export function useJournalData(options:Options){
     return Promise.all(requests);
   },[load]);
   useEffect(()=>{if(options.page==='assistant')void load('today');},[options.page,load]);
-  useEffect(()=>{if(options.page==='energy')void load('energy');},[options.page,load]);
+  useEffect(()=>{if(options.page==='energy')void load('energy');},[options.page,options.energyDate,load]);
   useEffect(()=>{void load('overview');},[load]);
   useEffect(()=>{if(options.page==='records')void load('records');},[options.page,options.date,options.kind,options.search,options.includeDeleted,load]);
   useEffect(()=>{if(options.page==='assistant'){void load('messages');void load('calendar');}},[options.page,options.history,options.anchor,load]);

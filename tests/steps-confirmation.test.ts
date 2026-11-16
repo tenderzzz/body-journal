@@ -22,8 +22,8 @@ test('a completed run with unknown step overlap preserves confirmation and uses 
  store.importEnvelope({version:1,id:randomUUID(),kind:'training',occurredAt:date+'T18:00:00+08:00',timezone:'Asia/Shanghai',text:'跑步5km 用时30分钟'});
  const day=complete(store);assert.equal(day.activityComplete,true);assert.equal(day.walking?.correction,null);assert.equal(day.workouts.length,1);
 });
-test('partial coverage and invalid run data remain unresolved',t=>{
- const store=setup(t);const partial=complete(store,{stepCoverage:'partial'});assert.equal(partial.activityComplete,false);assert.equal(partial.activityConfirmed,true);
+test('partial steps use the daily baseline while invalid run data remains unresolved',t=>{
+ const store=setup(t);const partial=complete(store,{stepCoverage:'partial'});assert.equal(partial.activityComplete,true);assert.equal(partial.activityConfirmed,true);
  const r=store.importEnvelope({version:1,id:randomUUID(),kind:'training',occurredAt:date+'T18:00:00+08:00',timezone:'Asia/Shanghai',text:'跑步5km 用时30分钟'}).record;
  store.applyAnalysis(r.id,{summary:'合成冲突数据',questions:[],assumptions:[],run:{km:5,minutes:30,paceSecondsPerKm:240,completion:'completed'}},'local',r.revision);
  assert.equal(complete(store).activityComplete,false);

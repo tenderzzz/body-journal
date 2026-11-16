@@ -47,7 +47,7 @@ async function launch(root,demo=false){app=await _electron.launch({executablePat
 try{
   let page=await launch(vault);
   await page.getByRole('navigation').getByRole('button',{name:'能量',exact:true}).click();
-  await page.getByRole('button',{name:'核对今天',exact:true}).click();
+  await page.getByRole('button',{name:'当天明细',exact:true}).click();
   await expect(page.getByText('再补一点资料，就能估算每天的消耗。',{exact:true})).toBeVisible();
   const today=await page.evaluate(async()=>(await window.health.invoke('energy:get')).today);
   await page.getByRole('button',{name:'记身体',exact:true}).click();
@@ -90,8 +90,6 @@ try{
   },today);
   await expect(page.getByText('60 分钟 · 记录时长',{exact:true})).toBeVisible();
   await expect(page.getByText('18 分钟 · 记录时长',{exact:true})).toBeVisible();
-  await page.getByLabel('当天饮食已记齐，包含零食和饮料',{exact:true}).check();
-  await page.getByLabel('当天活动已记齐，或明确没有专门训练',{exact:true}).check();
   await page.getByRole('button',{name:'保存当天补充',exact:true}).click();
   await expect.poll(async()=>page.evaluate(async()=>(await window.health.invoke('energy:get')).selected.intake.complete)).toBe(true);
   const energy=await page.evaluate(async()=>await window.health.invoke('energy:get'));
@@ -103,11 +101,11 @@ try{
   await expect(page.locator('.energy-week-review')).toContainText('近四周核对');
   await expect(page.locator('.energy-week-review tbody tr')).toHaveCount(4);
   await page.locator('.energy-week-review').screenshot({path:'/tmp/bodyjournal-energy-week-review.png'});
-  await page.getByRole('button',{name:'核对今天',exact:true}).click();
+  await page.getByRole('button',{name:'当天明细',exact:true}).click();
   await page.getByText('查看计算方法、假设与缺失项',{exact:true}).click();
   await expect(page.getByText(/运动总消耗＝MET/)).toBeVisible();
   await page.evaluate(async r=>window.health.invoke('record:update',{id:r.id,revision:r.revision,text:r.text+'\n感受：今天有点累'}),fixture);
-  await expect.poll(async()=>page.evaluate(async()=>(await window.health.invoke('energy:get')).selected.activityComplete)).toBe(false);
+  await expect.poll(async()=>page.evaluate(async()=>(await window.health.invoke('energy:get')).selected.activityComplete)).toBe(true);
   await app.close();
   page=await launch(vault);
   const reopened=await page.evaluate(async()=>window.health.invoke('energy:get'));
@@ -130,17 +128,17 @@ try{
   `],{cwd:process.cwd(),env:{...process.env,BODYJOURNAL_PHOTO_FIXTURE:photoVault},encoding:'utf8',stdio:'pipe'}).trim());
   page=await launch(photoVault);
   await page.getByRole('navigation').getByRole('button',{name:'能量',exact:true}).click();
-  await page.getByRole('button',{name:'核对今天',exact:true}).click();
+  await page.getByRole('button',{name:'当天明细',exact:true}).click();
   await page.getByLabel('能量日期',{exact:true}).fill(photoFixture.date);
   await expect(page.getByText('26.9 分钟 · 记录时长',{exact:true})).toBeVisible();
-  const photoActivity=page.getByLabel('当天活动已记齐，或明确没有专门训练',{exact:true});
+  const photoActivity=page.locator('.energy-confirmation-status');
   await photoActivity.scrollIntoViewIfNeeded();
-  await expect(photoActivity).toBeVisible();await expect(photoActivity).toBeChecked();
+  await expect(photoActivity).toBeVisible();await expect(photoActivity).toContainText('活动记录已自动核对');
   const photoEnergy=await page.evaluate(async date=>(await window.health.invoke('energy:get',{date})).selected,photoFixture.date);
   if(photoEnergy.workouts.length!==1||photoEnergy.workouts[0].kind!=='run'||photoEnergy.workouts[0].recordId!==photoFixture.recordId||photoEnergy.workouts[0].minutes.low!==26.9||!photoEnergy.activityComplete)throw new Error('Image-only run was missing, duplicated, or treated as strength');
   await page.getByRole('button',{name:'保存当天补充',exact:true}).click();
   await expect.poll(()=>page.evaluate(async date=>(await window.health.invoke('energy:get',{date})).selected.activityComplete,photoFixture.date)).toBe(true);
-  await expect(photoActivity).toBeChecked();
+  await expect(photoActivity).toContainText('活动记录已自动核对');
   await page.getByRole('navigation').getByRole('button',{name:'趋势',exact:true}).click();
   await page.getByRole('button',{name:'训练表现',exact:true}).click();
   await expect(page.locator('.run-row')).toHaveCount(1);

@@ -42,7 +42,7 @@ async function invoke(action:string,payload:any) {
   payload=validateMutation(action,payload);
   switch(action){
     case 'today:get':return todaySummary(store);
-    case 'energy:overview':return store.energy.overview();
+    case 'energy:overview':return store.energy.overview(new Date(),payload?.date);
     case 'today:rest':setTodayRest(store,payload);emit({type:'changed',scopes:['today']});return;
     case 'snapshot':return snapshot();
     case 'migration:get':return store.getConfig('dayMigrationReport');
