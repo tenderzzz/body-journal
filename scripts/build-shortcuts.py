@@ -61,8 +61,8 @@ class Workflow:
         self.add('showresult',Text='没有输入内容，记录未保存。')
         self.add('exit')
         self.endif(group)
-    def init(self):
-        self.add('comment',WFCommentActionText='身体手记 v0.1.4。原始记录保存到你选择的 iCloud 收件箱；不会调用 AI。只有保存文件成功后才提示成功。安装时请选择 iCloud Drive/Shortcuts/BodyJournal/inbox。若失败或取消，不会显示“已保存”。')
+    def init(self,revision='v0.1.4'):
+        self.add('comment',WFCommentActionText=f'身体手记 {revision}。原始记录保存到你选择的 iCloud 收件箱；不会调用 AI。只有保存文件成功后才提示成功。安装时请选择 iCloud Drive/Shortcuts/BodyJournal/inbox。若失败或取消，不会显示“已保存”。')
         empty=self.add('gettext',WFTextActionText='')
         self.set('记录文字',empty);self.set('记录照片',empty)
         date=self.add('date',WFDateActionMode='Current Date')
@@ -136,20 +136,22 @@ note=Workflow('身体手记·随手记','note');note.init()
 note.require_text(note.ask('记下一点睡眠、疲劳、压力或生活安排。可以使用键盘听写。',default=incoming));note.finish()
 
 # Daily step totals are entered as shown by Health, then imported locally without a model call.
-steps=Workflow('身体手记·记步数','note');steps.init()
+steps=Workflow('身体手记·记步数','note');steps.init(revision='记步数 v2026.11.17')
 steps.set('采集时间',variable('记录时间'))
 chosen=steps.add('ask',WFAskActionPrompt='选择步数所属日期（今天或以前）。',WFInputType='Date')
 steps.set('步数日期',steps.add('format.date',WFDate=text(chosen),WFDateFormatStyle='Custom',WFDateFormat='yyyy-MM-dd'))
 steps.set('记录时间',steps.add('gettext',WFTextActionText=text(variable('步数日期'),'T12:00:00+08:00')))
 count=steps.ask('所选日期的总步数是多少？填写健康 App 显示的总数（包含运动步数）。',number=True)
 steps.set('步数',count)
-valid=steps.add('text.match',WFInput=attachment(variable('步数')),WFMatchTextPattern='^(?:[0-9]{1,5}|100000|[1-9][0-9]?[,，][0-9]{3}|100[,，]000)$')
+# Match Text uses its action-specific `text` parameter. WFInput is ignored here
+# and leaves an unbound text field that Shortcuts asks the user to fill at runtime.
+valid=steps.add('text.match',text=text(variable('步数')),WFMatchTextPattern='^(?:[0-9]{1,5}|100000|[1-9][0-9]?[,，][0-9]{3}|100[,，]000)$')
 g=steps.condition(valid)
 steps.otherwise(g)
 steps.add('showresult',Text='步数须为 0 到 100000 的整数，本次未保存。')
 steps.add('exit');steps.endif(g)
 today=steps.add('format.date',WFDate=text(variable('采集时间')),WFDateFormatStyle='Custom',WFDateFormat='yyyy-MM-dd')
-same_day=steps.add('text.match',WFInput=attachment(variable('步数日期')),WFMatchTextPattern=text('^',today,'$'))
+same_day=steps.add('text.match',text=text(variable('步数日期')),WFMatchTextPattern=text('^',today,'$'))
 g=steps.condition(same_day)
 steps.set('步数范围',steps.add('gettext',WFTextActionText='截至目前步数：'))
 steps.otherwise(g)

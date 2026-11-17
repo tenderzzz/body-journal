@@ -11,7 +11,7 @@ cleanup() {
 trap cleanup EXIT
 mkdir -p "$STEP_OUTPUT_DIR"
 STEP_STAGE="$(mktemp -d "$STEP_OUTPUT_DIR/.steps-sign.XXXXXX")"
-echo '正在用这台 Mac 的 Apple 账号签名步数快捷指令…'
+echo '正在签名记步数 v2026.11.17（修复输入后多出文本框）…'
 if ! /usr/bin/shortcuts sign --mode anyone \
   --input "$STEP_SCRIPT_DIR/unsigned/身体手记·记步数.shortcut" \
   --output "$STEP_STAGE/身体手记·记步数.shortcut"; then
@@ -23,5 +23,6 @@ fi
 /bin/mv "$STEP_STAGE/身体手记·记步数.shortcut" "$STEP_OUTPUT"
 echo "已签名并保存：$STEP_OUTPUT"
 echo '安装时选择与 Mac 相同的 BodyJournal/inbox 文件夹。'
+echo '遇到同名提示请选择替换旧版；确认快捷指令顶部注释为“记步数 v2026.11.17”，避免继续运行旧入口。'
 echo '可通过快捷指令的 iCloud 同步在 iPhone 使用，也可以把下载目录里的签名文件 AirDrop 到 iPhone。'
 /usr/bin/open "$STEP_OUTPUT"
