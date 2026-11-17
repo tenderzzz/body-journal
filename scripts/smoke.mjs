@@ -49,6 +49,9 @@ try {
  if(!groups.length||!groups.includes('胸'))throw new Error('训练动作缺少部位分组: '+groups.join(','));
  await page.getByRole('button',{name:'整理动作名称'}).click();
  await expect(page.getByRole('dialog')).toBeVisible();
+ await expect(page.getByRole('dialog')).toContainText('常见叫法已自动合并，目前没有待确认动作');
+ await page.getByRole('button',{name:/^全部动作 \(/}).click();
+ await page.locator('.exercise-more summary').first().click();
  const archived=async()=>page.evaluate(async()=>((await window.health.invoke('snapshot')).exerciseRules?.archived??[]).length);
  await page.getByRole('button',{name:'归档',exact:true}).first().click();
  await expect.poll(archived).toBe(1);
