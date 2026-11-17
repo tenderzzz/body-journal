@@ -48,6 +48,7 @@ test('explicit user classifications and manual load decisions take precedence',(
  const custom=normalizeSet(row('深蹲'),[{raw:'深蹲',name:'我的特殊深蹲'}]);assert.equal(custom.exercise,'我的特殊深蹲');assert.equal(custom.exerciseManuallyClassified,true);
  const knownManual=normalizeSet(row('杠铃深蹲',{exerciseManuallyClassified:true}));assert.equal(knownManual.exercise,'杠铃深蹲');
  const preference=[{raw:'深蹲',name:'杠铃深蹲'}];
+ assert.equal(normalizeSet(row('深蹲（器械未知）'),preference).classificationNeeded,true);
  for(const name of ['深蹲','杠铃深蹲','杠铃后蹲']){
   const preferred=normalizeSet(row(name),preference);assert.equal(preferred.exercise,'杠铃深蹲');
   assert.equal(normalizeSet(preferred).exercise,'杠铃深蹲');
