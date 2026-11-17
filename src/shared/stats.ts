@@ -1,10 +1,11 @@
 import { normalizeSet, baselineKey, baselineLabel, inferSession, workSetCount, EMPTY_RULES, runCompletion } from './exercises';
 import type { HealthRecord, Memory, SetEntry, ExerciseRules } from './types';
 import {journalDay as localDay} from './dates';
+import {exerciseRuleName} from './exercise-names';
 export {calendarDay as localDay} from './dates';
 export function validMemory(m:Memory, now=new Date()) { return m.active && !m.stale && Date.parse(m.startsAt)<=now.valueOf() && (!m.expiresAt || Date.parse(m.expiresAt)>now.valueOf()); }
 export function computeStats(records:HealthRecord[], zone='Asia/Shanghai', options:{rules?:ExerciseRules}={}) {
-  const rules=options.rules??EMPTY_RULES,archived=new Set(rules.archived);
+  const rules=options.rules??EMPTY_RULES,archived=new Set(rules.archived.map(exerciseRuleName));
   const active=records.filter(r=>!r.deleted).sort((a,b)=>Date.parse(a.occurredAt)-Date.parse(b.occurredAt));
   const measurements=active.filter(r=>r.kind==='body' && r.body).map(r=>({id:r.id,date:localDay(r.occurredAt,zone),time:r.occurredAt,...r.body}));
   const exercises=new Map<string,{id:string;date:string;kg:number|null;reps:number;sets:number;volume:number|null;basis:string;baseline:string;baselineLabel:string;set:SetEntry}[]>();
@@ -12,7 +13,7 @@ export function computeStats(records:HealthRecord[], zone='Asia/Shanghai', optio
   for(const r of active) {
     const date=localDay(r.occurredAt,zone);
     const training=r.analysis?.training??inferSession(r.text,r.analysis?.sets);
-    if(r.kind==='training'&&training.completion==='completed')for(const raw of r.analysis?.sets??[]) {const s=normalizeSet(raw,[],{rules});if(s.setType==='warmup'||archived.has(s.exercise))continue;const key=s.exercise,rows=exercises.get(key)??[];const comparable=s.confirmed&&s.kg!==null&&!['unknown','bodyweight'].includes(s.loadBasis)&&!s.classificationNeeded;rows.push({id:r.id,date,kg:s.kg,reps:s.reps,sets:s.sets,volume:comparable?Math.round(s.kg!*s.reps*s.sets*100)/100:null,basis:s.loadBasis,baseline:baselineKey(s),baselineLabel:baselineLabel(s),set:s});exercises.set(key,rows);}
+    if(r.kind==='training'&&training.completion==='completed')for(const raw of r.analysis?.sets??[]) {const s=normalizeSet(raw,[],{rules});if(s.setType==='warmup'||archived.has(exerciseRuleName(s.exercise)))continue;const key=s.exercise,rows=exercises.get(key)??[];const comparable=s.confirmed&&s.kg!==null&&!['unknown','bodyweight'].includes(s.loadBasis)&&!s.classificationNeeded;rows.push({id:r.id,date,kg:s.kg,reps:s.reps,sets:s.sets,volume:comparable?Math.round(s.kg!*s.reps*s.sets*100)/100:null,basis:s.loadBasis,baseline:baselineKey(s),baselineLabel:baselineLabel(s),set:s});exercises.set(key,rows);}
     if(r.kind==='meal') { const d=daily.get(date)??{date,meals:0,estimated:0,unmatched:0,estimatedItems:0,kcal:{low:0,high:0},protein:{low:0,high:0},carbs:{low:0,high:0},fat:{low:0,high:0}}; d.meals++; if(r.analysis?.macros) { d.estimated++; for(const k of ['kcal','protein','carbs','fat'] as const) {d[k].low+=r.analysis.macros[k].low;d[k].high+=r.analysis.macros[k].high;} } d.unmatched+=r.analysis?.unmatched?.length??0; d.estimatedItems+=r.analysis?.estimatedFoods?.length??0; daily.set(date,d); }
   }
   for(const d of daily.values())for(const k of ['kcal','protein','carbs','fat'] as const){d[k].low=Math.round(d[k].low*10)/10;d[k].high=Math.round(d[k].high*10)/10;}

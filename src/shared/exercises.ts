@@ -1,5 +1,6 @@
 import {CARDIO_TEXT,cardioComponent,normalizeCardio} from './cardio';
 import type { Analysis, ExerciseRules, SetEntry, TrainingPart, TrainingSession, HealthRecord } from './types';
+import {commonExerciseName,exerciseNameKey,exerciseRuleName} from './exercise-names';
 export const PART_NAMES:Record<TrainingPart,string>={chest:'胸',back:'背',shoulders:'肩',legs:'腿',mixed:'混合',unknown:'待确认'};
 export const DEFAULT_SPLIT:TrainingPart[]=['chest','back','shoulders','legs'];
 export type ExerciseAlias={raw:string;name:string};
@@ -43,18 +44,24 @@ export function inferEquipment(name:string,given?:string){return given??EQUIPMEN
 // 反向飞鸟分三类：哑铃→俯身哑铃反向飞鸟；杠铃→杠铃反向飞鸟；其余（蝴蝶机/器械/未注明）→器械反向飞鸟。
 // 哑铃侧平举与哑铃飞鸟视为同一动作，统一用“哑铃飞鸟”。
 export function normalizeExerciseName(input:string){
- let name=aliases[input.trim()]??input.trim();
+ const key=exerciseNameKey(input);
+ let name=commonExerciseName(key)??aliases[key]??key;
  if(/反向飞鸟|后束飞鸟/.test(name))name=/哑铃/.test(name)||/^俯身飞鸟/.test(name)?'俯身哑铃反向飞鸟':/杠铃/.test(name)?'杠铃反向飞鸟':'器械反向飞鸟';
  if(/侧平举/.test(name)&&/哑铃/.test(name))name='哑铃飞鸟';
  return name;
 }
 
 type BasisContext={loadBasis?:SetEntry['loadBasis'];kg?:number|null;equipment?:string;text?:string;original?:string;explicitTotal?:boolean;basisSource?:SetEntry['basisSource']};
+export function exerciseLoadOverride(name:string,rules:ExerciseRules,original=name){
+ const direct=rules.overrides?.[original]??rules.overrides?.[name];if(direct)return direct;
+ const matches=new Set(Object.entries(rules.overrides??{}).filter(([key])=>exerciseRuleName(key)===exerciseRuleName(name)).map(([,basis])=>basis));
+ return matches.size===1?[...matches][0]:undefined;
+}
 // 只有和动作写在同一行（或同一句）的“总重/合计”才视为用户明确声明，避免把器械说明误挂到哑铃动作上。
 export function hasExplicitTotal(text:string|undefined,hints:string[],dumbbell=false){if(!text)return false;return text.split(/\n|[；;]/).some(line=>TOTAL_MARK.test(line)&&(hints.some(h=>!!h&&line.includes(h))||(dumbbell&&/哑铃/.test(line)&&!/单只|单手|每手|单侧/.test(line))));}
 // 动作类型决定计重口径，不再由模型逐条猜。rebase=false 时信任已保存的规则结果。
 export function resolveLoadBasis(name:string,ctx:BasisContext,rules:ExerciseRules=EMPTY_RULES,rebase=false):{loadBasis:SetEntry['loadBasis'];basisSource:NonNullable<SetEntry['basisSource']>} {
- const override=rules.overrides?.[name];
+ const override=exerciseLoadOverride(name,rules,ctx.original);
  if(override&&ctx.basisSource!=='manual')return {loadBasis:override,basisSource:'auto'};
  if(ctx.basisSource==='manual'&&ctx.loadBasis)return {loadBasis:ctx.loadBasis,basisSource:'manual'};
  if(!rebase&&ctx.loadBasis)return {loadBasis:ctx.loadBasis,basisSource:ctx.basisSource??'auto'};
@@ -76,15 +83,27 @@ export function resolveLoadBasis(name:string,ctx:BasisContext,rules:ExerciseRule
 export function normalizeSet(input:SetEntry,custom:ExerciseAlias[]=[],options:{rules?:ExerciseRules;text?:string;explicitTotal?:boolean;rebase?:boolean}={}):SetEntry {
  const rules=options.rules??EMPTY_RULES;
  const original=input.originalExercise??input.exercise;
- const user=custom.find(a=>a.name!==a.raw&&(a.raw===original||a.raw===input.exercise));
- let name=input.exercise.trim(),notes:string[]=[],ambiguous=false;
+ let name=exerciseNameKey(input.exercise),notes:string[]=[],ambiguous=false;
  name=name.replace(/[（(]([^）)]*)[）)]/g,(_,inside:string)=>{notes.push(inside);if(/未知|不明/.test(inside))ambiguous=true;return '';}).trim();
  const joined=notes.join('；'),round=joined.match(/第\s*(\d+)\s*轮/),stage=joined.match(/第\s*(\d+)\s*档/);
+ // A bare squat already uses the barbell convention in this app. Explicit
+ // equipment or variant evidence still takes precedence over that shorthand.
+ if(commonExerciseName(name)==='深蹲'){
+  const descriptors=[input.equipment,...notes,input.loadBasis==='bodyweight'?'自重':''].filter((x):x is string=>!!x).map(exerciseNameKey);
+  const qualifier=descriptors.find(value=>/^(?:史密斯(?:机)?|哈克(?:机)?|哑铃|壶铃|自重|徒手|器械)$/.test(value));
+  const variant=qualifier?.replace(/机$/,'').replace('徒手','自重');
+  const front=descriptors.some(value=>/^(?:前蹲|前置|前架|杠铃前蹲)$/.test(value));
+  if(variant)name=variant+(front?'前蹲':'深蹲');
+  else if(front)name='杠铃前蹲';
+ }
+ const common=commonExerciseName(name),preferences=common?custom.filter(a=>a.name!==a.raw&&commonExerciseName(a.raw)===common&&commonExerciseName(a.name)===common):[];
+ const user=custom.find(a=>a.name!==a.raw&&(a.raw===original||a.raw===input.exercise))??(new Set(preferences.map(a=>a.name)).size===1?preferences[0]:undefined);
  if(user){name=user.name;ambiguous=false;}else if(!input.exerciseManuallyClassified)name=normalizeExerciseName(name);
  const generic=/^(推肩|肩推|飞鸟|反向飞鸟|俯身划船|深蹲|举腿|臂屈伸|内收|外展)$/.test(name);
- const classificationNeeded=user||input.exerciseManuallyClassified?false:(input.classificationNeeded??(ambiguous||generic));
+ const known=!!commonExerciseName(name);
+ const classificationNeeded=user||input.exerciseManuallyClassified?false:ambiguous||(!known&&(input.classificationNeeded??generic));
  const equipment=inferEquipment(name,input.equipment);
- const bodyweight=/自重/.test(joined)||input.loadBasis==='bodyweight'||(input.kg===0&&/下斜卷腹|悬垂举腿|俯卧撑|引体向上/.test(name));
+ const bodyweight=/自重|徒手/.test(name+' '+joined)||input.loadBasis==='bodyweight'||(input.kg===0&&/下斜卷腹|悬垂举腿|俯卧撑|引体向上/.test(name));
  const {loadBasis,basisSource}=bodyweight?{loadBasis:'bodyweight' as const,basisSource:'auto' as const}:resolveLoadBasis(name,{loadBasis:input.loadBasis,kg:input.kg,equipment,text:options.text,original,explicitTotal:options.explicitTotal,basisSource:input.basisSource},rules,options.rebase??false);
  const resolved=loadBasis!=='unknown'&&loadBasis!=='bodyweight';
  const confirmed=!classificationNeeded&&resolved&&input.kg!==null?true:input.confirmed;
