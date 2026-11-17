@@ -96,7 +96,7 @@ export function normalizeSet(input:SetEntry,custom:ExerciseAlias[]=[],options:{r
   if(variant)name=variant+(front?'前蹲':'深蹲');
   else if(front)name='杠铃前蹲';
  }
- const common=commonExerciseName(name),preferences=common?custom.filter(a=>a.name!==a.raw&&commonExerciseName(a.raw)===common&&commonExerciseName(a.name)===common):[];
+ const common=commonExerciseName(name),preferences=common&&!ambiguous?custom.filter(a=>a.name!==a.raw&&commonExerciseName(a.raw)===common&&commonExerciseName(a.name)===common):[];
  const user=custom.find(a=>a.name!==a.raw&&(a.raw===original||a.raw===input.exercise))??(new Set(preferences.map(a=>a.name)).size===1?preferences[0]:undefined);
  if(user){name=user.name;ambiguous=false;}else if(!input.exerciseManuallyClassified)name=normalizeExerciseName(name);
  const generic=/^(推肩|肩推|飞鸟|反向飞鸟|俯身划船|深蹲|举腿|臂屈伸|内收|外展)$/.test(name);
