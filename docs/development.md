@@ -197,6 +197,8 @@ v5 数据库增加可重建的发生时间查询索引和近期话题表。v5 �
 
 `python3 scripts/build-shortcuts.py --only steps` 只生成新的步数入口。快捷指令用所选日期的北京时间中午作为归档时间，文本保留步数日期与实际采集时间；重复完整报告按采集时间选最新值。`shortcuts/安装记步数.command` 在用户自己的下载目录签名，不改写应用包，也不把签名文件提交到公开仓库。
 
+动作参数并不统一：`is.workflow.actions.text.match` 的输入键是 `text`，不是 `WFInput`；仅统计 `ask` 数量无法发现动作因缺少输入而在运行中弹出的文本框。`tests/steps-shortcut.test.ts` 使用独立参数契约离线回放生成动作，把实际生成的文件交给 `InboxSync` 和 `HealthStore`，检查自然日步数进入总览、重复扫描去重和保存失败时不提示成功。该回放不代替 Apple 签名、iPhone 运行或 iCloud 同步测试。参数契约参考 [ShortcutsBench 原始动作摘要](https://github.com/EachSheep/ShortcutsBench/blob/master/data/all_api2parasummary.json)。
+
 每次完成可用改动后运行相关检查，提交并推送现有远端仓库，再核实远端源码与交付一致。协作约定见项目根目录 `AGENTS.md`。
 
 
