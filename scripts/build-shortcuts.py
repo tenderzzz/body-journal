@@ -66,7 +66,7 @@ class Workflow:
     def meal_photos(self,source):
         count=self.add('count',Input=attachment(source),WFCountType='Items')
         valid=self.add('text.match',text=text(count),WFMatchTextPattern=f'^[1-{MAX_MEAL_PHOTOS}]$')
-        self.require_value(valid,f'一餐最多保存 {MAX_MEAL_PHOTOS} 张照片。请重新选择后再保存。')
+        self.require_value(valid,f'请选择 1 到 {MAX_MEAL_PHOTOS} 张餐食照片。')
         group=uid()
         self.add('repeat.each',WFControlFlowMode=0,GroupingIdentifier=group,WFInput=attachment(source))
         # Bound the size of the single iCloud JSON even when several photos come from a high-resolution camera.
@@ -76,7 +76,8 @@ class Workflow:
         repeat_results=self.add('repeat.each',WFControlFlowMode=2,GroupingIdentifier=group)
         repeat_results['OutputName']='Repeat Results'
         combined=self.add('text.combine',text=attachment(repeat_results),WFTextSeparator='Custom',WFTextCustomSeparator=',')
-        self.set('记录照片',combined)
+        self.set('记录照片',self.add('gettext',WFTextActionText=text('[',combined,']')))
+        self.encode_text(self.ask('补充菜名、大概分量或剩下多少；没有补充可直接确认。',default='无补充'))
     def require_text(self,source):
         group=self.condition(source)
         self.encode_text(source)
@@ -87,7 +88,8 @@ class Workflow:
     def init(self,revision='v0.1.4'):
         self.add('comment',WFCommentActionText=f'身体手记 {revision}。原始记录保存到你选择的 iCloud 收件箱；不会调用 AI。只有保存文件成功后才提示成功。安装时请选择 iCloud Drive/Shortcuts/BodyJournal/inbox。若失败或取消，不会显示“已保存”。')
         empty=self.add('gettext',WFTextActionText='')
-        self.set('记录文字',empty);self.set('记录照片',empty)
+        self.set('记录文字',empty)
+        self.set('记录照片',self.add('gettext',WFTextActionText='[]') if self.kind=='meal' else empty)
         date=self.add('date',WFDateActionMode='Current Date')
         self.set('记录时间',self.add('format.date',WFDate=text(date),WFDateFormatStyle='Custom',WFDateFormat="yyyy-MM-dd'T'HH:mm:ssXXX"))
         valid_time=self.condition(variable('记录时间'))
@@ -99,7 +101,7 @@ class Workflow:
         rand=self.add('number.random',WFRandomNumberMinimum=1000000,WFRandomNumberMaximum=9999999)
         self.set('记录编号',self.add('gettext',WFTextActionText=text(stamp,'-',rand)))
     def finish(self,entry=None):
-        photos=('"attachments":[',variable('记录照片'),']}') if self.kind=='meal' else ('"imageBase64":"',variable('记录照片'),'"}')
+        photos=('"attachments":',variable('记录照片'),'}') if self.kind=='meal' else ('"imageBase64":"',variable('记录照片'),'"}')
         envelope=self.add('gettext',WFTextActionText=text('{"version":1,'+('"dateLocked":true,' if entry=='steps' else '')+'"id":"',variable('记录编号'),'","kind":"'+self.kind+'","occurredAt":"',variable('记录时间'),'","timezone":"Asia/Shanghai","textBase64":"',variable('记录文字'),'",',*photos))
         named=self.add('setitemname',WFInput=attachment(envelope),WFName=text(variable('记录编号'),'.health.json'),WFDontIncludeFileExtension=False)
         save_index=len(self.actions)
@@ -124,25 +126,22 @@ class Workflow:
         print(self.name,len(self.actions),'actions')
 
 incoming={'Type':'ExtensionInput'}
-meal=Workflow('身体手记·记一餐','meal');meal.init(revision='记一餐 v2026.11.21')
-meal.set('照片来源',meal.add('gettext',WFTextActionText=''))
+meal=Workflow('身体手记·记一餐','meal');meal.init(revision='记一餐 v2026.11.21.2')
+# Keep the optional note inside each photo route. The text route never tests a photo variable.
 g=meal.condition(incoming)
-meal.set('照片来源',incoming)
+meal.meal_photos(incoming)
 meal.otherwise(g)
 mode=meal.menu('这餐怎么记？',['从相册选照片','拍照记餐','只记文字'])
 meal.branch(mode,'从相册选照片')
-meal.set('照片来源',meal.add('selectphoto',WFSelectMultiplePhotos=True))
+meal.meal_photos(meal.add('selectphoto',WFSelectMultiplePhotos=True))
 meal.branch(mode,'拍照记餐')
-meal.set('照片来源',meal.add('takephoto',WFCameraCaptureDevice='Back',WFCameraCaptureShowPreview=True,WFCameraCaptureCount=1))
+meal.meal_photos(meal.add('takephoto',WFCameraCaptureDevice='Back',WFCameraCaptureShowPreview=True,WFCameraCaptureCount=1))
 meal.branch(mode,'只记文字')
-meal.require_text(meal.ask('这餐吃了什么？写下菜名和大概分量即可，也可以用键盘听写。例：一碗米饭、两块鸡腿、半份青菜。'))
+description=meal.ask('这餐吃了什么？写下菜名和大概分量即可，也可以用键盘听写。例：一碗米饭、两块鸡腿、半份青菜。')
+nonblank=meal.add('text.match',text=text(description),WFMatchTextPattern=r'\S')
+meal.require_value(nonblank,'没有输入内容，记录未保存。')
+meal.encode_text(description)
 meal.endmenu(mode);meal.endif(g)
-g=meal.condition(variable('照片来源'))
-meal.meal_photos(variable('照片来源'))
-meal.encode_text(meal.ask('补充菜名、大概分量或剩下多少；没有补充可直接确认。',default='无补充'))
-meal.otherwise(g)
-meal.require_value(variable('记录文字'),'没有选择照片或输入文字，记录未保存。')
-meal.endif(g)
 meal.finish()
 
 train=Workflow('身体手记·记训练','training');train.init()
