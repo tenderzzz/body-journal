@@ -39,7 +39,7 @@ for(const sample of [
   {name:'camera',inputs:{menu:'拍照记餐',camera:photos[0]},count:1},
   {name:'album multi-select',inputs:{menu:'从相册选照片',album:photos.slice(0,8)},count:8},
   {name:'photo share sheet',inputs:{incoming:photos.slice(0,3)},count:3},
-  {name:'text only',inputs:{menu:'只记文字'},count:0},
+  {name:'text only even when an empty Text action has a value',inputs:{menu:'只记文字',emptyTextIsPresent:true},count:0},
 ])test('meal shortcut saves one inbox record with all '+sample.name+' inputs',async t=>{
   const {root,inbox}=setup(t),note='合成餐食：半份米饭\n补充 "少油" 🍚';
   const result=replayShortcut(shortcut('记一餐'),{...sample.inputs,capturedAt,inbox,answer:()=>note});
@@ -66,6 +66,14 @@ test('meal shortcut stops after an empty or oversized photo selection without dr
     assert.equal(result.messages.length,1);
     assert.doesNotMatch(result.messages[0],/已保存/);
   }
+});
+
+test('text-only meal rejects whitespace after its only prompt without saving an empty record',t=>{
+  const {inbox}=setup(t);
+  const result=replayShortcut(shortcut('记一餐'),{menu:'只记文字',emptyTextIsPresent:true,capturedAt,inbox,answer:()=> ' \n\t'});
+  assert.deepEqual(result.prompts,['Text']);
+  assert.deepEqual(result.files,[]);
+  assert.deepEqual(result.messages,['没有输入内容，记录未保存。']);
 });
 
 for(const sample of [

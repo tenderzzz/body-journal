@@ -16,6 +16,7 @@ type ReplayInput={
   incoming?:Buffer[];
   album?:Buffer[];
   camera?:Buffer;
+  emptyTextIsPresent?:boolean;
   onMessage?:(message:string)=>void;
 };
 
@@ -55,7 +56,7 @@ export function replayShortcut(shortcut:Shortcut,input:ReplayInput){
     if(value.Type==='ActionOutput'){assert.ok(outputs.has(value.OutputUUID),'unavailable action output '+value.OutputUUID);return outputs.get(value.OutputUUID);}
     throw Error('Unsupported shortcut value');
   }
-  const hasValue=(value:any)=>Array.isArray(value)?value.length>0:value!==undefined&&value!==null&&value!=='';
+  const hasValue=(value:any)=>Array.isArray(value)?value.length>0:value!==undefined&&value!==null&&(input.emptyTextIsPresent||value!=='');
   function execute(start:number,end:number){
     const branches:{group:string;parent:boolean;matches?:boolean;choice?:string;active:boolean}[]=[];
     let last:any;
