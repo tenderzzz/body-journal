@@ -17,6 +17,7 @@ selected=parser.parse_args().only
 root=Path(__file__).resolve().parents[1]/'shortcuts'
 (root/'unsigned').mkdir(parents=True,exist_ok=True)
 PREFIX='is.workflow.actions.'
+MAX_MEAL_PHOTOS=8  # Match the inbox envelope's attachment limit.
 def uid(): return str(uuid.uuid4()).upper()
 def variable(name): return {'Type':'Variable','VariableName':name}
 def attachment(value): return {'Value':value,'WFSerializationType':'WFTextTokenAttachment'}
@@ -50,10 +51,32 @@ class Workflow:
     def endmenu(self,group): self.add('choosefrommenu',WFControlFlowMode=2,GroupingIdentifier=group)
     def encode_text(self,source):
         result=self.add('base64encode',WFInput=attachment(source),WFEncodeMode='Encode',WFBase64LineBreakMode='None');self.set('记录文字',result)
-    def image(self,source):
-        source=self.add('getitemfromlist',WFInput=attachment(source),WFItemSpecifier='First Item')
+    def encode_image(self,source):
         jpeg=self.add('image.convert',WFInput=attachment(source),WFImageFormat='JPEG',WFImageCompressionQuality=0.85,WFImagePreserveMetadata=False)
-        encoded=self.add('base64encode',WFInput=attachment(jpeg),WFEncodeMode='Encode',WFBase64LineBreakMode='None');self.set('记录照片',encoded)
+        return self.add('base64encode',WFInput=attachment(jpeg),WFEncodeMode='Encode',WFBase64LineBreakMode='None')
+    def image(self,source):
+        first=self.add('getitemfromlist',WFInput=attachment(source),WFItemSpecifier='First Item')
+        self.set('记录照片',self.encode_image(first))
+    def require_value(self,source,message):
+        group=self.condition(source)
+        self.otherwise(group)
+        self.add('showresult',Text=message)
+        self.add('exit')
+        self.endif(group)
+    def meal_photos(self,source):
+        count=self.add('count',Input=attachment(source),WFCountType='Items')
+        valid=self.add('text.match',text=text(count),WFMatchTextPattern=f'^[1-{MAX_MEAL_PHOTOS}]$')
+        self.require_value(valid,f'一餐最多保存 {MAX_MEAL_PHOTOS} 张照片。请重新选择后再保存。')
+        group=uid()
+        self.add('repeat.each',WFControlFlowMode=0,GroupingIdentifier=group,WFInput=attachment(source))
+        # Bound the size of the single iCloud JSON even when several photos come from a high-resolution camera.
+        resized=self.add('image.resize',WFImage=attachment(variable('Repeat Item')),WFImageResizeKey='Longest Edge',WFImageResizeLength=2000)
+        encoded=self.encode_image(resized)
+        self.add('gettext',WFTextActionText=text('{"name":"photo-',variable('Repeat Index'),'.jpg","base64":"',encoded,'"}'))
+        repeat_results=self.add('repeat.each',WFControlFlowMode=2,GroupingIdentifier=group)
+        repeat_results['OutputName']='Repeat Results'
+        combined=self.add('text.combine',text=attachment(repeat_results),WFTextSeparator='Custom',WFTextCustomSeparator=',')
+        self.set('记录照片',combined)
     def require_text(self,source):
         group=self.condition(source)
         self.encode_text(source)
@@ -76,7 +99,8 @@ class Workflow:
         rand=self.add('number.random',WFRandomNumberMinimum=1000000,WFRandomNumberMaximum=9999999)
         self.set('记录编号',self.add('gettext',WFTextActionText=text(stamp,'-',rand)))
     def finish(self,entry=None):
-        envelope=self.add('gettext',WFTextActionText=text('{"version":1,'+('"dateLocked":true,' if entry=='steps' else '')+'"id":"',variable('记录编号'),'","kind":"'+self.kind+'","occurredAt":"',variable('记录时间'),'","timezone":"Asia/Shanghai","textBase64":"',variable('记录文字'),'","imageBase64":"',variable('记录照片'),'"}'))
+        photos=('"attachments":[',variable('记录照片'),']}') if self.kind=='meal' else ('"imageBase64":"',variable('记录照片'),'"}')
+        envelope=self.add('gettext',WFTextActionText=text('{"version":1,'+('"dateLocked":true,' if entry=='steps' else '')+'"id":"',variable('记录编号'),'","kind":"'+self.kind+'","occurredAt":"',variable('记录时间'),'","timezone":"Asia/Shanghai","textBase64":"',variable('记录文字'),'",',*photos))
         named=self.add('setitemname',WFInput=attachment(envelope),WFName=text(variable('记录编号'),'.health.json'),WFDontIncludeFileExtension=False)
         save_index=len(self.actions)
         saved=self.add('documentpicker.save',WFInput=attachment(named),WFAskWhereToSave=False,WFFileDestinationPath=text(variable('记录编号'),'.health.json'),WFSaveFileOverwrite=False)
@@ -100,18 +124,25 @@ class Workflow:
         print(self.name,len(self.actions),'actions')
 
 incoming={'Type':'ExtensionInput'}
-meal=Workflow('身体手记·记一餐','meal');meal.init()
+meal=Workflow('身体手记·记一餐','meal');meal.init(revision='记一餐 v2026.11.21')
+meal.set('照片来源',meal.add('gettext',WFTextActionText=''))
 g=meal.condition(incoming)
-meal.image(incoming)
-meal.encode_text(meal.ask('补充菜名、大概分量或剩下多少；没有补充可直接确认。',default='无补充'))
+meal.set('照片来源',incoming)
 meal.otherwise(g)
-mode=meal.menu('这餐怎么记？',['拍照记餐','只记文字'])
+mode=meal.menu('这餐怎么记？',['从相册选照片','拍照记餐','只记文字'])
+meal.branch(mode,'从相册选照片')
+meal.set('照片来源',meal.add('selectphoto',WFSelectMultiplePhotos=True))
 meal.branch(mode,'拍照记餐')
-meal.image(meal.add('takephoto',WFCameraCaptureDevice='Back',WFCameraCaptureShowPreview=True,WFCameraCaptureCount=1))
-meal.encode_text(meal.ask('补充菜名、大概分量或剩下多少；没有补充可直接确认。',default='无补充'))
+meal.set('照片来源',meal.add('takephoto',WFCameraCaptureDevice='Back',WFCameraCaptureShowPreview=True,WFCameraCaptureCount=1))
 meal.branch(mode,'只记文字')
 meal.require_text(meal.ask('这餐吃了什么？写下菜名和大概分量即可，也可以用键盘听写。例：一碗米饭、两块鸡腿、半份青菜。'))
 meal.endmenu(mode);meal.endif(g)
+g=meal.condition(variable('照片来源'))
+meal.meal_photos(variable('照片来源'))
+meal.encode_text(meal.ask('补充菜名、大概分量或剩下多少；没有补充可直接确认。',default='无补充'))
+meal.otherwise(g)
+meal.require_value(variable('记录文字'),'没有选择照片或输入文字，记录未保存。')
+meal.endif(g)
 meal.finish()
 
 train=Workflow('身体手记·记训练','training');train.init()
@@ -123,12 +154,24 @@ train.set('照片来源',train.add('selectphoto',WFSelectMultiplePhotos=False));
 train.image(variable('照片来源'));train.encode_text(train.ask('补充训练感受或截图中没有的信息；没有补充可直接确认。',default='无补充'))
 train.endmenu(g);train.finish()
 
-body=Workflow('身体手记·记身体','body');body.init()
-g=body.menu('这次记录什么？',['体重','腰围','体重与腰围'])
-for label in ['体重','腰围','体重与腰围']:
-    body.branch(g,label);parts=[]
-    if label in ['体重','体重与腰围']:parts+=['体重 ',body.ask('体重是多少 kg？',number=True),' kg']
-    if label in ['腰围','体重与腰围']:parts+=['\n腰围 ',body.ask('腰围是多少 cm？',number=True),' cm']
+body=Workflow('身体手记·记身体','body');body.init(revision='记身体 v2026.11.21')
+body_choices={
+    '体重':('体重',), '腰围':('腰围',), '体脂率':('体脂率',),
+    '体重与腰围':('体重','腰围'), '体重与体脂率':('体重','体脂率'),
+    '三项都记':('体重','腰围','体脂率'),
+}
+body_inputs={'体重':('体重是多少 kg？',' kg'),'腰围':('腰围是多少 cm？',' cm'),'体脂率':('体脂率是多少？直接填百分数，例如 18.5。','%')}
+g=body.menu('这次记录什么？',list(body_choices))
+for label,metrics in body_choices.items():
+    body.branch(g,label)
+    parts=[]
+    for i,metric in enumerate(metrics):
+        prompt,unit=body_inputs[metric]
+        value=body.ask(prompt,number=True)
+        if metric=='体脂率':
+            valid=body.add('text.match',text=text(value),WFMatchTextPattern=r'^(?:[1-9][0-9]?(?:[.,][0-9]+)?|0[.,][0-9]*[1-9][0-9]*)$')
+            body.require_value(valid,'请输入大于 0 且小于 100 的体脂率，例如 18.5。本次未保存。')
+        parts+=['\n' if i else '',metric+' ',value,unit]
     body.encode_text(body.add('gettext',WFTextActionText=text(*parts)))
 body.endmenu(g);body.finish()
 

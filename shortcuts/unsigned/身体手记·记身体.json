@@ -18,7 +18,7 @@
   "WFWorkflowImportQuestions": [
     {
       "Category": "Parameter",
-      "ActionIndex": 36,
+      "ActionIndex": 72,
       "ParameterKey": "WFFolder",
       "Text": "选择保存位置：iCloud Drive → Shortcuts → BodyJournal → inbox。先在 Mac 应用“连接与数据”建立收件箱。"
     }
@@ -27,15 +27,15 @@
     {
       "WFWorkflowActionIdentifier": "is.workflow.actions.comment",
       "WFWorkflowActionParameters": {
-        "WFCommentActionText": "身体手记 v0.1.1。原始记录保存到你选择的 iCloud 收件箱；不会调用 AI。只有保存文件成功后才提示成功。安装时请选择 iCloud Drive/Shortcuts/BodyJournal/inbox。若失败或取消，不会显示“已保存”。",
-        "UUID": "1A520C61-3313-4D6B-A34F-D2381ADC00C3"
+        "WFCommentActionText": "身体手记 记身体 v2026.11.21。原始记录保存到你选择的 iCloud 收件箱；不会调用 AI。只有保存文件成功后才提示成功。安装时请选择 iCloud Drive/Shortcuts/BodyJournal/inbox。若失败或取消，不会显示“已保存”。",
+        "UUID": "CF9A9FB5-2C8D-4F85-911D-BFA04124D6F3"
       }
     },
     {
       "WFWorkflowActionIdentifier": "is.workflow.actions.gettext",
       "WFWorkflowActionParameters": {
         "WFTextActionText": "",
-        "UUID": "7B7FF746-3AB6-454D-9FA4-52DD4928E7C0"
+        "UUID": "22B589D6-D7FA-4FD7-AD54-8864D7D13BAF"
       }
     },
     {
@@ -45,12 +45,12 @@
         "WFInput": {
           "Value": {
             "Type": "ActionOutput",
-            "OutputUUID": "7B7FF746-3AB6-454D-9FA4-52DD4928E7C0",
+            "OutputUUID": "22B589D6-D7FA-4FD7-AD54-8864D7D13BAF",
             "OutputName": "gettext"
           },
           "WFSerializationType": "WFTextTokenAttachment"
         },
-        "UUID": "D7F722BB-6F35-45F3-A0CE-D9B9966EF2DC"
+        "UUID": "C54D9D87-6909-4A9D-958D-AD4C04323202"
       }
     },
     {
@@ -60,19 +60,19 @@
         "WFInput": {
           "Value": {
             "Type": "ActionOutput",
-            "OutputUUID": "7B7FF746-3AB6-454D-9FA4-52DD4928E7C0",
+            "OutputUUID": "22B589D6-D7FA-4FD7-AD54-8864D7D13BAF",
             "OutputName": "gettext"
           },
           "WFSerializationType": "WFTextTokenAttachment"
         },
-        "UUID": "3155DF7A-46C1-4D0A-8D7D-16A786A4553F"
+        "UUID": "D262D261-0224-4EF6-B2DF-5ADDE7649749"
       }
     },
     {
       "WFWorkflowActionIdentifier": "is.workflow.actions.date",
       "WFWorkflowActionParameters": {
         "WFDateActionMode": "Current Date",
-        "UUID": "7BA42938-E836-4876-B389-6AD244501F2D"
+        "UUID": "2C89271F-C806-4259-8CAB-19EDE2E86C64"
       }
     },
     {
@@ -84,7 +84,7 @@
             "attachmentsByRange": {
               "{0, 1}": {
                 "Type": "ActionOutput",
-                "OutputUUID": "7BA42938-E836-4876-B389-6AD244501F2D",
+                "OutputUUID": "2C89271F-C806-4259-8CAB-19EDE2E86C64",
                 "OutputName": "date"
               }
             }
@@ -93,7 +93,7 @@
         },
         "WFDateFormatStyle": "Custom",
         "WFDateFormat": "yyyy-MM-dd'T'HH:mm:ssXXX",
-        "UUID": "040C8B06-1D93-4CCC-94B8-5C69FDC89FA8"
+        "UUID": "F72727CC-C3CF-4802-9098-B89F706F7947"
       }
     },
     {
@@ -103,19 +103,19 @@
         "WFInput": {
           "Value": {
             "Type": "ActionOutput",
-            "OutputUUID": "040C8B06-1D93-4CCC-94B8-5C69FDC89FA8",
+            "OutputUUID": "F72727CC-C3CF-4802-9098-B89F706F7947",
             "OutputName": "format.date"
           },
           "WFSerializationType": "WFTextTokenAttachment"
         },
-        "UUID": "D04C2864-CC37-4A18-97CB-083752960ED2"
+        "UUID": "383414A0-D16F-45CE-9DF6-FAC5620B2272"
       }
     },
     {
       "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
       "WFWorkflowActionParameters": {
         "WFControlFlowMode": 0,
-        "GroupingIdentifier": "1C9B5EF2-65B0-49C3-872F-2B027B5EAC84",
+        "GroupingIdentifier": "93C6EE82-3F05-436E-88D5-47B4A03F7E7D",
         "WFConditions": {
           "Value": {
             "WFActionParameterFilterPrefix": 1,
@@ -138,36 +138,36 @@
           },
           "WFSerializationType": "WFContentPredicateTableTemplate"
         },
-        "UUID": "3CBD1313-AF07-43FD-B4ED-8AA8829C1F28"
+        "UUID": "DA830CF1-7BA3-49B9-9ADC-9DA79C8EE880"
       }
     },
     {
       "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
       "WFWorkflowActionParameters": {
         "WFControlFlowMode": 1,
-        "GroupingIdentifier": "1C9B5EF2-65B0-49C3-872F-2B027B5EAC84",
-        "UUID": "B7017A1A-DCCA-4D81-B6DC-9EC7FA98AC11"
+        "GroupingIdentifier": "93C6EE82-3F05-436E-88D5-47B4A03F7E7D",
+        "UUID": "7F793032-036E-4D21-923D-0CAE5CC777A2"
       }
     },
     {
       "WFWorkflowActionIdentifier": "is.workflow.actions.showresult",
       "WFWorkflowActionParameters": {
         "Text": "系统没有生成记录时间，未保存。请更新快捷指令后重试。",
-        "UUID": "6406E62F-97DA-40C8-A260-6AFEB473C64F"
+        "UUID": "C978C8DD-EA7C-49F7-9669-25A50E4945A0"
       }
     },
     {
       "WFWorkflowActionIdentifier": "is.workflow.actions.exit",
       "WFWorkflowActionParameters": {
-        "UUID": "34E6E48B-0334-4AD1-A662-2F7845BB9567"
+        "UUID": "0A14EF9B-55E2-4FB1-AD1B-3CC55E581A29"
       }
     },
     {
       "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
       "WFWorkflowActionParameters": {
         "WFControlFlowMode": 2,
-        "GroupingIdentifier": "1C9B5EF2-65B0-49C3-872F-2B027B5EAC84",
-        "UUID": "56AE8C91-A955-47B6-8396-9A4C674CD158"
+        "GroupingIdentifier": "93C6EE82-3F05-436E-88D5-47B4A03F7E7D",
+        "UUID": "7CD0DE9F-98FE-47DA-9C4A-658FB1A028E5"
       }
     },
     {
@@ -179,7 +179,7 @@
             "attachmentsByRange": {
               "{0, 1}": {
                 "Type": "ActionOutput",
-                "OutputUUID": "7BA42938-E836-4876-B389-6AD244501F2D",
+                "OutputUUID": "2C89271F-C806-4259-8CAB-19EDE2E86C64",
                 "OutputName": "date"
               }
             }
@@ -188,7 +188,7 @@
         },
         "WFDateFormatStyle": "Custom",
         "WFDateFormat": "yyyyMMddHHmmssSSS",
-        "UUID": "C953DF2E-53C3-4671-B58E-68A616520FBF"
+        "UUID": "54672FA1-F33D-4DB9-833A-51CBE9FBE2E3"
       }
     },
     {
@@ -196,7 +196,7 @@
       "WFWorkflowActionParameters": {
         "WFRandomNumberMinimum": 1000000,
         "WFRandomNumberMaximum": 9999999,
-        "UUID": "9F6BE62F-EE35-4DC2-B4F3-0D95C622B081"
+        "UUID": "6805B582-A1DA-4DDD-92F2-B0EF30914F31"
       }
     },
     {
@@ -208,19 +208,19 @@
             "attachmentsByRange": {
               "{0, 1}": {
                 "Type": "ActionOutput",
-                "OutputUUID": "C953DF2E-53C3-4671-B58E-68A616520FBF",
+                "OutputUUID": "54672FA1-F33D-4DB9-833A-51CBE9FBE2E3",
                 "OutputName": "format.date"
               },
               "{2, 1}": {
                 "Type": "ActionOutput",
-                "OutputUUID": "9F6BE62F-EE35-4DC2-B4F3-0D95C622B081",
+                "OutputUUID": "6805B582-A1DA-4DDD-92F2-B0EF30914F31",
                 "OutputName": "number.random"
               }
             }
           },
           "WFSerializationType": "WFTextTokenString"
         },
-        "UUID": "A3820AF5-67B1-4E23-ABF0-ADE8858A254B"
+        "UUID": "C4B101AB-31DF-449D-8FE7-A5981D23654B"
       }
     },
     {
@@ -230,35 +230,38 @@
         "WFInput": {
           "Value": {
             "Type": "ActionOutput",
-            "OutputUUID": "A3820AF5-67B1-4E23-ABF0-ADE8858A254B",
+            "OutputUUID": "C4B101AB-31DF-449D-8FE7-A5981D23654B",
             "OutputName": "gettext"
           },
           "WFSerializationType": "WFTextTokenAttachment"
         },
-        "UUID": "D0C3F987-4AE6-4C3B-A6C6-58EBCCB2E835"
+        "UUID": "338EB85E-F094-4CA2-B551-E0B2A4FED66A"
       }
     },
     {
       "WFWorkflowActionIdentifier": "is.workflow.actions.choosefrommenu",
       "WFWorkflowActionParameters": {
         "WFControlFlowMode": 0,
-        "GroupingIdentifier": "33DF8FAA-9146-4A84-A586-D375EEC6B82A",
+        "GroupingIdentifier": "382B0951-8766-489E-A7A4-5A171F00FC91",
         "WFMenuPrompt": "这次记录什么？",
         "WFMenuItems": [
           "体重",
           "腰围",
-          "体重与腰围"
+          "体脂率",
+          "体重与腰围",
+          "体重与体脂率",
+          "三项都记"
         ],
-        "UUID": "FFDE6502-0A87-479A-9EBD-DF260C60B89F"
+        "UUID": "981AF5B0-11E4-43E3-8EA5-8F502FFBFA1E"
       }
     },
     {
       "WFWorkflowActionIdentifier": "is.workflow.actions.choosefrommenu",
       "WFWorkflowActionParameters": {
         "WFControlFlowMode": 1,
-        "GroupingIdentifier": "33DF8FAA-9146-4A84-A586-D375EEC6B82A",
+        "GroupingIdentifier": "382B0951-8766-489E-A7A4-5A171F00FC91",
         "WFMenuItemTitle": "体重",
-        "UUID": "674A35B4-A92A-4629-B5BC-05006ACD17E8"
+        "UUID": "9F67128C-CAB5-4087-8979-23515DFC6790"
       }
     },
     {
@@ -266,7 +269,7 @@
       "WFWorkflowActionParameters": {
         "WFAskActionPrompt": "体重是多少 kg？",
         "WFInputType": "Number",
-        "UUID": "F995FA3B-7115-42AA-87A8-5C7AFD3FE7C3"
+        "UUID": "1A94B0F2-65C4-4C46-8F67-C95FFA605031"
       }
     },
     {
@@ -278,14 +281,14 @@
             "attachmentsByRange": {
               "{3, 1}": {
                 "Type": "ActionOutput",
-                "OutputUUID": "F995FA3B-7115-42AA-87A8-5C7AFD3FE7C3",
+                "OutputUUID": "1A94B0F2-65C4-4C46-8F67-C95FFA605031",
                 "OutputName": "ask"
               }
             }
           },
           "WFSerializationType": "WFTextTokenString"
         },
-        "UUID": "02E38046-9A43-4DD2-BC9E-EADAE46B23E6"
+        "UUID": "04C2BD36-F6B0-4104-92BB-A5091130735E"
       }
     },
     {
@@ -294,14 +297,14 @@
         "WFInput": {
           "Value": {
             "Type": "ActionOutput",
-            "OutputUUID": "02E38046-9A43-4DD2-BC9E-EADAE46B23E6",
+            "OutputUUID": "04C2BD36-F6B0-4104-92BB-A5091130735E",
             "OutputName": "gettext"
           },
           "WFSerializationType": "WFTextTokenAttachment"
         },
         "WFEncodeMode": "Encode",
         "WFBase64LineBreakMode": "None",
-        "UUID": "960E98B8-01A7-45BE-8099-1F662C6ACE0E"
+        "UUID": "73186540-12AD-436E-B12C-C3D6F80F1DDB"
       }
     },
     {
@@ -311,21 +314,21 @@
         "WFInput": {
           "Value": {
             "Type": "ActionOutput",
-            "OutputUUID": "960E98B8-01A7-45BE-8099-1F662C6ACE0E",
+            "OutputUUID": "73186540-12AD-436E-B12C-C3D6F80F1DDB",
             "OutputName": "base64encode"
           },
           "WFSerializationType": "WFTextTokenAttachment"
         },
-        "UUID": "0F87E61B-3841-4854-AF73-E79E709E2B98"
+        "UUID": "F13FABEF-7BD4-4B1E-99EE-7134795997EE"
       }
     },
     {
       "WFWorkflowActionIdentifier": "is.workflow.actions.choosefrommenu",
       "WFWorkflowActionParameters": {
         "WFControlFlowMode": 1,
-        "GroupingIdentifier": "33DF8FAA-9146-4A84-A586-D375EEC6B82A",
+        "GroupingIdentifier": "382B0951-8766-489E-A7A4-5A171F00FC91",
         "WFMenuItemTitle": "腰围",
-        "UUID": "86323795-BC00-42E5-AB8B-EC3AF08A9C3D"
+        "UUID": "1F63C880-A2E5-45A7-B58B-AAD63C97D117"
       }
     },
     {
@@ -333,7 +336,7 @@
       "WFWorkflowActionParameters": {
         "WFAskActionPrompt": "腰围是多少 cm？",
         "WFInputType": "Number",
-        "UUID": "925265DE-B863-4AA7-8725-AA1CEB7DDA0B"
+        "UUID": "9F53EED3-AA1F-4029-9903-AC16A1C9EE9F"
       }
     },
     {
@@ -341,18 +344,18 @@
       "WFWorkflowActionParameters": {
         "WFTextActionText": {
           "Value": {
-            "string": "\n腰围 ￼ cm",
+            "string": "腰围 ￼ cm",
             "attachmentsByRange": {
-              "{4, 1}": {
+              "{3, 1}": {
                 "Type": "ActionOutput",
-                "OutputUUID": "925265DE-B863-4AA7-8725-AA1CEB7DDA0B",
+                "OutputUUID": "9F53EED3-AA1F-4029-9903-AC16A1C9EE9F",
                 "OutputName": "ask"
               }
             }
           },
           "WFSerializationType": "WFTextTokenString"
         },
-        "UUID": "48CB9F8E-AB80-4B91-8955-BB675F212C15"
+        "UUID": "DCC80FC1-ADF0-43E8-A208-0413D972DFF9"
       }
     },
     {
@@ -361,14 +364,14 @@
         "WFInput": {
           "Value": {
             "Type": "ActionOutput",
-            "OutputUUID": "48CB9F8E-AB80-4B91-8955-BB675F212C15",
+            "OutputUUID": "DCC80FC1-ADF0-43E8-A208-0413D972DFF9",
             "OutputName": "gettext"
           },
           "WFSerializationType": "WFTextTokenAttachment"
         },
         "WFEncodeMode": "Encode",
         "WFBase64LineBreakMode": "None",
-        "UUID": "F7AD288E-0639-48E8-AFEE-7E31917489CB"
+        "UUID": "F0844D48-FE85-4D71-9CB2-6F29CC1D4752"
       }
     },
     {
@@ -378,21 +381,168 @@
         "WFInput": {
           "Value": {
             "Type": "ActionOutput",
-            "OutputUUID": "F7AD288E-0639-48E8-AFEE-7E31917489CB",
+            "OutputUUID": "F0844D48-FE85-4D71-9CB2-6F29CC1D4752",
             "OutputName": "base64encode"
           },
           "WFSerializationType": "WFTextTokenAttachment"
         },
-        "UUID": "815B7AFE-6BE2-4CFC-B55A-B27650921F31"
+        "UUID": "DE3E4C4A-8D2F-4C6A-B3DB-1D5F1DE7E0BB"
       }
     },
     {
       "WFWorkflowActionIdentifier": "is.workflow.actions.choosefrommenu",
       "WFWorkflowActionParameters": {
         "WFControlFlowMode": 1,
-        "GroupingIdentifier": "33DF8FAA-9146-4A84-A586-D375EEC6B82A",
+        "GroupingIdentifier": "382B0951-8766-489E-A7A4-5A171F00FC91",
+        "WFMenuItemTitle": "体脂率",
+        "UUID": "ABCADC71-4692-4E83-B87C-C5C4134891C4"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.ask",
+      "WFWorkflowActionParameters": {
+        "WFAskActionPrompt": "体脂率是多少？直接填百分数，例如 18.5。",
+        "WFInputType": "Number",
+        "UUID": "88AF04D9-BED9-47D0-A6F7-C8119D9144B5"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.text.match",
+      "WFWorkflowActionParameters": {
+        "text": {
+          "Value": {
+            "string": "￼",
+            "attachmentsByRange": {
+              "{0, 1}": {
+                "Type": "ActionOutput",
+                "OutputUUID": "88AF04D9-BED9-47D0-A6F7-C8119D9144B5",
+                "OutputName": "ask"
+              }
+            }
+          },
+          "WFSerializationType": "WFTextTokenString"
+        },
+        "WFMatchTextPattern": "^(?:[1-9][0-9]?(?:[.,][0-9]+)?|0[.,][0-9]*[1-9][0-9]*)$",
+        "UUID": "ECF2199C-D5AA-4D53-9573-1F6D10D928CF"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 0,
+        "GroupingIdentifier": "73926D31-D66E-4426-B514-5D3911AC55BF",
+        "WFConditions": {
+          "Value": {
+            "WFActionParameterFilterPrefix": 1,
+            "WFContentPredicateBoundedDate": false,
+            "WFActionParameterFilterTemplates": [
+              {
+                "WFCondition": 100,
+                "WFInput": {
+                  "Type": "Variable",
+                  "Variable": {
+                    "Value": {
+                      "Type": "ActionOutput",
+                      "OutputUUID": "ECF2199C-D5AA-4D53-9573-1F6D10D928CF",
+                      "OutputName": "text.match"
+                    },
+                    "WFSerializationType": "WFTextTokenAttachment"
+                  }
+                }
+              }
+            ]
+          },
+          "WFSerializationType": "WFContentPredicateTableTemplate"
+        },
+        "UUID": "A99D7615-A1D3-481C-81BE-CCAC1FEFD88A"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 1,
+        "GroupingIdentifier": "73926D31-D66E-4426-B514-5D3911AC55BF",
+        "UUID": "B09E77F6-2382-43A4-A8B4-1E1CB70F9ED3"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.showresult",
+      "WFWorkflowActionParameters": {
+        "Text": "请输入大于 0 且小于 100 的体脂率，例如 18.5。本次未保存。",
+        "UUID": "5B2529C2-0494-483B-8CE7-0DDE0DC4EAC5"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.exit",
+      "WFWorkflowActionParameters": {
+        "UUID": "5A96275B-75B8-4719-87B6-5CD8C774FD0D"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 2,
+        "GroupingIdentifier": "73926D31-D66E-4426-B514-5D3911AC55BF",
+        "UUID": "02FE3BC2-7397-48A5-82A2-0F58667C07E0"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.gettext",
+      "WFWorkflowActionParameters": {
+        "WFTextActionText": {
+          "Value": {
+            "string": "体脂率 ￼%",
+            "attachmentsByRange": {
+              "{4, 1}": {
+                "Type": "ActionOutput",
+                "OutputUUID": "88AF04D9-BED9-47D0-A6F7-C8119D9144B5",
+                "OutputName": "ask"
+              }
+            }
+          },
+          "WFSerializationType": "WFTextTokenString"
+        },
+        "UUID": "76F1F975-4961-4DED-A536-C401CCE21F70"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.base64encode",
+      "WFWorkflowActionParameters": {
+        "WFInput": {
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "76F1F975-4961-4DED-A536-C401CCE21F70",
+            "OutputName": "gettext"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "WFEncodeMode": "Encode",
+        "WFBase64LineBreakMode": "None",
+        "UUID": "4B91EBC2-B103-4153-8F97-2DEC7650158D"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.setvariable",
+      "WFWorkflowActionParameters": {
+        "WFVariableName": "记录文字",
+        "WFInput": {
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "4B91EBC2-B103-4153-8F97-2DEC7650158D",
+            "OutputName": "base64encode"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "UUID": "7AFF6EBA-6604-428F-AE2B-59DE87E6E1A2"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.choosefrommenu",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 1,
+        "GroupingIdentifier": "382B0951-8766-489E-A7A4-5A171F00FC91",
         "WFMenuItemTitle": "体重与腰围",
-        "UUID": "6462341F-2530-4834-B228-2E8CCB769EE0"
+        "UUID": "2916C18E-0D35-4731-BA30-1BB677234614"
       }
     },
     {
@@ -400,7 +550,7 @@
       "WFWorkflowActionParameters": {
         "WFAskActionPrompt": "体重是多少 kg？",
         "WFInputType": "Number",
-        "UUID": "E256FDEC-CA61-4B04-93D9-C5523B86D4DC"
+        "UUID": "720CFDB6-11C7-4B0B-9FA6-649369F42FE1"
       }
     },
     {
@@ -408,7 +558,7 @@
       "WFWorkflowActionParameters": {
         "WFAskActionPrompt": "腰围是多少 cm？",
         "WFInputType": "Number",
-        "UUID": "037B6AB6-6C0F-44BD-91C7-F34101836FD2"
+        "UUID": "94BAC29C-E43F-46B6-AD30-55E92CD55E38"
       }
     },
     {
@@ -420,19 +570,19 @@
             "attachmentsByRange": {
               "{3, 1}": {
                 "Type": "ActionOutput",
-                "OutputUUID": "E256FDEC-CA61-4B04-93D9-C5523B86D4DC",
+                "OutputUUID": "720CFDB6-11C7-4B0B-9FA6-649369F42FE1",
                 "OutputName": "ask"
               },
               "{11, 1}": {
                 "Type": "ActionOutput",
-                "OutputUUID": "037B6AB6-6C0F-44BD-91C7-F34101836FD2",
+                "OutputUUID": "94BAC29C-E43F-46B6-AD30-55E92CD55E38",
                 "OutputName": "ask"
               }
             }
           },
           "WFSerializationType": "WFTextTokenString"
         },
-        "UUID": "657D7F6F-02BC-4978-AC9C-39A422D365F0"
+        "UUID": "F412B6D0-86EB-4685-9116-965820180D58"
       }
     },
     {
@@ -441,14 +591,14 @@
         "WFInput": {
           "Value": {
             "Type": "ActionOutput",
-            "OutputUUID": "657D7F6F-02BC-4978-AC9C-39A422D365F0",
+            "OutputUUID": "F412B6D0-86EB-4685-9116-965820180D58",
             "OutputName": "gettext"
           },
           "WFSerializationType": "WFTextTokenAttachment"
         },
         "WFEncodeMode": "Encode",
         "WFBase64LineBreakMode": "None",
-        "UUID": "4F815E40-117D-4EAD-BF60-BA4537B4FA0B"
+        "UUID": "DE1C4B59-8EF2-4B65-B37C-23A382CF41F3"
       }
     },
     {
@@ -458,20 +608,353 @@
         "WFInput": {
           "Value": {
             "Type": "ActionOutput",
-            "OutputUUID": "4F815E40-117D-4EAD-BF60-BA4537B4FA0B",
+            "OutputUUID": "DE1C4B59-8EF2-4B65-B37C-23A382CF41F3",
             "OutputName": "base64encode"
           },
           "WFSerializationType": "WFTextTokenAttachment"
         },
-        "UUID": "0A354B57-192A-4F11-8651-7F3921844DDC"
+        "UUID": "C38A5812-42A0-4059-BF6D-7E5A725B18B9"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.choosefrommenu",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 1,
+        "GroupingIdentifier": "382B0951-8766-489E-A7A4-5A171F00FC91",
+        "WFMenuItemTitle": "体重与体脂率",
+        "UUID": "C7E0B0F8-515B-472F-A847-940009F62FF0"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.ask",
+      "WFWorkflowActionParameters": {
+        "WFAskActionPrompt": "体重是多少 kg？",
+        "WFInputType": "Number",
+        "UUID": "5979ADFC-8928-478A-BB10-B1D7940F6FE3"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.ask",
+      "WFWorkflowActionParameters": {
+        "WFAskActionPrompt": "体脂率是多少？直接填百分数，例如 18.5。",
+        "WFInputType": "Number",
+        "UUID": "2B831321-BF2E-4006-9DF8-D5321222AC9D"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.text.match",
+      "WFWorkflowActionParameters": {
+        "text": {
+          "Value": {
+            "string": "￼",
+            "attachmentsByRange": {
+              "{0, 1}": {
+                "Type": "ActionOutput",
+                "OutputUUID": "2B831321-BF2E-4006-9DF8-D5321222AC9D",
+                "OutputName": "ask"
+              }
+            }
+          },
+          "WFSerializationType": "WFTextTokenString"
+        },
+        "WFMatchTextPattern": "^(?:[1-9][0-9]?(?:[.,][0-9]+)?|0[.,][0-9]*[1-9][0-9]*)$",
+        "UUID": "92AB2C86-19D4-4B2A-BC1B-9B1C8FA015D5"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 0,
+        "GroupingIdentifier": "51204B59-575B-45C0-A960-A5F6EF06D652",
+        "WFConditions": {
+          "Value": {
+            "WFActionParameterFilterPrefix": 1,
+            "WFContentPredicateBoundedDate": false,
+            "WFActionParameterFilterTemplates": [
+              {
+                "WFCondition": 100,
+                "WFInput": {
+                  "Type": "Variable",
+                  "Variable": {
+                    "Value": {
+                      "Type": "ActionOutput",
+                      "OutputUUID": "92AB2C86-19D4-4B2A-BC1B-9B1C8FA015D5",
+                      "OutputName": "text.match"
+                    },
+                    "WFSerializationType": "WFTextTokenAttachment"
+                  }
+                }
+              }
+            ]
+          },
+          "WFSerializationType": "WFContentPredicateTableTemplate"
+        },
+        "UUID": "E97913F6-F75B-4F97-BEEF-DDFD5A37751F"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 1,
+        "GroupingIdentifier": "51204B59-575B-45C0-A960-A5F6EF06D652",
+        "UUID": "8D493516-F7B0-4C3E-A7EF-981EF2533694"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.showresult",
+      "WFWorkflowActionParameters": {
+        "Text": "请输入大于 0 且小于 100 的体脂率，例如 18.5。本次未保存。",
+        "UUID": "1D87FD40-AC14-4E8A-879F-37E42EEBA52E"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.exit",
+      "WFWorkflowActionParameters": {
+        "UUID": "273549D5-04D2-4F72-AB6B-09C3A323C329"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 2,
+        "GroupingIdentifier": "51204B59-575B-45C0-A960-A5F6EF06D652",
+        "UUID": "7F432EDD-3D48-47A0-9D68-642AE3F43570"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.gettext",
+      "WFWorkflowActionParameters": {
+        "WFTextActionText": {
+          "Value": {
+            "string": "体重 ￼ kg\n体脂率 ￼%",
+            "attachmentsByRange": {
+              "{3, 1}": {
+                "Type": "ActionOutput",
+                "OutputUUID": "5979ADFC-8928-478A-BB10-B1D7940F6FE3",
+                "OutputName": "ask"
+              },
+              "{12, 1}": {
+                "Type": "ActionOutput",
+                "OutputUUID": "2B831321-BF2E-4006-9DF8-D5321222AC9D",
+                "OutputName": "ask"
+              }
+            }
+          },
+          "WFSerializationType": "WFTextTokenString"
+        },
+        "UUID": "18A9898F-0365-42C2-8C62-E3454FB52CD1"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.base64encode",
+      "WFWorkflowActionParameters": {
+        "WFInput": {
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "18A9898F-0365-42C2-8C62-E3454FB52CD1",
+            "OutputName": "gettext"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "WFEncodeMode": "Encode",
+        "WFBase64LineBreakMode": "None",
+        "UUID": "60606E11-39C2-4B2F-BD08-E1D59CFBB4E9"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.setvariable",
+      "WFWorkflowActionParameters": {
+        "WFVariableName": "记录文字",
+        "WFInput": {
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "60606E11-39C2-4B2F-BD08-E1D59CFBB4E9",
+            "OutputName": "base64encode"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "UUID": "7288DA97-07BA-43DA-8D7D-0DC96948EC3E"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.choosefrommenu",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 1,
+        "GroupingIdentifier": "382B0951-8766-489E-A7A4-5A171F00FC91",
+        "WFMenuItemTitle": "三项都记",
+        "UUID": "F48621C4-3D1D-455B-8D0A-DF47C835004C"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.ask",
+      "WFWorkflowActionParameters": {
+        "WFAskActionPrompt": "体重是多少 kg？",
+        "WFInputType": "Number",
+        "UUID": "CA8AF910-FDCE-4349-B8CF-9E0604781C1D"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.ask",
+      "WFWorkflowActionParameters": {
+        "WFAskActionPrompt": "腰围是多少 cm？",
+        "WFInputType": "Number",
+        "UUID": "326B1722-9A8F-4EDA-9AEF-75127EFF904A"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.ask",
+      "WFWorkflowActionParameters": {
+        "WFAskActionPrompt": "体脂率是多少？直接填百分数，例如 18.5。",
+        "WFInputType": "Number",
+        "UUID": "0E67446C-152D-479E-95F6-1C1E6E415E6D"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.text.match",
+      "WFWorkflowActionParameters": {
+        "text": {
+          "Value": {
+            "string": "￼",
+            "attachmentsByRange": {
+              "{0, 1}": {
+                "Type": "ActionOutput",
+                "OutputUUID": "0E67446C-152D-479E-95F6-1C1E6E415E6D",
+                "OutputName": "ask"
+              }
+            }
+          },
+          "WFSerializationType": "WFTextTokenString"
+        },
+        "WFMatchTextPattern": "^(?:[1-9][0-9]?(?:[.,][0-9]+)?|0[.,][0-9]*[1-9][0-9]*)$",
+        "UUID": "26488C58-BE77-4014-8947-580210B7EA88"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 0,
+        "GroupingIdentifier": "068F87BB-A951-4CD4-BC73-5497A1C366F6",
+        "WFConditions": {
+          "Value": {
+            "WFActionParameterFilterPrefix": 1,
+            "WFContentPredicateBoundedDate": false,
+            "WFActionParameterFilterTemplates": [
+              {
+                "WFCondition": 100,
+                "WFInput": {
+                  "Type": "Variable",
+                  "Variable": {
+                    "Value": {
+                      "Type": "ActionOutput",
+                      "OutputUUID": "26488C58-BE77-4014-8947-580210B7EA88",
+                      "OutputName": "text.match"
+                    },
+                    "WFSerializationType": "WFTextTokenAttachment"
+                  }
+                }
+              }
+            ]
+          },
+          "WFSerializationType": "WFContentPredicateTableTemplate"
+        },
+        "UUID": "6678EB3A-8389-4D07-AF71-D084BA5C4869"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 1,
+        "GroupingIdentifier": "068F87BB-A951-4CD4-BC73-5497A1C366F6",
+        "UUID": "C386F0CB-7475-4E62-8217-9A1B837EB366"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.showresult",
+      "WFWorkflowActionParameters": {
+        "Text": "请输入大于 0 且小于 100 的体脂率，例如 18.5。本次未保存。",
+        "UUID": "A738FDC3-40ED-4F03-AF7C-FF8132439AE8"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.exit",
+      "WFWorkflowActionParameters": {
+        "UUID": "6AEC5184-67BC-4544-BB95-546C10B443BF"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+      "WFWorkflowActionParameters": {
+        "WFControlFlowMode": 2,
+        "GroupingIdentifier": "068F87BB-A951-4CD4-BC73-5497A1C366F6",
+        "UUID": "396E76D2-C18D-4B1B-A5CA-4FA0D7AA5A53"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.gettext",
+      "WFWorkflowActionParameters": {
+        "WFTextActionText": {
+          "Value": {
+            "string": "体重 ￼ kg\n腰围 ￼ cm\n体脂率 ￼%",
+            "attachmentsByRange": {
+              "{3, 1}": {
+                "Type": "ActionOutput",
+                "OutputUUID": "CA8AF910-FDCE-4349-B8CF-9E0604781C1D",
+                "OutputName": "ask"
+              },
+              "{11, 1}": {
+                "Type": "ActionOutput",
+                "OutputUUID": "326B1722-9A8F-4EDA-9AEF-75127EFF904A",
+                "OutputName": "ask"
+              },
+              "{20, 1}": {
+                "Type": "ActionOutput",
+                "OutputUUID": "0E67446C-152D-479E-95F6-1C1E6E415E6D",
+                "OutputName": "ask"
+              }
+            }
+          },
+          "WFSerializationType": "WFTextTokenString"
+        },
+        "UUID": "7E5FE0AA-0F6A-4E5C-99AA-76ADDBE2C74F"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.base64encode",
+      "WFWorkflowActionParameters": {
+        "WFInput": {
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "7E5FE0AA-0F6A-4E5C-99AA-76ADDBE2C74F",
+            "OutputName": "gettext"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "WFEncodeMode": "Encode",
+        "WFBase64LineBreakMode": "None",
+        "UUID": "F3FA31B8-20A0-41F5-8983-53AFD6D28A71"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.setvariable",
+      "WFWorkflowActionParameters": {
+        "WFVariableName": "记录文字",
+        "WFInput": {
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "F3FA31B8-20A0-41F5-8983-53AFD6D28A71",
+            "OutputName": "base64encode"
+          },
+          "WFSerializationType": "WFTextTokenAttachment"
+        },
+        "UUID": "6074AB0A-0DBF-41CA-937E-A04493A51970"
       }
     },
     {
       "WFWorkflowActionIdentifier": "is.workflow.actions.choosefrommenu",
       "WFWorkflowActionParameters": {
         "WFControlFlowMode": 2,
-        "GroupingIdentifier": "33DF8FAA-9146-4A84-A586-D375EEC6B82A",
-        "UUID": "7A485B5E-11EC-4536-82E7-7878DC5014A9"
+        "GroupingIdentifier": "382B0951-8766-489E-A7A4-5A171F00FC91",
+        "UUID": "47C4B4AC-AE8D-46B0-ABB0-7F1052BF3FF0"
       }
     },
     {
@@ -501,7 +984,7 @@
           },
           "WFSerializationType": "WFTextTokenString"
         },
-        "UUID": "EE957B7C-2CA2-431B-A288-01281303B6F6"
+        "UUID": "9275E96C-62DB-4094-BFB8-794A5DE31487"
       }
     },
     {
@@ -510,7 +993,7 @@
         "WFInput": {
           "Value": {
             "Type": "ActionOutput",
-            "OutputUUID": "EE957B7C-2CA2-431B-A288-01281303B6F6",
+            "OutputUUID": "9275E96C-62DB-4094-BFB8-794A5DE31487",
             "OutputName": "gettext"
           },
           "WFSerializationType": "WFTextTokenAttachment"
@@ -528,7 +1011,7 @@
           "WFSerializationType": "WFTextTokenString"
         },
         "WFDontIncludeFileExtension": false,
-        "UUID": "8AC76635-FC8F-424B-BC56-B09BB34D9303"
+        "UUID": "B540D302-C403-4C34-B465-6F2343B260F5"
       }
     },
     {
@@ -537,7 +1020,7 @@
         "WFInput": {
           "Value": {
             "Type": "ActionOutput",
-            "OutputUUID": "8AC76635-FC8F-424B-BC56-B09BB34D9303",
+            "OutputUUID": "B540D302-C403-4C34-B465-6F2343B260F5",
             "OutputName": "setitemname"
           },
           "WFSerializationType": "WFTextTokenAttachment"
@@ -556,14 +1039,14 @@
           "WFSerializationType": "WFTextTokenString"
         },
         "WFSaveFileOverwrite": false,
-        "UUID": "64784E4C-5F1C-4636-ACE2-08DCD1DDD33D"
+        "UUID": "6B45871D-BEB7-4CD5-BB64-EAEE32BAE064"
       }
     },
     {
       "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
       "WFWorkflowActionParameters": {
         "WFControlFlowMode": 0,
-        "GroupingIdentifier": "DAD57A67-01A5-4A21-A1F9-4FAF98F364E8",
+        "GroupingIdentifier": "459CCA62-7145-4E41-9E21-A2F29A5D242D",
         "WFConditions": {
           "Value": {
             "WFActionParameterFilterPrefix": 1,
@@ -576,7 +1059,7 @@
                   "Variable": {
                     "Value": {
                       "Type": "ActionOutput",
-                      "OutputUUID": "64784E4C-5F1C-4636-ACE2-08DCD1DDD33D",
+                      "OutputUUID": "6B45871D-BEB7-4CD5-BB64-EAEE32BAE064",
                       "OutputName": "documentpicker.save"
                     },
                     "WFSerializationType": "WFTextTokenAttachment"
@@ -587,37 +1070,37 @@
           },
           "WFSerializationType": "WFContentPredicateTableTemplate"
         },
-        "UUID": "FBD13F91-56F0-451A-8F53-D69EDD85AA1B"
+        "UUID": "2B32BA82-D8A3-4C8B-A2CA-ED51445D4C6F"
       }
     },
     {
       "WFWorkflowActionIdentifier": "is.workflow.actions.showresult",
       "WFWorkflowActionParameters": {
         "Text": "已保存到手机收件箱。等待 iCloud 同步后，打开 Mac 的身体手记即可查看。",
-        "UUID": "196F584C-FEBC-4AE9-BF37-DC4C22FE91CA"
+        "UUID": "C2F88AA8-898F-48C2-BFC7-A8863E73EC33"
       }
     },
     {
       "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
       "WFWorkflowActionParameters": {
         "WFControlFlowMode": 1,
-        "GroupingIdentifier": "DAD57A67-01A5-4A21-A1F9-4FAF98F364E8",
-        "UUID": "FDB16348-39DA-4502-B7F1-9F59EFDB60A0"
+        "GroupingIdentifier": "459CCA62-7145-4E41-9E21-A2F29A5D242D",
+        "UUID": "6E6BFD86-5648-45BF-A7DC-F12F8A3DB229"
       }
     },
     {
       "WFWorkflowActionIdentifier": "is.workflow.actions.showresult",
       "WFWorkflowActionParameters": {
         "Text": "记录未保存。请检查 iCloud 空间、网络和保存位置后重试。",
-        "UUID": "A3B6B9C2-6FB0-46A9-8C3F-8912EFA97E97"
+        "UUID": "AEA74E97-5E6D-4C67-8646-10DD150F019D"
       }
     },
     {
       "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
       "WFWorkflowActionParameters": {
         "WFControlFlowMode": 2,
-        "GroupingIdentifier": "DAD57A67-01A5-4A21-A1F9-4FAF98F364E8",
-        "UUID": "F5AD3949-95A1-4A61-B7F2-F4FE2CA5EFB3"
+        "GroupingIdentifier": "459CCA62-7145-4E41-9E21-A2F29A5D242D",
+        "UUID": "F4E00AB6-E6CE-421D-B133-DD30D712EA0C"
       }
     }
   ]
