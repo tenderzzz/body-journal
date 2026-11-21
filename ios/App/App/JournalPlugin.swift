@@ -17,7 +17,7 @@ final class JournalPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate
 {
   let identifier = "JournalPlugin"
   let jsName = "Journal"
-  let pluginMethods = [CAPPluginMethod(name: "request", returnType: CAPPluginReturnPromise)]
+  let pluginMethods: [CAPPluginMethod] = [CAPPluginMethod(name: "request", returnType: CAPPluginReturnPromise)]
   private let queue = DispatchQueue(label: "bodyjournal.phone.storage", qos: .userInitiated)
   private let transfers = DispatchQueue(label: "bodyjournal.phone.files", qos: .utility)
   private var database: PhoneDatabase?
