@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import path from 'node:path';
 
 export const RESOURCE_FILES=[
-  'assets/icon.icns','assets/connection-test.png','data/foods.json','data/README.md',
+  'journal-folder','assets/icon.icns','assets/connection-test.png','data/foods.json','data/README.md',
   'docs/使用说明.html','shortcuts/开始安装.md','shortcuts/安装记步数.command','shortcuts/更新记一餐和记身体.command','shortcuts/更新记一餐.command',
   ...['记一餐','记训练','记身体','随手记','记步数'].flatMap(name=>['json','shortcut'].map(ext=>`shortcuts/unsigned/身体手记·${name}.${ext}`)),
 ];
@@ -15,7 +15,7 @@ export function verifyResources(bundle){
   const root=path.join(bundle,'Contents/Resources');
   const manifest=JSON.parse(readFileSync(path.join(root,'resources-manifest.json'),'utf8'));
   if(JSON.stringify(Object.keys(manifest).sort())!==JSON.stringify([...RESOURCE_FILES].sort()))throw new Error('发布资源清单与白名单不一致');
-  const actual=['assets','data','docs','shortcuts'].flatMap(dir=>files(path.join(root,dir),dir+'/'));
+  const actual=['journal-folder',...['assets','data','docs','shortcuts'].flatMap(dir=>files(path.join(root,dir),dir+'/'))];
   if(JSON.stringify(actual.sort())!==JSON.stringify([...RESOURCE_FILES].sort()))throw new Error('发布资源包含白名单之外的文件');
   for(const file of actual){
     const sha=createHash('sha256').update(readFileSync(path.join(root,file))).digest('hex');

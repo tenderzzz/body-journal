@@ -1,3 +1,5 @@
+import {MacReplicas,confirmedPortions,editedPortions,applyPortions} from './device-records';
+import type {SyncRecord} from '../../src/shared/device-sync';
 import {isPersonalEvidence} from './memory-evidence';
 import {recordCardio} from '../../src/shared/cardio';
 import {migrateJournalDays} from './day-migration';
@@ -58,6 +60,8 @@ class MemoryCandidateError extends Error {}
 export class HealthStore {
   db: DatabaseSync;
   energy!:EnergyStore;
+  deviceRecords=new MacReplicas(this);
+  private applyingDevice=false;
   syncState: { imported:number;pending:number;errors:string[];at?:string;items?:SyncItem[] }={imported:0,pending:0,errors:[]};
   constructor(public root:string,public catalog:FoodCatalog,defaultInbox:string,seed=true) {
     recoverSwap(root);
@@ -69,6 +73,7 @@ export class HealthStore {
     if(version>6) throw new Error('档案由更高版本创建，请升级应用后再打开。');
     if(version>0 && version<1) this.db.prepare('VACUUM INTO ?').run(path.join(root,`before-migration-${Date.now()}.sqlite`));
     this.db.exec(`CREATE TABLE IF NOT EXISTS records(id TEXT PRIMARY KEY, doc TEXT NOT NULL, fingerprint TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS device_records(id TEXT PRIMARY KEY,doc TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS revisions(seq INTEGER PRIMARY KEY AUTOINCREMENT, entity TEXT NOT NULL, id TEXT NOT NULL, doc TEXT NOT NULL, at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS memories(id TEXT PRIMARY KEY,doc TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY,doc TEXT NOT NULL);
@@ -170,7 +175,7 @@ export class HealthStore {
   records(includeDeleted=false):HealthRecord[] { return this.db.prepare('SELECT doc FROM records').all().map(r=>parseJSON<HealthRecord>(r.doc)).filter(r=>includeDeleted||!r.deleted).sort((a,b)=>Date.parse(b.occurredAt)-Date.parse(a.occurredAt)); }
   record(id:string):HealthRecord { idSchema.parse(id); const r=this.db.prepare('SELECT doc FROM records WHERE id=?').get(id); if(!r) throw new Error('没有找到这条记录'); return parseJSON(r.doc); }
   private putRecord(r:HealthRecord,fingerprint?:string) { if(fingerprint) this.db.prepare('INSERT INTO records VALUES(?,?,?)').run(r.id,JSON.stringify(r),fingerprint); else this.db.prepare('UPDATE records SET doc=? WHERE id=?').run(JSON.stringify(r),r.id);this.energy?.invalidate(); }
-  private transaction<T>(fn:()=>T):T { if(this.db.isTransaction)return fn();this.db.exec('BEGIN IMMEDIATE'); try { const result=fn(); this.db.exec('COMMIT'); return result; } catch(e) { this.db.exec('ROLLBACK'); throw e; } }
+  transaction<T>(fn:()=>T):T { if(this.db.isTransaction)return fn();this.db.exec('BEGIN IMMEDIATE'); try { const result=fn(); this.db.exec('COMMIT'); return result; } catch(e) { this.db.exec('ROLLBACK'); throw e; } }
   importEnvelope(input:unknown,sourceDir?:string,source='桌面记录'): {record:HealthRecord;duplicate:boolean} {
     return this.importRecord(input,sourceDir,source);
   }
@@ -263,17 +268,64 @@ export class HealthStore {
     }
     if(contentChanged&&old.kind==='meal'&&old.analysis?.ingredients?.some(i=>i.userCorrected))updated.analysis={...old.analysis,macros:null,summary:'原文已修改，保留手动食材更正，等待重新分析。',questions:[]};
     if(formattingOnly){updated.analysis=old.analysis;updated.status='ready';updated.analysisPending=false;updated.analysisError=undefined;updated.analysisAttemptedRevision=undefined;}
-    return this.commitRevision(old,updated);
+    return this.commitRevision(old,updated,{userEdit:true});
   }
-  private commitRevision(old:HealthRecord,updated:HealthRecord,options?:{skipInvalidate?:string[];preserveStrength?:boolean}):HealthRecord {
+  private commitRevision(old:HealthRecord,updated:HealthRecord,options?:{skipInvalidate?:string[];preserveStrength?:boolean;userEdit?:boolean}):HealthRecord {
     const normalized=updated.analysis?withActivityOverrides(normalizeAnalysis(updated.analysis,updated.text,this.exerciseAliases(),this.exerciseRules()),updated.analysis.activityOverrides):updated.analysis;
     const analysis=normalized&&options?.preserveStrength?{...normalized,sets:updated.analysis!.sets,training:updated.analysis!.training}:normalized;
     const next={...updated,analysis,revision:old.revision+1,updatedAt:iso()};
-    const result=this.transaction(()=>{ this.db.prepare('INSERT INTO revisions(entity,id,doc,at) VALUES(?,?,?,?)').run('record',old.id,JSON.stringify(old),iso()); this.putRecord(next); this.invalidate(old.id,new Set(options?.skipInvalidate??[])); return next; });
+    const result=this.transaction(()=>{ this.db.prepare('INSERT INTO revisions(entity,id,doc,at) VALUES(?,?,?,?)').run('record',old.id,JSON.stringify(old),iso()); this.putRecord(next); if(options?.userEdit&&!this.applyingDevice)this.deviceRecords.userChange(next); this.invalidate(old.id,new Set(options?.skipInvalidate??[])); return next; });
     this.db.prepare("DELETE FROM memory_episodes WHERE json_extract(doc,'$.recordId')=?").run(old.id);if(!updated.deleted)this.saveEpisode(updated.text,updated.occurredAt,{recordId:old.id,recordRevision:next.revision});
     this.refreshAutomaticMemories(); return result;
   }
-  undoRecord(id:string) { const old=this.record(id); const row=this.db.prepare("SELECT doc FROM revisions WHERE entity='record' AND id=? ORDER BY seq DESC LIMIT 1").get(id); if(!row) throw new Error('这条记录还没有可撤销的修改'); const prior=parseJSON<HealthRecord>(row.doc);return this.commitRevision(old,{...prior,dateLocked:old.occurredAt!==prior.occurredAt?true:prior.dateLocked}); }
+  applyDeviceRecord(wire:SyncRecord,previous?:SyncRecord){
+    const found=this.db.prepare('SELECT doc FROM records WHERE id=?').get(wire.id);
+    const incoming=wire.photos.flatMap((p,index)=>{
+      const file='attachments/'+wire.id+'/'+p.hash+'.'+p.mime.split('/')[1];
+      return existsSync(safePath(this.root,file))?[{name:'照片 '+(index+1),file,sha256:p.hash,mime:p.mime}]:[];
+    });
+    const portionAnalysis=(r:HealthRecord)=>{
+      const ingredients=this.catalog.resolveIngredients(applyPortions(r.analysis?.ingredients??[],previous?.portions??[],wire.portions));
+      const base=r.analysis??{engine:'local' as const,at:iso(),summary:'已接收人工核对的餐食分量',assumptions:[],questions:[]};
+      return {...base,ingredients,...this.catalog.calculate(ingredients)};
+    };
+    this.applyingDevice=true;
+    try{
+      if(!found){
+        const parsed=this.localStatus({kind:wire.kind,text:wire.text,body:null},wire.occurredAt);
+        const r:HealthRecord={id:wire.id,kind:wire.kind,text:wire.text,occurredAt:wire.occurredAt,timezone:wire.timezone,
+          dateLocked:true,body:null,attachments:incoming,...parsed,userPortions:wire.portions,deleted:wire.deleted,
+          revision:1,createdAt:iso(),updatedAt:iso(),source:'iPhone 双向同步',analysisPending:true};
+        if(wire.portions.length)r.analysis=portionAnalysis(r);
+        atomicWrite(path.join(this.root,'raw',wire.id+'.json'),JSON.stringify({version:1,id:r.id,kind:r.kind,text:r.text,occurredAt:r.occurredAt,timezone:r.timezone,attachments:r.attachments}));
+        this.putRecord(r,sha256('device-sync/'+r.id));
+        if(!r.deleted)this.saveEpisode(r.text,r.occurredAt,{recordId:r.id,recordRevision:r.revision});
+        this.refreshAutomaticMemories();
+        return;
+      }
+      let r=parseJSON<HealthRecord>(found.doc);
+      if(r.text!==wire.text||r.occurredAt!==wire.occurredAt||r.deleted!==wire.deleted){
+        r=this.revise(r.id,{text:wire.text,occurredAt:wire.occurredAt,deleted:wire.deleted},r.revision);
+      }
+      // An enrolled Mac record can also contain photos the user kept private.
+      const fromPhone=r.source==='iPhone 双向同步';
+      const attachments=fromPhone?incoming.map(a=>r.attachments.find(old=>old.sha256===a.sha256)??a):[...r.attachments];
+      if(!fromPhone){
+        const remaining=[...r.attachments];
+        for(const a of incoming){
+          const index=remaining.findIndex(old=>old.sha256===a.sha256);
+          if(index<0)attachments.push(a);else remaining.splice(index,1);
+        }
+      }
+      const changedPhotos=JSON.stringify(attachments)!==JSON.stringify(r.attachments);
+      const changedPortions=JSON.stringify(confirmedPortions(r))!==JSON.stringify(wire.portions);
+      if(changedPhotos||changedPortions||wire.timezone!==r.timezone){
+        this.commitRevision(r,{...r,timezone:wire.timezone,attachments,userPortions:wire.portions,...(changedPortions?{analysis:portionAnalysis(r)}:{}),
+          analysisPending:changedPhotos||r.analysisPending});
+      }
+    }finally{this.applyingDevice=false;}
+  }
+  undoRecord(id:string) { const old=this.record(id); const row=this.db.prepare("SELECT doc FROM revisions WHERE entity='record' AND id=? ORDER BY seq DESC LIMIT 1").get(id); if(!row) throw new Error('这条记录还没有可撤销的修改'); const prior=parseJSON<HealthRecord>(row.doc);return this.commitRevision(old,{...prior,dateLocked:old.occurredAt!==prior.occurredAt?true:prior.dateLocked},{userEdit:true}); }
   applyAnalysis(id:string,value:unknown,engine:Analysis['engine'],expectedRevision:number,manualMeal=false,modelRun?:ModelRun):HealthRecord {
     return this.transaction(()=>this.applyAnalysisAtomic(id,value,engine,expectedRevision,manualMeal,modelRun));
   }
@@ -366,7 +418,7 @@ export class HealthStore {
     if(mealClarification)a={...a,questions:[mealClarification]};
     const proposed=(a.memories??[]).map(m=>memoryInputSchema.parse({kind:m.kind,text:m.text,startsAt:old.occurredAt,expiresAt:m.kind==='state'?(m.expiresAt??new Date(Date.parse(old.occurredAt)+7*86400000).toISOString()):null,sourceIds:[id],evidence:[old.text.includes(m.text)?{quote:m.text,origin:'record',recordId:id,recordRevision:old.revision+1,at:old.occurredAt}:{quote:'',origin:'unknown'}],active:true,confirmed:false}));
     const analysis:Analysis=normalizeAnalysis({...a,...calc,engine,...(engine!=='local'&&modelRun?{modelRun}:{}),at:iso()},old.text,this.exerciseAliases(),this.exerciseRules());
-    const r=this.commitRevision(old,{...old,analysis,analysisPending:false,analysisError:undefined,analysisAttemptedRevision:old.revision+1,status:mealClarification?'needs_info':old.kind==='meal'&&(!a.ingredients?.length||('unmatched' in calc&&calc.unmatched?.length))?'pending':a.questions.length?'needs_info':'ready'},{skipInvalidate:analysis.memoryReceipt?.map(m=>m.id)??[]});
+    const r=this.commitRevision(old,{...old,...(manualMeal?{userPortions:editedPortions(old,analysis.ingredients??[])}:{}),analysis,analysisPending:false,analysisError:undefined,analysisAttemptedRevision:old.revision+1,status:mealClarification?'needs_info':old.kind==='meal'&&(!a.ingredients?.length||('unmatched' in calc&&calc.unmatched?.length))?'pending':a.questions.length?'needs_info':'ready'},{skipInvalidate:analysis.memoryReceipt?.map(m=>m.id)??[],userEdit:manualMeal});
     for(const m of proposed) this.saveMemory(m);
     return r;
   }

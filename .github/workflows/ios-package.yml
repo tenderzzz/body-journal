@@ -1,0 +1,39 @@
+name: iPhone 首版安装包
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'ios/**'
+      - 'native/**'
+      - 'mobile/**'
+      - 'src/mobile/**'
+      - 'src/shared/device-*.ts'
+      - 'src/ui/SyncConflict.tsx'
+      - 'scripts/ios/**'
+      - 'capacitor.config.json'
+      - 'package-lock.json'
+      - '.github/workflows/ios-package.yml'
+permissions:
+  contents: read
+jobs:
+  ipa:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run ios:ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BodyJournal-iPhone
+          path: |
+            release/BodyJournal-iPhone.ipa
+            release/iphone-SHA256SUMS.txt
+          if-no-files-found: error

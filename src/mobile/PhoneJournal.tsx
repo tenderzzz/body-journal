@@ -1,0 +1,742 @@
+import { useEffect, useState } from 'react';
+import {
+  ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
+  NotebookPen,
+  RefreshCw,
+  Footprints,
+  Utensils,
+  Dumbbell,
+  Scale,
+  StickyNote,
+  ImagePlus,
+  FolderSync,
+  BookOpen,
+  Trash2,
+} from 'lucide-react';
+import { addCalendarDays, atTime, calendarDay, dateParts, journalDay } from '../shared/dates';
+import {
+  newDeviceUUID,
+  deliveryLabel,
+  heads,
+  portionLabel,
+  recoveryParts,
+  type PhoneRecord,
+  type PhotoRef,
+  type SyncReport,
+} from '../shared/device-sync';
+import { SyncConflict } from '../ui/SyncConflict';
+import { PhoneJournalModel, stamp, type PhoneIdentity, type Row } from './journal';
+import './phone.css';
+
+const model = new PhoneJournalModel();
+const labels = { meal: '记一餐', training: '记训练', body: '记身体', note: '随手记', steps: '记步数' };
+const kinds = { meal: '餐食', training: '训练', body: '身体', note: '手记', steps: '步数' };
+const icons = { meal: Utensils, training: Dumbbell, body: Scale, note: StickyNote, steps: Footprints };
+const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai';
+const dayOf = (r: PhoneRecord) => (r.kind === 'steps' ? calendarDay : journalDay)(r.occurredAt, r.timezone);
+function fieldTime(r: PhoneRecord) {
+  const p = dateParts(r.occurredAt, r.timezone);
+  return p.year + '-' + p.month + '-' + p.day + 'T' + p.hour + ':' + p.minute;
+}
+function localValue(r: PhoneRecord) {
+  return r.kind === 'steps'
+    ? (r.steps ?? 0).toLocaleString() + ' 步'
+    : r.text ||
+        [
+          r.body?.weightKg && r.body.weightKg + ' kg',
+          r.body?.waistCm && r.body.waistCm + ' cm',
+          r.body?.bodyFatPercent && r.body.bodyFatPercent + '%',
+        ]
+          .filter(Boolean)
+          .join(' / ') ||
+        r.photos.length + ' 张照片';
+}
+function photoKey(p: PhotoRef, i: number) {
+  return p.hash + '-' + i;
+}
+function PhonePhoto({
+  photo,
+  index,
+  refresh,
+}: {
+  photo: PhotoRef;
+  index: number;
+  refresh?: string | number;
+}) {
+  const [url, setUrl] = useState(''),
+    [full, setFull] = useState(''),
+    [error, setError] = useState('');
+  useEffect(() => {
+    let live = true;
+    model
+      .call<{ url?: string }>('preview', { photo })
+      .then((v) => {
+        if (live) setUrl(v.url ?? '');
+      })
+      .catch((e) => {
+        if (live) setError(e.message);
+      });
+    return () => {
+      live = false;
+    };
+  }, [photo.hash, refresh]);
+  return (
+    <>
+      {url ? (
+        <button
+          type="button"
+          className="phone-photo"
+          aria-label={'查看照片 ' + (index + 1)}
+          onClick={async () => {
+            try {
+              setFull((await model.call<{ url: string }>('preview', { photo, full: true })).url);
+            } catch (e) {
+              setError((e as Error).message);
+            }
+          }}
+        >
+          <img src={url} alt={'照片 ' + (index + 1)} />
+        </button>
+      ) : (
+        <span className="photo-wait">{error || '照片 ' + (index + 1) + ' 下载中'}</span>
+      )}
+      {full && (
+        <div role="dialog" aria-label="照片" className="photo-view">
+          <button type="button" onClick={() => setFull('')}>
+            关闭照片
+          </button>
+          <img src={full} alt={'照片 ' + (index + 1)} />
+        </div>
+      )}
+    </>
+  );
+}
+function PhotoConsent({
+  r,
+  selected,
+  set,
+}: {
+  r: PhoneRecord;
+  selected: number[];
+  set: (v: number[]) => void;
+}) {
+  if (r.kind !== 'meal' || !r.photos.length) return null;
+  return (
+    <div className="consent-photos">
+      {r.photos.map((p, i) => (
+        <label key={photoKey(p, i)}>
+          <input
+            type="checkbox"
+            checked={selected.includes(i)}
+            onChange={(e) => set(e.target.checked ? [...selected, i] : selected.filter((n) => n !== i))}
+          />
+          选入照片 {i + 1}
+        </label>
+      ))}
+    </div>
+  );
+}
+function Editor({
+  original,
+  base,
+  id,
+  back,
+  saved,
+}: {
+  original: PhoneRecord;
+  base: Row | null;
+  id: PhoneIdentity;
+  back: () => void;
+  saved: (r: Row) => void;
+}) {
+  const [r, set] = useState<PhoneRecord>(() => structuredClone(original)),
+    [time, setTime] = useState(fieldTime(original));
+  const [share, setShare] = useState(false),
+    [photos, select] = useState<number[]>([]),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState('');
+  const localOnly = r.kind === 'body' || r.kind === 'steps';
+  const update = (v: Partial<PhoneRecord>) => set((current) => ({ ...current, ...v }));
+  const save = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const instant =
+        time === fieldTime(original)
+          ? original.occurredAt
+          : atTime(time.slice(0, 10), Number(time.slice(11, 13)), Number(time.slice(14, 16)), r.timezone);
+      if (!instant) throw Error('请核对发生时间。');
+      saved(
+        await model.save(
+          { ...r, occurredAt: instant },
+          base ? stamp(base) : null,
+          share ? photos : undefined,
+        ),
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <main className="phone-content">
+      <button className="back" onClick={back}>
+        <ArrowLeft />
+        返回
+      </button>
+      <h1>{base ? '修改' + kinds[r.kind] : labels[r.kind]}</h1>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+      >
+        <fieldset disabled={busy}>
+          <label>
+            发生时间
+            <input type="datetime-local" required value={time} onChange={(e) => setTime(e.target.value)} />
+          </label>
+          {r.kind === 'steps' && (
+            <label>
+              当天总步数
+              <input
+                required
+                type="number"
+                inputMode="numeric"
+                min="0"
+                max="100000"
+                step="1"
+                value={r.steps ?? ''}
+                onChange={(e) =>
+                  update({ steps: e.target.value === '' ? undefined : Number(e.target.value) })
+                }
+              />
+              <small>按 {r.timezone} 的自然日归属。</small>
+            </label>
+          )}
+          {r.kind === 'body' && (
+            <div className="measure-fields">
+              {(
+                [
+                  ['weightKg', '体重 kg', 10, 500],
+                  ['waistCm', '腰围 cm', 20, 300],
+                  ['bodyFatPercent', '体脂率 %', 0.01, 99.99],
+                ] as const
+              ).map(([key, label, min, max]) => (
+                <label key={key}>
+                  {label}
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="any"
+                    min={min}
+                    max={max}
+                    value={r.body?.[key] ?? ''}
+                    onChange={(e) => {
+                      const body = { ...r.body };
+                      if (e.target.value === '') delete body[key];
+                      else body[key] = Number(e.target.value);
+                      update({ body });
+                    }}
+                  />
+                </label>
+              ))}
+            </div>
+          )}
+          <label>
+            {r.kind === 'steps' || r.kind === 'body' ? '备注' : '原文'}
+            <textarea
+              rows={4}
+              maxLength={100000}
+              value={r.text}
+              placeholder={r.kind === 'meal' ? '吃了什么，大约多少？' : '写下这条记录…'}
+              onChange={(e) => update({ text: e.target.value })}
+            />
+          </label>
+          {!!r.photos.length && (
+            <div className="phone-photos">
+              {r.photos.map((p, i) => (
+                <div key={photoKey(p, i)}>
+                  <PhonePhoto photo={p} index={i} />
+                  {!base && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        update({ photos: r.photos.filter((_, n) => n !== i) });
+                        select([]);
+                      }}
+                    >
+                      移除
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {!base && ['meal', 'training', 'note'].includes(r.kind) && r.photos.length < 8 && (
+            <button
+              type="button"
+              className="secondary"
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  const v = await model.call<{ photos?: PhotoRef[] }>('pick', { limit: 8 - r.photos.length });
+                  if (v.photos) update({ photos: [...r.photos, ...v.photos] });
+                } catch (e) {
+                  setError((e as Error).message);
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              <ImagePlus />
+              添加照片（{r.photos.length}/8）
+            </button>
+          )}
+          {localOnly ? (
+            <p className="muted">这条{r.kind === 'steps' ? '步数' : '身体'}记录仅存本机。</p>
+          ) : (
+            id.archive &&
+            !base?.replica && (
+              <div className="share-choice">
+                <label>
+                  <input type="checkbox" checked={share} onChange={(e) => setShare(e.target.checked)} />
+                  选入已配对的共享档案
+                </label>
+                {share && (
+                  <>
+                    <small>发送原文、发生时间、类别和人工分量。请核对上方内容。</small>
+                    <PhotoConsent r={r} selected={photos} set={select} />
+                  </>
+                )}
+              </div>
+            )
+          )}
+          {error && <p role="alert">{error}</p>}
+          <button type="submit" className="primary" disabled={busy}>
+            {busy ? '正在保存…' : '保存到本机'}
+          </button>
+        </fieldset>
+      </form>
+    </main>
+  );
+}
+function Pairing({
+  id,
+  report,
+  refresh,
+  sync,
+  rows,
+  open,
+}: {
+  id: PhoneIdentity;
+  report?: SyncReport;
+  refresh: () => Promise<void>;
+  sync: () => Promise<void>;
+  rows: Row[];
+  open: (id: string) => void;
+}) {
+  const [code, setCode] = useState(''),
+    [shown, setShown] = useState(''),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState('');
+  const action = async (fn: () => Promise<void>) => {
+    setBusy(true);
+    setError('');
+    try {
+      await fn();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const choose = async (input?: string) => {
+    if (input) recoveryParts(input);
+    const result = await model.call<{ cancelled?: boolean }>('choose', input ? { code: input.trim() } : {});
+    if (result.cancelled) return;
+    setCode('');
+    await refresh();
+    await sync();
+  };
+  const conflicts = rows.filter((r) => r.replica && heads(r.replica).length > 1);
+  return (
+    <main className="phone-content">
+      <h1>设备同步</h1>
+      <p>
+        {id.archive
+          ? id.enabled
+            ? '已连接 · ' + id.folder
+            : '同步已暂停'
+          : '先在 Mac 的「连接与数据」创建共享档案，再选取同一个 iCloud Drive 文件夹。'}
+      </p>
+      <fieldset disabled={busy}>
+        {id.archive && (
+          <div className="actions">
+            <button className="primary" disabled={!id.enabled} onClick={() => action(sync)}>
+              <RefreshCw />
+              立即同步
+            </button>
+            <button className="secondary" onClick={() => action(() => choose())}>
+              重选原目录
+            </button>
+          </div>
+        )}
+        <details open={!id.archive || undefined}>
+          <summary>{id.archive ? '用恢复码重新配对' : '配对这部 iPhone'}</summary>
+          <button
+            className="secondary"
+            onClick={() =>
+              action(async () => {
+                const v = await model.call<{ code?: string }>('scan');
+                if (v.code) await choose(v.code);
+              })
+            }
+          >
+            扫描 Mac 配对码
+          </button>
+          <label>
+            或填写恢复码
+            <input
+              type="password"
+              autoComplete="off"
+              autoCapitalize="none"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+            />
+          </label>
+          <button className="secondary" disabled={!code.trim()} onClick={() => action(() => choose(code))}>
+            选择共享文件夹
+          </button>
+        </details>
+        {id.archive && (
+          <>
+            <button
+              className="text"
+              onClick={() =>
+                action(async () => setShown(shown ? '' : (await model.call<{ code: string }>('code')).code))
+              }
+            >
+              {shown ? '收起恢复码' : '查看恢复码'}
+            </button>
+            {shown && <p className="recovery">{shown}</p>}
+            {id.enabled && (
+              <button
+                className="text"
+                onClick={() =>
+                  action(async () => {
+                    await model.call('pause');
+                    await refresh();
+                  })
+                }
+              >
+                暂停同步
+              </button>
+            )}
+          </>
+        )}
+      </fieldset>
+      {error && <p role="alert">{error}</p>}
+      {report && (
+        <section>
+          <h2>最近一次检查</h2>
+          <p>
+            {new Date(report.at).toLocaleTimeString()} · {report.waiting} 项等待补齐
+          </p>
+          {report.issues.map((e) => (
+            <p key={e} role="status">
+              {e}
+            </p>
+          ))}
+        </section>
+      )}
+      {conflicts.length > 0 && (
+        <section>
+          <h2>需要核对</h2>
+          {conflicts.map((r) => (
+            <button className="line-button" key={r.record.id} onClick={() => open(r.record.id)}>
+              {localValue(r.record).slice(0, 60)}
+            </button>
+          ))}
+        </section>
+      )}
+      <p className="muted">身体测量、步数和运动截图保存在这部 iPhone。已选入的餐食照片在离开本机前加密。</p>
+    </main>
+  );
+}
+export function PhoneJournal() {
+  const [identity, setId] = useState<PhoneIdentity>(),
+    [rows, setRows] = useState<Row[]>([]),
+    [report, setReport] = useState<SyncReport>(),
+    [error, setError] = useState('');
+  const [page, setPage] = useState<'journal' | 'sync'>('journal'),
+    [selected, setSelected] = useState<string>(),
+    [editor, setEditor] = useState<{ r: PhoneRecord; base: Row | null }>();
+  const [date, setDate] = useState(journalDay(new Date().toISOString(), zone())),
+    [trash, setTrash] = useState(false),
+    [notice, setNotice] = useState('');
+  const reload = async () => {
+    const [id, list] = await Promise.all([model.identity(), model.rows()]);
+    setId(id);
+    setRows(list);
+  };
+  const sync = async () => {
+    setReport(await model.sync());
+    await reload();
+  };
+  useEffect(() => {
+    const run = () => {
+      void sync().catch((e) => setError(e.message));
+    };
+    void reload()
+      .then(run)
+      .catch((e) => setError(e.message));
+    const foreground = () => {
+      if (!document.hidden) run();
+    };
+    document.addEventListener('visibilitychange', foreground);
+    window.addEventListener('online', run);
+    const timer = window.setInterval(foreground, 60000);
+    return () => {
+      document.removeEventListener('visibilitychange', foreground);
+      window.removeEventListener('online', run);
+      clearInterval(timer);
+    };
+  }, []);
+  const changed = (row: Row) => {
+    setRows((v) => [...v.filter((r) => r.record.id !== row.record.id), row]);
+    setSelected(row.record.id);
+    setDate(dayOf(row.record));
+    setEditor(undefined);
+    setNotice('已存本机');
+    void sync().catch((e) => setError(e.message));
+  };
+  const row = rows.find((r) => r.record.id === selected),
+    r = row?.record;
+  const eligible = row && !row.replica && identity?.archive && r?.kind !== 'body' && r?.kind !== 'steps';
+  const create = (kind: PhoneRecord['kind']) => {
+    const now = new Date().toISOString(),
+      tz = zone();
+    const occurredAt =
+      date === (kind === 'steps' ? calendarDay(now, tz) : journalDay(now, tz))
+        ? now
+        : (atTime(date, 12, 0, tz) ?? now);
+    setEditor({
+      r: {
+        id: newDeviceUUID(),
+        kind,
+        text: '',
+        occurredAt,
+        timezone: tz,
+        deleted: false,
+        photos: [],
+        portions: [],
+      },
+      base: null,
+    });
+    setNotice('');
+  };
+  if (!identity)
+    return (
+      <div className="phone">
+        <main className="phone-content">
+          <h1>身体手记</h1>
+          <p role="status">{error || '正在打开本机档案…'}</p>
+        </main>
+      </div>
+    );
+  const visible = rows
+    .filter((v) => v.record.deleted === trash && (trash || dayOf(v.record) === date))
+    .sort((a, b) => Date.parse(b.record.occurredAt) - Date.parse(a.record.occurredAt));
+  const detail = !!row && !!r;
+  return (
+    <div className="phone">
+      {editor ? (
+        <Editor
+          key={editor.r.id}
+          original={editor.r}
+          base={editor.base}
+          id={identity}
+          back={() => setEditor(undefined)}
+          saved={changed}
+        />
+      ) : detail ? (
+        <main className="phone-content">
+          <button
+            className="back"
+            onClick={() => {
+              setSelected(undefined);
+              setNotice('');
+            }}
+          >
+            <ArrowLeft />
+            返回
+          </button>
+          <h1>{kinds[r.kind]}记录</h1>
+          <p className="date-sub">
+            {fieldTime(r).replace('T', ' ')} · {r.timezone}
+          </p>
+          <div className="entry-text">{r.text || localValue(r)}</div>
+          {r.text && (r.body || r.steps !== undefined) && (
+            <p>
+              {[
+                r.steps !== undefined ? r.steps + ' 步' : '',
+                r.body?.weightKg ? r.body.weightKg + ' kg' : '',
+                r.body?.waistCm ? r.body.waistCm + ' cm' : '',
+                r.body?.bodyFatPercent ? r.body.bodyFatPercent + '%' : '',
+              ]
+                .filter(Boolean)
+                .join(' / ')}
+            </p>
+          )}
+          {r.portions.length > 0 && (
+            <section>
+              <h2>已核对的分量</h2>
+              {r.portions.map((p, i) => (
+                <p key={i}>{portionLabel(p)}</p>
+              ))}
+            </section>
+          )}
+          <div className="phone-photos">
+            {r.photos.map((p, i) => (
+              <PhonePhoto key={photoKey(p, i)} photo={p} index={i} refresh={report?.at} />
+            ))}
+          </div>
+          <p className="delivery">{deliveryLabel(row.replica, identity.device)}</p>
+          {row.replica && (
+            <SyncConflict
+              replica={row.replica}
+              device={identity.device}
+              resolve={async (parents, choice, text) =>
+                changed(await model.resolve(r.id, parents, choice, text))
+              }
+            />
+          )}
+          <div className="actions">
+            <button className="secondary" onClick={() => setEditor({ r, base: row })}>
+              {eligible ? '修改或选入同步' : '修改记录'}
+            </button>
+            <button
+              className="text"
+              onClick={async () => {
+                try {
+                  changed(await model.save({ ...r, deleted: !r.deleted }, stamp(row)));
+                } catch (e) {
+                  setError((e as Error).message);
+                }
+              }}
+            >
+              {r.deleted ? '恢复记录' : '移至最近删除'}
+            </button>
+          </div>
+        </main>
+      ) : page === 'sync' ? (
+        <Pairing id={identity} report={report} refresh={reload} sync={sync} rows={rows} open={setSelected} />
+      ) : (
+        <main className="phone-content">
+          <header className="book-heading">
+            <NotebookPen aria-hidden="true" />
+            <h1>身体手记</h1>
+          </header>
+          <div className="capture">
+            {(Object.keys(labels) as PhoneRecord['kind'][]).map((kind) => {
+              const Icon = icons[kind];
+              return (
+                <button key={kind} className={'capture-' + kind} onClick={() => create(kind)}>
+                  <Icon />
+                  <span>{labels[kind]}</span>
+                </button>
+              );
+            })}
+          </div>
+          <section className="timeline">
+            <div className="day-heading">
+              <h2>{trash ? '最近删除' : '时间线'}</h2>
+              <button className="text" onClick={() => setTrash(!trash)}>
+                {trash ? (
+                  '回到时间线'
+                ) : (
+                  <>
+                    <Trash2 size={16} />
+                    最近删除
+                  </>
+                )}
+              </button>
+            </div>
+            {!trash && (
+              <div className="day-nav">
+                <button aria-label="上一天" onClick={() => setDate(addCalendarDays(date, -1))}>
+                  <ChevronLeft />
+                </button>
+                <input
+                  aria-label="查看日期"
+                  type="date"
+                  value={date}
+                  onChange={(e) => {
+                    if (e.target.value) setDate(e.target.value);
+                  }}
+                />
+                <button aria-label="下一天" onClick={() => setDate(addCalendarDays(date, 1))}>
+                  <ChevronRight />
+                </button>
+              </div>
+            )}
+            {visible.map((v) => {
+              const entry = v.record;
+              return (
+                <button
+                  className="entry"
+                  key={entry.id}
+                  onClick={() => {
+                    setSelected(entry.id);
+                    setNotice('');
+                  }}
+                >
+                  <time>{trash ? dayOf(entry) : fieldTime(entry).slice(-5)}</time>
+                  <span>
+                    <small>
+                      {kinds[entry.kind]} · {deliveryLabel(v.replica, identity.device)}
+                    </small>
+                    <strong>{localValue(entry).slice(0, 85)}</strong>
+                  </span>
+                  <ChevronRight size={16} />
+                </button>
+              );
+            })}
+            {!visible.length && (
+              <p className="empty">
+                {trash ? '还没有删除的记录。' : '这一天还没有记录。可从上方记下第一笔。'}
+              </p>
+            )}
+          </section>
+        </main>
+      )}
+      {error && (
+        <p className="phone-error" role="alert">
+          {error}
+          <button onClick={() => setError('')}>关闭</button>
+        </p>
+      )}
+      {notice && detail && !editor && (
+        <small className="saved-notice" role="status">
+          {notice}
+        </small>
+      )}
+      {!editor && !detail && (
+        <nav className="phone-tabs" aria-label="主导航">
+          <button aria-current={page === 'journal' ? 'page' : undefined} onClick={() => setPage('journal')}>
+            <BookOpen />
+            手记
+          </button>
+          <button aria-current={page === 'sync' ? 'page' : undefined} onClick={() => setPage('sync')}>
+            <FolderSync />
+            同步{report?.issues.length ? ' · 待处理' : ''}
+          </button>
+        </nav>
+      )}
+    </div>
+  );
+}

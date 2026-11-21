@@ -22,3 +22,11 @@ shortcuts/*.shortcut
 # 本地档案与备份
 vault/
 *.bodyjournal
+
+# Built iPhone bundles, signing identities and local Xcode state
+dist-mobile/
+*.ipa
+*.mobileprovision
+*.p12
+DerivedData/
+xcuserdata/

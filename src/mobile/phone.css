@@ -1,0 +1,381 @@
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+  color: #183337;
+  background: #f4f8f8;
+  color-scheme: light;
+  font-size: 16px;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+button,
+input,
+textarea {
+  font: inherit;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.55;
+}
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+summary:focus-visible {
+  outline: 3px solid #157b91;
+  outline-offset: 3px;
+}
+.phone {
+  min-height: 100dvh;
+  max-width: 620px;
+  margin: auto;
+  background: white;
+}
+.phone-content {
+  padding: calc(env(safe-area-inset-top) + 30px) 21px calc(env(safe-area-inset-bottom) + 92px);
+}
+.book-heading,
+.actions,
+.back,
+.day-heading,
+.entry,
+.phone-tabs,
+.phone-tabs button,
+.secondary,
+.primary,
+.text {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.book-heading {
+  gap: 12px;
+}
+.book-heading > svg {
+  width: 31px;
+  height: 31px;
+  stroke: #276457;
+}
+.phone h1 {
+  font-size: clamp(29px, 8vw, 39px);
+  font-weight: 720;
+  letter-spacing: -0.04em;
+  margin: 0 0 16px;
+}
+.book-heading h1 {
+  margin: 0;
+}
+.phone h2 {
+  font-size: 21px;
+  margin: 24px 0 12px;
+}
+.phone h3 {
+  font-size: 17px;
+}
+.phone p,
+.phone small {
+  line-height: 1.6;
+}
+.phone small,
+.muted,
+.date-sub,
+.entry small {
+  color: #516a6e;
+}
+.capture {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+  margin: 26px 0 32px;
+}
+.capture button {
+  border: 0;
+  background: #e8f1ee;
+  color: #21483f;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 15px 5px;
+  grid-column: span 2;
+  font-weight: 620;
+}
+.capture button:nth-child(-n + 2) {
+  grid-column: span 3;
+  min-height: 62px;
+}
+.capture .capture-meal {
+  background: #215f52;
+  color: white;
+}
+.capture .capture-training {
+  background: #d5e7e4;
+}
+.capture button svg {
+  width: 20px;
+}
+.phone button,
+.phone summary {
+  touch-action: manipulation;
+}
+.day-heading {
+  justify-content: space-between;
+}
+.day-heading h2 {
+  margin: 0;
+}
+.day-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 12px 0;
+  background: #f1f6f5;
+  border-radius: 8px;
+}
+.day-nav button {
+  width: 46px;
+  height: 44px;
+  background: none;
+  border: 0;
+  color: #30584f;
+}
+.phone .day-nav input {
+  background: none;
+  width: auto;
+  border: 0;
+  font-weight: 650;
+  text-align: center;
+}
+.entry {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid #d9e5e2;
+  background: none;
+  padding: 15px 0;
+  text-align: left;
+}
+.entry time {
+  font-variant-numeric: tabular-nums;
+  min-width: 48px;
+  color: #356858;
+}
+.entry span {
+  min-width: 0;
+  flex: 1;
+}
+.entry small,
+.entry strong {
+  display: block;
+}
+.entry strong {
+  margin-top: 5px;
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+.empty {
+  color: #56706c;
+  padding: 16px 0;
+}
+.phone-tabs {
+  position: fixed;
+  max-width: 620px;
+  bottom: 0;
+  inset-inline: 0;
+  margin: auto;
+  border-top: 1px solid #dbe6e3;
+  background: #fff;
+  padding: 6px 20px calc(6px + env(safe-area-inset-bottom));
+  justify-content: space-around;
+}
+.phone-tabs button {
+  background: none;
+  border: 0;
+  color: #526c67;
+  padding: 10px 20px;
+}
+.phone-tabs [aria-current] {
+  color: #17584a;
+  font-weight: 700;
+  background: #e6f1ed;
+  border-radius: 10px;
+}
+.phone-tabs svg,
+.back svg,
+.primary svg,
+.secondary svg,
+.text svg {
+  width: 19px;
+  height: 19px;
+}
+.back,
+.text {
+  min-height: 44px;
+  background: transparent;
+  padding: 6px 2px;
+  border: 0;
+  color: #225f51;
+}
+.back {
+  margin-bottom: 16px;
+}
+.primary,
+.secondary,
+.line-button {
+  min-height: 44px;
+  padding: 10px 15px;
+  border-radius: 8px;
+  border: 0;
+  background: #215f52;
+  color: white;
+  justify-content: center;
+}
+.secondary,
+.line-button {
+  background: #e6f1ed;
+  color: #204f44;
+}
+.phone fieldset {
+  padding: 0;
+  border: 0;
+  margin: 0;
+  min-width: 0;
+}
+.phone label {
+  display: block;
+  font-size: 15px;
+  font-weight: 580;
+  margin: 14px 0;
+}
+.phone input:not([type='checkbox']):not([type='radio']),
+.phone textarea {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 11px 10px;
+  border: 1px solid #aabfba;
+  border-radius: 7px;
+  background: #fff;
+  color: #193a32;
+  margin-top: 7px;
+  font-size: 16px;
+}
+.phone .day-nav input[type='date'] {
+  width: auto;
+  margin: 0;
+  background: none;
+  border: 0;
+}
+.phone input[type='checkbox'],
+.phone input[type='radio'] {
+  width: 20px;
+  height: 20px;
+  vertical-align: middle;
+  margin: 0 8px 0 0;
+  accent-color: #226451;
+}
+.phone .measure-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.phone .share-choice,
+.phone details {
+  border-block: 1px solid #d3e1dc;
+  margin: 14px 0;
+  padding: 8px 0;
+}
+.phone summary {
+  padding: 12px 0;
+  font-weight: 620;
+}
+.phone .consent-photos label {
+  font-weight: 450;
+}
+.phone-photos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+.phone-photo {
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.phone-photo img {
+  width: 86px;
+  height: 86px;
+  object-fit: cover;
+  border-radius: 8px;
+}
+.phone-photos > div > button {
+  display: block;
+}
+.photo-wait,
+.delivery {
+  font-size: 14px;
+  color: #476b60;
+}
+.photo-view {
+  position: fixed;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  background: #182822;
+  padding: calc(16px + env(safe-area-inset-top)) 12px;
+}
+.photo-view img {
+  width: 100%;
+  height: 85%;
+  object-fit: contain;
+}
+.photo-view button {
+  align-self: end;
+  padding: 9px;
+}
+.entry-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 19px;
+  line-height: 1.6;
+}
+.actions {
+  flex-wrap: wrap;
+}
+.phone .sync-conflict {
+  border-block: 1px solid #d0dcd7;
+  padding: 8px 0;
+}
+.sync-conflict small {
+  display: block;
+}
+.recovery {
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.phone-error,
+.saved-notice {
+  display: block;
+  padding: 10px 21px;
+  overflow-wrap: anywhere;
+}
+.phone [role='alert'] {
+  color: #8c302a;
+}
+.phone-error {
+  position: sticky;
+  bottom: 80px;
+  background: #fff0eb;
+}
+.phone-error button {
+  margin-left: 8px;
+}
+.phone .saved-notice {
+  color: #24634f;
+}

@@ -1,7 +1,7 @@
 {
   "name": "personal-health-assistant",
   "productName": "身体手记",
-  "version": "0.6.17",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.cjs",
@@ -38,19 +38,28 @@
     "test:v06-ui": "node scripts/v06-smoke.mjs",
     "test:archive-large": "BODYJOURNAL_LARGE_TEST=1 node --import tsx --test tests/v06-archive.test.ts",
     "test:v061-ui": "node scripts/v061-smoke.mjs",
-    "test:cardio-ui": "node scripts/cardio-smoke.mjs"
+    "test:cardio-ui": "node scripts/cardio-smoke.mjs",
+    "build:phone": "vite build mobile --target safari16 --base ./ --outDir ../dist-mobile --emptyOutDir",
+    "ios:prepare": "npm run build:phone && cap sync ios",
+    "ios:ipa": "npm run ios:prepare && node scripts/ios/package.mjs",
+    "test:device-ui": "node scripts/ios/roundtrip.mjs"
   },
   "dependencies": {
+    "@capacitor/core": "8.6.2",
     "jose": "^6.1.0",
     "lucide-react": "^0.468.0",
+    "qrcode": "1.5.4",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "zod": "^4.1.0"
   },
   "devDependencies": {
+    "@capacitor/cli": "8.6.2",
+    "@capacitor/ios": "8.6.2",
     "@electron/packager": "^18.3.6",
     "@playwright/test": "^1.56.0",
     "@types/node": "^24.0.0",
+    "@types/qrcode": "1.5.6",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.0.0",

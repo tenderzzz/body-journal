@@ -13,20 +13,23 @@ const original=JSON.parse(readFileSync('package.json','utf8'));
 // The pinned npm package ships the release hashes, including the Apple Silicon ZIP.
 const checksums=JSON.parse(readFileSync(new URL('../node_modules/electron/checksums.json',import.meta.url),'utf8'));
 writeFileSync(path.join(source,'package.json'),JSON.stringify({...original,dependencies:{},devDependencies:{},scripts:{}},null,2));
-for(const file of ['dist','dist-electron','LICENSE'])cpSync(file,path.join(source,file),{recursive:true});
+for(const file of ['dist','LICENSE'])cpSync(file,path.join(source,file),{recursive:true});
+mkdirSync(path.join(source,'dist-electron'));
+for(const file of ['main.cjs','preload.cjs'])copyFileSync(path.join('dist-electron',file),path.join(source,'dist-electron',file));
 const manifest={};
 for(const file of RESOURCE_FILES){
-  const bytes=readFileSync(file);
+  const sourceFile=file==='journal-folder'?path.join('dist-electron',file):file;
+  const bytes=readFileSync(sourceFile);
   if(file.startsWith('shortcuts/unsigned/')){
     const reviewed=execFileSync('git',['show',`HEAD:${file}`]);
     if(!bytes.equals(reviewed))throw new Error(`快捷指令源文件与已审阅版本不同，请先审阅并提交 ${file}`);
   }
-  const dest=path.join(resources,file);mkdirSync(path.dirname(dest),{recursive:true});copyFileSync(file,dest);
+  const dest=path.join(resources,file);mkdirSync(path.dirname(dest),{recursive:true});copyFileSync(sourceFile,dest);
   manifest[file]=createHash('sha256').update(bytes).digest('hex');
 }
 writeFileSync(path.join(resources,'resources-manifest.json'),JSON.stringify(manifest,null,2));
 try{
-  const paths=await packager({dir:source,out:path.join(staging,'build'),name:'身体手记',executableName:'BodyJournal',appBundleId:'local.bodyjournal.personal',platform:'darwin',arch:'arm64',overwrite:true,asar:true,icon:path.resolve('assets/icon.icns'),prune:false,electronVersion:original.devDependencies.electron,download:{checksums},extraResource:['shortcuts','docs','data','assets','resources-manifest.json'].map(p=>path.join(resources,p)),osxSign:false});
+  const paths=await packager({dir:source,out:path.join(staging,'build'),name:'身体手记',executableName:'BodyJournal',appBundleId:'local.bodyjournal.personal',platform:'darwin',arch:'arm64',overwrite:true,asar:true,icon:path.resolve('assets/icon.icns'),prune:false,electronVersion:original.devDependencies.electron,download:{checksums},extraResource:['journal-folder','shortcuts','docs','data','assets','resources-manifest.json'].map(p=>path.join(resources,p)),osxSign:false});
   mkdirSync('release',{recursive:true});
   for(const output of paths){
     const bundle=path.join(output,'身体手记.app');verifyResources(bundle);

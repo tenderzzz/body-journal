@@ -12,6 +12,11 @@ Capture on iPhone with Apple Shortcuts, deliver through an iCloud inbox, and kee
 
 ![Assistant with synthetic demo data](evidence/assistant.png)
 
+## iPhone companion
+
+Version 0.7.0 adds an offline iPhone app with five capture forms and an encrypted, opt-in iCloud Drive exchange with the Mac. Build the device IPA with `npm run ios:ipa` on a Mac with Xcode, or download it from the iPhone workflow. [Pairing and trial instructions (Chinese)](docs/iphone.md).
+
+
 ## Local v0.6.0
 
 Related recent topics can continue across new conversations. Explicit dates query records by occurrence time, and answer receipts distinguish provided evidence from citations. Native v5 backups store images in chunks and retain exercise rules. A pristine directory snapshot is saved before upgrading an older vault. See [upgrade and rollback](docs/0.6.0升级与回退.md).
