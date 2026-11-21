@@ -1,4 +1,4 @@
-import {CARDIO_TEXT,cardioComponent,normalizeCardio} from './cardio';
+import {CARDIO_PLAN_HEADING,CARDIO_TEXT,SWIMMING_TEXT,cardioComponent,normalizeCardio,swimmingCompletion} from './cardio';
 import type { Analysis, ExerciseRules, SetEntry, TrainingPart, TrainingSession, HealthRecord } from './types';
 import {commonExerciseName,exerciseNameKey,exerciseRuleName} from './exercise-names';
 export const PART_NAMES:Record<TrainingPart,string>={chest:'胸',back:'背',shoulders:'肩',legs:'腿',mixed:'混合',unknown:'待确认'};
@@ -141,7 +141,7 @@ export function strengthDurationMinutes(text:string,hasStrengthSets=false):numbe
   if(values.length){
    if(first===undefined)first=+values[0][1];
    if(explicit&&!future)correction=+values.at(-1)![1];
-  }else if(explicit&&!future&&!/跑步|跑步机|慢跑|配速|运动时长|总时长/.test(line)&&(first!==undefined||hasStrengthSets)){
+  }else if(explicit&&!future&&!SWIMMING_TEXT.test(line)&&!/跑步|跑步机|慢跑|配速|运动时长|总时长/.test(line)&&(first!==undefined||hasStrengthSets)){
    const short=line.match(/(?:补充|更正|纠正|修正)\s*[:：]?\s*(?:实际(?:是|为)?|(?:力量)?时长(?:改为|改成|是|为)?|改为|改成)\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(?:分钟|min)/i);
    if(short)correction=+short[1];
   }
@@ -150,7 +150,7 @@ export function strengthDurationMinutes(text:string,hasStrengthSets=false):numbe
 }
 export function inferSession(text:string,sets:SetEntry[]=[]):TrainingSession {
  const parts:TrainingPart[]=[];for(const [p,word] of [['chest','胸'],['back','背'],['shoulders','肩'],['legs','腿']] as const)if(new RegExp(`(?:^|\\n)\\s*${word}(?:部|日|训练)?\\s*[：:]?\\s*(?:$|\\n)`,'m').test(text))parts.push(p);
- const sessionText=sets.length||/力量训练\s*[:：]?\s*\d+(?:\.\d+)?\s*(?:分钟|min)/i.test(text)?text.split(/\n|[；;]/).map(line=>{const before=line.replace(/(?:跑步机|跑步|慢跑|跑了|爬坡|步行|有氧).*$/,'');return before===line||/力量|正式组|热身|\d+(?:\.\d+)?\s*(?:kg|公斤|千克|lb|磅|组|[x×*])/i.test(before)?before:'';}).join('\n'):text;
+ const sessionText=sets.length||/力量训练\s*[:：]?\s*\d+(?:\.\d+)?\s*(?:分钟|min)/i.test(text)?text.split(/\n|[；;]/).map(line=>{const before=line.replace(/(?:跑步机|跑步|慢跑|跑了|爬坡|步行|有氧|游泳|蛙泳|自由泳|仰泳|蝶泳).*$/,'');return before===line||/力量|正式组|热身|\d+(?:\.\d+)?\s*(?:kg|公斤|千克|lb|磅|组|[x×*])/i.test(before)?before:'';}).join('\n'):text;
  const planned=(/(?:计划|打算|准备|明天|下次).{0,12}(?:练|训练|跑步|慢跑|爬坡|步行|有氧)|训练计划/.test(sessionText)||/^\s*(?:力量)?(?:训练)?计划\s*[:：]?\s*$/m.test(sessionText)||/(?:计划|打算|准备)[^\n]{0,60}\d+(?:\.\d+)?\s*(?:kg|公斤|千克|lb|磅|组|[x×*])/i.test(sessionText))&&!/已完成|练完|训练结束|(?:实际|已经|今天|本次).{0,8}(?:完成|练完)/.test(sessionText);
  const cancelled=/(?:未|没(?:有)?)(?:完成|练完|跑步|慢跑|爬坡|步行|有氧)|取消.{0,8}(?:训练|跑步|爬坡|步行|有氧)|未训练/.test(sessionText);
  const hasData=sets.length>0||/\d+\s*(?:kg|公斤|千克).*\d+\s*[*x×]/i.test(sessionText)||/(?:跑步(?:机)?|慢跑|跑了)?\s*\d+(?:\.\d+)?\s*(?:km|公里)/i.test(sessionText)||/力量训练\s*[:：]?\s*\d+(?:\.\d+)?\s*(?:分钟|min)/i.test(sessionText);
@@ -159,9 +159,14 @@ export function inferSession(text:string,sets:SetEntry[]=[]):TrainingSession {
  return {part:parts.length>1?'mixed':parts[0]??'unknown',completion,...(duration!==undefined?{durationMinutes:duration}:{})};
 }
 export function extractRunText(text:string){return text.split(/\n|[；;]/).map(cardioComponent).filter(line=>CARDIO_TEXT.test(line)||/^\s*(?:训练)?计划\s*[:：]?\s*$/.test(line)||(/^\s*\d+(?:\.\d+)?\s*(?:km|公里)/i.test(line)&&!/步行|走路|骑车|骑行|游泳/.test(line))).join('\n').replace(/(?:力量训练|训练用时|训练时长)\s*[:：]?\s*\d+(?:\.\d+)?\s*(?:分钟|min)/gi,'');}
-/** Resolve reported running independently of strength; image evidence need not be repeated in the caption. */
+/** Resolve reported cardio independently of strength; image evidence need not be repeated in the caption. */
 export function runCompletion(record:Pick<HealthRecord,'kind'|'text'|'analysis'|'status'|'attachments'>):TrainingSession['completion']{
  const a=record.analysis,run=a?.run;if(record.kind!=='training'||!a||!run||record.status==='pending')return 'unknown';
+ if(run.activity==='swimming'){
+  const swimText=record.text.split(/[\n；;。]/).filter((line,i,lines)=>SWIMMING_TEXT.test(line)
+    ||(CARDIO_PLAN_HEADING.test(line)&&SWIMMING_TEXT.test(lines[i+1]??''))).join('\n');
+  return swimmingCompletion(swimText,run.completion);
+ }
  const mixed=!!a.sets?.length,component=extractRunText(record.text),evidence=mixed?component:(component.trim()?component:record.text);
  const raw=inferSession(evidence).completion;
  const unfinished=/(?:未|没(?:有)?)(?:完成|练完|跑步|慢跑|爬坡|步行|有氧)|取消.{0,8}(?:训练|跑步|爬坡|步行|有氧)|未训练/;

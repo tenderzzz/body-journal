@@ -151,6 +151,7 @@ async function start(){
   }
   if(demo&&store.records().length===0){const {seedDemo}=await import('./demo');seedDemo(store);}
   store.migrate016();store.repairExerciseAliases();store.migrateExerciseRules();store.migrateSeatedPress();store.migrateMemoryTopics();store.migrateTrainingNotationParsing();store.migrateMealFollowupContext();store.migrateMealFormattingEdits();store.migrateEnergyParsing();store.migrateCardio();
+  store.recoverSwimmingAnalyses();
   store.refreshPersonalization();queries=new JournalQueries(store);
   if(process.argv.includes('--import-dishes')){
     try{

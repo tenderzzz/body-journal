@@ -5,7 +5,7 @@ function optionalNulls(value:unknown,fields:string[]):unknown {
  if(!object(value))return value;
  const next={...value};for(const field of fields)if(next[field]===null)delete next[field];return next;
 }
-const runFields=['km','minutes','paceSecondsPerKm','avgHeartRate','effort','completion','elapsedMinutes','activeKcal','totalKcal','reportedKcal','calorieLabel','steps','cadence','sourceApp','sourceId','terrain'];
+const runFields=['activity','swimStroke','stepsIncluded','inclinePercent','inclineSource','startedAt','km','minutes','paceSecondsPerKm','avgHeartRate','effort','completion','elapsedMinutes','activeKcal','totalKcal','reportedKcal','calorieLabel','steps','cadence','sourceApp','sourceId','terrain'];
 const setFields=['exerciseId','originalExercise','equipment','equipmentId','position','side','round','dropStage','setType','groupId','notes','rir','pain','classificationNeeded','exerciseManuallyClassified','effort'];
 function memoryCandidates(value:unknown,limit:number,allowed:string[]){
  const warnings:string[]=[];
@@ -35,6 +35,7 @@ export function normalizeModelOutput(value:unknown,purpose:'analysis'|'chat'):{v
  if(purpose==='analysis'){
   next.training=optionalNulls(next.training,['durationMinutes','pain','recovery']);
   next.run=optionalNulls(next.run,runFields);
+  if(object(next.run)&&typeof next.run.activity==='string'&&/^(?:swim(?:ming)?|游泳)$/i.test(next.run.activity.trim()))next.run.activity='swimming';
   next.dailyActivity=optionalNulls(next.dailyActivity,['steps','walkingKm','asOf','sourceApp']);
   if(Array.isArray(next.sets))next.sets=next.sets.map(item=>optionalNulls(item,setFields));
   if(Array.isArray(next.ingredients))next.ingredients=next.ingredients.map(item=>{

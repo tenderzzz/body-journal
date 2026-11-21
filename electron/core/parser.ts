@@ -1,4 +1,4 @@
-import {CARDIO_TEXT,cardioComponent,normalizeCardio} from '../../src/shared/cardio';
+import {CARDIO_PLAN_HEADING,CARDIO_TEXT,LAND_CARDIO_TEXT,SWIMMING_TEXT,SWIM_STROKE_LABELS,cardioComponent,normalizeCardio,swimmingCompletion} from '../../src/shared/cardio';
 import { normalizeSet, inferSession, workSetCount, resolveLoadBasis, EMPTY_RULES, extractRunText } from '../../src/shared/exercises';
 import type { Analysis, DailyActivity, HealthRecord, RunEntry, SetEntry } from '../../src/shared/types';
 import {detectTrainingNotation,isTrainingNotationLine,expandInlineWeightGroups,type TrainingNotation} from './training-notation';
@@ -56,16 +56,57 @@ function durationInMinutes(text:string):number|undefined {
  const duration=text.match(/^(?:(\d+(?:\.\d+)?)\s*(?:小时|h)\s*)?(\d+(?:\.\d+)?)\s*(?:分钟|分(?!钟?\/)|min)(?:\s*(\d+(?:\.\d+)?)\s*秒)?/i);
  return duration?+(duration[1]??0)*60 + +duration[2] + +(duration[3]??0)/60:undefined;
 }
+function swimmingDuration(text:string):number|undefined {
+ const digits='零一二三四五六七八九';
+ const value=text.trim().replace(/两/g,'二').replace(/[零一二三四五六七八九十]+(?=\s*(?:个?[半小]|分钟?))/g,number=>{
+  if(!number.includes('十'))return String(digits.indexOf(number));
+  const [tens,ones]=number.split('十');
+  return String(10*(tens?digits.indexOf(tens):1)+(ones?digits.indexOf(ones):0));
+ });
+ const hours=value.match(/^(?:(\d+(?:\.\d+)?)\s*个?\s*(半)?\s*(?:小时|h)|(半)\s*个?\s*小时)\s*(?:又?\s*(\d+)\s*(?:分钟|分|min))?/i);
+ const minutes=hours?Number(hours[1]??0)*60+(hours[2]||hours[3]?30:0)+Number(hours[4]??0):durationInMinutes(value);
+ return minutes&&minutes>0&&minutes<=1440?minutes:undefined;
+}
+
+function reportedSwimming(text:string):RunEntry|undefined {
+ const fragments=text.normalize('NFKC').replace(/(\d)[,，](?=\d{3}(?:\D|$))/g,'$1').split(/[\n；;。，,]/).map(line=>line.trim());
+ const start=fragments.findIndex(line=>SWIMMING_TEXT.test(line)&&!LAND_CARDIO_TEXT.test(line));
+ if(start<0)return;
+ const nextWorkout=fragments.findIndex((line,i)=>i>start&&(
+  LAND_CARDIO_TEXT.test(line)||/^(?:力量训练|力量时长|训练用时|训练时长|骑行|骑车)|\d+\s*(?:kg|公斤|千克)\s*\d+\s*(?:[x×*]|组)/i.test(line)
+ ));
+ const first=start>0&&CARDIO_PLAN_HEADING.test(fragments[start-1])?start-1:start;
+ const swim=fragments.slice(first,nextWorkout<0?undefined:nextWorkout).join('\n');
+ const duration=(label:RegExp)=>{
+  const match=swim.match(label);
+  return match?swimmingDuration(match[1]):undefined;
+ };
+ const minutes=duration(/(?:实际(?:游泳|游动|游了|运动)(?:时长|用时)?|(?:游动|移动|运动)时长)\s*[:：]?\s*([^\n]+)/);
+ const elapsedMinutes=duration(/(?:总时长|总用时|经过时长)\s*[:：]?\s*([^\n]+)/)
+  ??duration(/(?<!实际)(?:游泳|游了|蛙泳|自由泳|仰泳|蝶泳|混合泳|swimming)\s*(?:共|约|了|用时|时长)*\s*[:：]?\s*([^\n]+)/i);
+ const distance=swim.match(/(?:距离|游了|游泳|蛙泳|自由泳|仰泳|蝶泳|混合泳|swimming)\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(公里|千米|km|米|m)(?=$|[^a-zA-Z])/i);
+ const km=distance?Number(distance[1])*(/^(?:米|m)$/i.test(distance[2]) ? .001 : 1):undefined;
+ const strokes=(Object.entries(SWIM_STROKE_LABELS) as [NonNullable<RunEntry['swimStroke']>,string][]).filter(([,label])=>swim.includes(label));
+ const swimStroke=strokes.length>1?'mixed':strokes[0]?.[0];
+ const effort=swim.match(/强度\s*[:：]?\s*[^\n]{1,40}/)?.[0]??swim.match(/轻松|低强度|休闲/)?.[0];
+ const {activeKcal,totalKcal,reportedKcal,calorieLabel,avgHeartRate,sourceApp,sourceId}=reportedRun(swim);
+ const recorded=minutes!==undefined||elapsedMinutes!==undefined||km!==undefined||activeKcal!==undefined||totalKcal!==undefined||/游了|已游|游完|已完成/.test(swim);
+ return {activity:'swimming',swimStroke,effort,km:km&&km<=1000?km:undefined,minutes,elapsedMinutes,stepsIncluded:false,
+  completion:swimmingCompletion(swim,recorded?'completed':'unknown'),activeKcal,totalKcal,reportedKcal,calorieLabel,avgHeartRate,sourceApp,sourceId};
+}
+
 export function parseTraining(text: string,notation:TrainingNotation={}): Analysis | null {
  const convention={...notation,...detectTrainingNotation(text)};
+ const swimming=reportedSwimming(text);
  const sets:SetEntry[]=[],questions:string[]=[],assumptions:string[]=[];
  const ask=(q:string)=>{if(!questions.includes(q)&&questions.length<2)questions.push(q);};
  let sawTrainingCandidate=false,usedSingleNumber=false;
  for(const original of text.split(/\n|[；;]/).map(x=>x.trim()).filter(Boolean).flatMap(expandInlineWeightGroups)) {
-  if(isTrainingNotationLine(original))continue;
+  if(isTrainingNotationLine(original)||CARDIO_PLAN_HEADING.test(original))continue;
   if(/^\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}(?:日|号)?\s*$/.test(original)||/^(?:胸|背|肩|腿)(?:部|日|训练)?\s*[：:]?$/.test(original)||/^(?:补充|更正|纠正)[：:].*(?:实际|日期|发生|这次是)/.test(original)||/^我(?:不)?(?:喜欢|习惯|偏好|通常|一般|经常)/.test(original))continue;
   if(/^(感受|RPE|RIR|状态|备注|疼痛|恢复)\s*[:：]/i.test(original)){if(sets.length){sets.at(-1)!.effort=original;const rir=original.match(/RIR\s*[:：]?\s*(\d+)/i);if(rir)sets.at(-1)!.rir=+rir[1];if(/疼痛|不适|痛/.test(original))sets.at(-1)!.pain=original;}continue;}
   if(CARDIO_TEXT.test(original)||/\d\s*(?:km|公里)/i.test(original))continue;
+  if(swimming&&/^(?:泳姿|强度|距离|游动时长|实际游动|实际游了|休息)/.test(original))continue;
   if(/^(?:总时长|总用时|运动时长|移动时长|实际运动时长|平均配速|配速|平均心率|均心率|心率|平均步频|步频|活动热量|动态热量|总热量|消耗|热量|步数|来源|App|运动编号|训练编号)\s*[:：]?/i.test(original)||parseDailyActivity(original))continue;
   const line=original.replace(/[*xX×]/g,'×');
   if(/→|递减/.test(line)&&/\d(?:\.\d+)?\s*(?:→)/.test(line)){ask('递减组各档重量、次数以及重复轮数分别是多少？');continue;}
@@ -104,14 +145,23 @@ export function parseTraining(text: string,notation:TrainingNotation={}): Analys
  const minutes=moving?durationInMinutes(moving[1]):unlabelled?+unlabelled[1]:undefined;
  const elapsedMinutes=elapsed?durationInMinutes(elapsed[1]):undefined;
  const parsedRun:RunEntry|undefined=firstRun>=0&&(km||minutes||elapsedMinutes)?{...(km?{km:+km[1]}:{}),completion:inferSession(runText).completion,...(minutes?{minutes}:!elapsedMinutes&&seconds&&km?{minutes:Math.round(+km[1]*seconds/60*100)/100}:{}),...(elapsedMinutes?{elapsedMinutes}:{}),...(seconds?{paceSecondsPerKm:seconds}:{}),...reportedRun(runDetails)}:undefined;
- const run=parsedRun?normalizeCardio(parsedRun,text):undefined;
+ const run=swimming??(parsedRun?normalizeCardio(parsedRun,text):undefined);
  const dailyActivity=parseDailyActivity(text);
  const session=inferSession(text,sets);
+ if(swimming&&!sets.length&&!session.durationMinutes)session.completion=swimming.completion!;
+ if(swimming?.completion==='unknown')ask('这次游泳完成了吗？有记录的话也可以补充时长或距离。');
+ if(swimming&&text.split(/[\n；;。，,]/).some(line=>LAND_CARDIO_TEXT.test(line)&&/\d/.test(line)&&!parseDailyActivity(line)))ask('这条记录还有其他有氧活动，请分开记录以便分别计算。');
  if(!sets.length&&!run&&!session.durationMinutes&&!dailyActivity&&!(sawTrainingCandidate&&questions.length))return null;
  if(usedSingleNumber)assumptions.push('按已明确确认的个人记法：单个数字表示1组的次数；重量仅取本次原文明确提供的数值。');
  if(convention.setsFirst===false&&sets.length)assumptions.push('按已明确确认的个人记法读取“次数×组数”；带“组／次”单位的记号仍以单位为准。');
  const work=sets.filter(s=>s.setType!=='warmup');
- const analysis:Analysis={summary:[work.length?`识别 ${new Set(work.map(s=>s.exerciseId)).size} 个动作，共 ${workSetCount(work)} 个非热身组。`:session.durationMinutes?`力量训练 ${session.durationMinutes} 分钟。`:dailyActivity?`日常活动 ${dailyActivity.steps??''} 步。`:'',run?`有氧${run.km?` ${run.km} 公里`:""}${run.minutes?`，用时 ${run.minutes} 分钟`:''}。`:''].join(''),sets,run,...(dailyActivity?{dailyActivity}:{}),questions,assumptions,training:session,engine:'local',at:new Date().toISOString()};
+ const swimSummary=swimming?[
+  swimming.swimStroke?SWIM_STROKE_LABELS[swimming.swimStroke]:'游泳',
+  swimming.elapsedMinutes?`总时长 ${swimming.elapsedMinutes} 分钟`:undefined,
+  swimming.minutes?`游动 ${swimming.minutes} 分钟`:undefined,
+  swimming.km?`${Math.round(swimming.km*1000)} 米`:undefined,swimming.effort
+ ].filter(Boolean).join(' · ')+'。':'';
+ const analysis:Analysis={summary:[work.length?`识别 ${new Set(work.map(s=>s.exerciseId)).size} 个动作，共 ${workSetCount(work)} 个非热身组。`:session.durationMinutes?`力量训练 ${session.durationMinutes} 分钟。`:dailyActivity?`日常活动 ${dailyActivity.steps??''} 步。`:'',swimSummary||(run?`有氧${run.km?` ${run.km} 公里`:""}${run.minutes?`，用时 ${run.minutes} 分钟`:''}。`:'')].join(''),sets,run,...(dailyActivity?{dailyActivity}:{}),questions,assumptions,training:session,engine:'local',at:new Date().toISOString()};
  return analysis;
 }
 export function splitHistorical(text: string, zone = 'Asia/Shanghai'): { text: string; occurredAt: string; timezone: string }[] {
