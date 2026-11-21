@@ -261,6 +261,28 @@ test(
     assert.equal(replica.get(id)!.ops.length, backupOps);
     await deskSync();
     assert.equal(desktop.record(id).text, '备份之后的修改');
+    // Recover into a clean phone profile with the same folder and key. No old device ID is reused.
+    const restoredPhone = path.join(dir, 'clean-phone'),
+      replacementId = randomUUID();
+    const recoveryBridge: JournalBridge = {
+      async request<T>(args: Record<string, unknown>): Promise<T> {
+        if (args.method === 'identity') return { archive, device: replacementId, enabled: true } as T;
+        return JSON.parse(
+          execFileSync(phoneBin, [], {
+            input: JSON.stringify({ local: restoredPhone, folder, code, ...args }),
+            encoding: 'utf8',
+          }),
+        );
+      },
+    };
+    const replacement = new PhoneJournalModel(recoveryBridge);
+    assert.deepEqual((await replacement.sync())!.issues, []);
+    const recovered = await replacement.rows();
+    assert.equal(recovered.length, 1);
+    assert.equal(recovered[0].record.text, '备份之后的修改');
+    assert.deepEqual(recovered[0].record.photos, [ref]);
+    assert.deepEqual(readFileSync(path.join(restoredPhone, 'photos', ref.hash + '.png')), png);
+
     assert.equal(desktop.records().length, 1);
   },
 );

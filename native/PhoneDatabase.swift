@@ -72,6 +72,19 @@ final class PhoneDatabase {
   func get(_ key: String) throws -> String? {
     try query("SELECT value FROM settings WHERE id=?", [key]).first
   }
+  func bindFolder(archive: String, bookmark: String, name: String) throws {
+    try execute("BEGIN IMMEDIATE")
+    do {
+      try set("bookmark", bookmark)
+      try set("archive", archive)
+      try set("folderName", name)
+      try set("enabled", "true")
+      try execute("COMMIT")
+    } catch {
+      try? execute("ROLLBACK")
+      throw error
+    }
+  }
   func save(id: String, previous: Int, doc: String) throws {
     let sql =
       previous == 0

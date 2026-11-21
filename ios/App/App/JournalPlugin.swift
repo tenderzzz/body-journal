@@ -17,7 +17,9 @@ final class JournalPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate
 {
   let identifier = "JournalPlugin"
   let jsName = "Journal"
-  let pluginMethods: [CAPPluginMethod] = [CAPPluginMethod(name: "request", returnType: CAPPluginReturnPromise)]
+  let pluginMethods: [CAPPluginMethod] = [
+    CAPPluginMethod(name: "request", returnType: CAPPluginReturnPromise)
+  ]
   private let queue = DispatchQueue(label: "bodyjournal.phone.storage", qos: .userInitiated)
   private let transfers = DispatchQueue(label: "bodyjournal.phone.files", qos: .utility)
   private var database: PhoneDatabase?
@@ -76,23 +78,31 @@ final class JournalPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate
     defer { url.stopAccessingSecurityScopedResource() }
     return try action()
   }
-  private func folder(_ args: [String: Any], db: PhoneDatabase) throws -> [String: Any] {
-    guard try db.get("enabled") == "true", let archive = try db.get("archive"),
-      let saved = try db.get("bookmark"), let data = Data(base64Encoded: saved)
-    else { throw JournalFailure("请先配对并选择原目录。") }
+  // Only the storage queue touches SQLite. Coordinating a slow iCloud download happens on transfers.
+  private func folder(_ args: [String: Any]) throws -> [String: Any] {
+    let (archive, saved, photos): (String, String, URL) = try queue.sync {
+      let store = try db()
+      guard try store.get("enabled") == "true", let archive = try store.get("archive"),
+        let saved = try store.get("bookmark")
+      else { throw JournalFailure("请先配对并选择原目录。") }
+      return (archive, saved, store.photos)
+    }
+    guard let data = Data(base64Encoded: saved) else { throw JournalFailure("请重选原目录以恢复授权。") }
     var stale = false
     let url = try URL(
       resolvingBookmarkData: data, options: [], relativeTo: nil, bookmarkDataIsStale: &stale)
     return try scoped(url) {
       let dir = try SyncDirectory(root: url, code: readCode(archive))
       if stale {
-        try db.set(
-          "bookmark",
-          url.bookmarkData(
-            options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil
-          ).base64EncodedString())
+        let renewed = try url.bookmarkData(
+          options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil
+        ).base64EncodedString()
+        try queue.sync {
+          let store = try db()
+          if try store.get("bookmark") == saved { try store.set("bookmark", renewed) }
+        }
       }
-      return try dir.perform(args, localRoot: db.photos, byRecord: false)
+      return try dir.perform(args, localRoot: photos, byRecord: false)
     }
   }
   private func perform(_ call: CAPPluginCall, _ work: @escaping () throws -> [String: Any]) {
@@ -110,8 +120,7 @@ final class JournalPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate
       // iCloud file coordination can wait for a provider. Local saves use a separate queue.
       transfers.async { [self] in
         do {
-          let store = try queue.sync { try db() }
-          call.resolve(try folder(call.getObject("args") ?? [:], db: store))
+          call.resolve(try folder(call.getObject("args") ?? [:]))
         } catch { call.reject(error.localizedDescription) }
       }
       return
@@ -226,10 +235,9 @@ final class JournalPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate
         let bookmark = try url.bookmarkData(
           options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
         try saveCode(code, archive: dir.archive)
-        try db.set("bookmark", bookmark.base64EncodedString())
-        try db.set("archive", dir.archive)
-        try db.set("folderName", url.lastPathComponent)
-        try db.set("enabled", "true")
+        try db.bindFolder(
+          archive: dir.archive, bookmark: bookmark.base64EncodedString(),
+          name: url.lastPathComponent)
         return try identity(db)
       }
     }
