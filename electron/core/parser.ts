@@ -1,13 +1,15 @@
 import {CARDIO_PLAN_HEADING,CARDIO_TEXT,LAND_CARDIO_TEXT,SWIMMING_TEXT,SWIM_STROKE_LABELS,cardioComponent,normalizeCardio,swimmingCompletion} from '../../src/shared/cardio';
 import { normalizeSet, inferSession, workSetCount, resolveLoadBasis, EMPTY_RULES, extractRunText } from '../../src/shared/exercises';
-import type { Analysis, DailyActivity, HealthRecord, RunEntry, SetEntry } from '../../src/shared/types';
+import type { Analysis, BodyMeasurement, DailyActivity, HealthRecord, RunEntry, SetEntry } from '../../src/shared/types';
 import {detectTrainingNotation,isTrainingNotationLine,expandInlineWeightGroups,type TrainingNotation} from './training-notation';
-export function parseBody(text: string): { weightKg?: number; waistCm?: number } {
+export function parseBody(text: string): BodyMeasurement {
   const w = text.match(/(?:体重|weight)\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(kg|公斤|千克|斤)/i);
   const c = text.match(/(?:腰围|waist)\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(cm|厘米)/i);
-  const result: { weightKg?: number; waistCm?: number } = {};
+  const fat = text.normalize('NFKC').match(/(?:体脂率?|body fat(?: percentage)?)\s*[:：]?\s*(\d+(?:[.,]\d+)?)\s*%/i);
+  const result: BodyMeasurement = {};
   if (w) result.weightKg = Number(w[1]) / (w[2] === '斤' ? 2 : 1);
   if (c) result.waistCm = Number(c[1]);
+  if (fat) result.bodyFatPercent = Number(fat[1].replace(',','.'));
   return result;
 }
 /** Daily summaries are cumulative reports, never a sum of screenshots. */

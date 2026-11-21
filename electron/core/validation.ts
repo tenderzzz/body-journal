@@ -4,7 +4,11 @@ export const idSchema = z.string().regex(/^[a-zA-Z0-9_-]{8,100}$/);
 export const kindSchema = z.enum(['meal', 'training', 'body', 'note']);
 export const timeSchema = z.iso.datetime({offset:true,message:'请使用真实的日期、时间和时区，例如 2026-10-24T12:00:00+08:00'});
 export const zoneSchema = z.string().max(80).refine(s => { try { new Intl.DateTimeFormat('en', { timeZone: s }); return true; } catch { return false; } }, '无效的时区');
-export const bodySchema = z.object({ weightKg: z.number().min(10).max(500).optional(), waistCm: z.number().min(20).max(300).optional() }).strict();
+export const bodySchema = z.object({
+  weightKg:z.number().min(10).max(500).optional(),
+  waistCm:z.number().min(20).max(300).optional(),
+  bodyFatPercent:z.number().refine(n=>n>0&&n<100,'体脂率需大于 0 且小于 100').optional()
+}).strict();
 export const envelopeSchema = z.object({
   version: z.literal(1), id: idSchema, kind: kindSchema, occurredAt: timeSchema,
   timezone: zoneSchema.default('Asia/Shanghai'), dateLocked:z.boolean().optional(), text: z.string().max(100000).default(''), body: bodySchema.optional(),
