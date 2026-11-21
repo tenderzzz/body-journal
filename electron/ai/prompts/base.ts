@@ -9,3 +9,8 @@ export const ACTIVITY_EXTRACTION_INSTRUCTIONS=`
 “截至/目前/半天/上午”及当日尚未结束的累计数据coverage=partial，并保留可见截止时间asOf；只有明确全天最终、已记齐或完整过去日期的日汇总才full。没有覆盖范围证据就partial。不同截图的累计数不能相加。目标步数、计划与预期活动不能作为实际步数保存；同时出现目标与实际值时只读取实际值。来源日期不清楚需追问，不因上传时间把过去运动当今天。
 training.durationMinutes只保存明确的实际力量训练时长（含该训练的组间休息）；混合训练不能用总训练时长替代力量或跑步各自时长。明确计划、取消、未完成分别保持planned或unknown，不能根据热量或步数自动声称已完成。activityOverrides是应用维护的手动更正，不得输出。
 `;
+
+export const SWIMMING_ACTIVITY_EXTRACTION_INSTRUCTIONS=ACTIVITY_EXTRACTION_INSTRUCTIONS.replace(
+  '跑步、步行和爬坡都归为有氧，activity分别为running、walking、incline。',
+  '跑步、步行、爬坡和游泳都归为有氧，activity分别为running、walking、incline、swimming。'
+)+`游泳的 run.activity 固定为 swimming。有明确泳姿时在 run.swimStroke 填 breaststroke（蛙泳）、freestyle（自由泳）、backstroke（仰泳）、butterfly（蝶泳）或 mixed（多种泳姿）。只报告了游泳总共多久时填 elapsedMinutes，有明确的实际游动时长时才填 minutes。明确的米数换算为 km；不要填步数、步频、跑步配速、坡度或地形。游泳与力量训练分别判断完成状态，原文或截图显示完成的游泳可标为 completed。`;

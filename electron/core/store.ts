@@ -370,6 +370,23 @@ export class HealthStore {
     for(const m of proposed) this.saveMemory(m);
     return r;
   }
+  recoverSwimmingAnalyses(){
+    // The old enum rejected swimming before saving the result. Recover only
+    // failed text records with enough original evidence for a local analysis.
+    const failed=this.db.prepare("SELECT doc FROM records WHERE json_extract(doc,'$.kind')='training' AND coalesce(json_extract(doc,'$.deleted'),0)=0 AND json_extract(doc,'$.status')='pending' AND json_extract(doc,'$.analysisError') LIKE 'run.activity: Invalid option:%'").all();
+    return this.transaction(()=>{
+      let recovered=0;
+      for(const row of failed){
+        const record=parseJSON<HealthRecord>(row.doc);
+        if(record.attachments.length||record.analysis)continue;
+        const {analysis,status}=this.localStatus(record,record.occurredAt);
+        if(status!=='ready'||analysis?.run?.activity!=='swimming'||analysis.run.completion!=='completed'||!analysisSchema.safeParse(analysis).success)continue;
+        this.applyAnalysis(record.id,analysis,'local',record.revision);
+        recovered++;
+      }
+      return recovered;
+    });
+  }
   migrateCardio(){
     if(this.getConfig('cardioV1'))return 0;
     const changes=this.records().flatMap(record=>{

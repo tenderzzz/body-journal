@@ -9,7 +9,7 @@ import {cases} from './fixtures/prompt-golden';
 import {runGoldenCase,scoreGolden} from './fixtures/prompt-runner';
 
 const digest=(s:string)=>createHash('sha256').update(s).digest('hex');
-for(const [version,file] of [['journal-1','prompt-baselines'],[CURRENT_PROMPT,CURRENT_PROMPT]] as const){
+for(const [version,file] of [['journal-1','prompt-baselines'],['journal-2','journal-2'],[CURRENT_PROMPT,CURRENT_PROMPT]] as const){
   test('final instructions match their published snapshots '+version,()=>{
     const expected=JSON.parse(readFileSync(new URL('./fixtures/'+file+'.json',import.meta.url),'utf8'));
     const hashes:Record<string,string>={};

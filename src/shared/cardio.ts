@@ -1,12 +1,29 @@
 import type {HealthRecord,RunEntry,Range} from './types';
 
-export const CARDIO_ACTIVITY_LABELS={running:'跑步',walking:'步行',incline:'爬坡'} as const;
+export const CARDIO_ACTIVITY_LABELS={running:'跑步',walking:'步行',incline:'爬坡',swimming:'游泳'} as const;
+export const SWIM_STROKE_LABELS={breaststroke:'蛙泳',freestyle:'自由泳',backstroke:'仰泳',butterfly:'蝶泳',mixed:'混合泳'} as const;
 export function cardioComponent(text:string){return text.replace(/(?:非训练|非跑步)(?:的)?(?:步行|走路|步数)[^，,。；;\n]*/g,'');}
-export const CARDIO_TEXT=/跑步机|跑步|慢跑|跑了|爬坡|爬升步行|上坡走|坡度|有氧|快走|健走|步行|走路/;
+export const LAND_CARDIO_TEXT=/跑步机|跑步|慢跑|跑了|爬坡|爬升步行|上坡走|坡度|快走|健走|步行|走路/;
+export const SWIMMING_TEXT=/游泳|蛙泳|自由泳|仰泳|蝶泳|混合泳|\bswimming\b/i;
+export const CARDIO_PLAN_HEADING=/^\s*(?:训练)?计划\s*[:：]?\s*$/;
+export const CARDIO_TEXT=new RegExp(LAND_CARDIO_TEXT.source+'|有氧|'+SWIMMING_TEXT.source,'i');
+export const cardioUsesSteps=(run:RunEntry)=>run.activity!=='swimming'&&run.stepsIncluded!==false;
+
+export function swimmingCompletion(text:string,reported:RunEntry['completion']='unknown'):NonNullable<RunEntry['completion']> {
+  if(/取消[^，,。；;\n]{0,10}游泳|游泳[^，,。；;\n]{0,10}取消|(?:未|没(?:有)?)(?:游泳|下水|游完|完成)/.test(text))return 'unknown';
+  const planned=text.split('\n').some(line=>CARDIO_PLAN_HEADING.test(line))
+    ||/(?:原计划|计划|打算|准备|明天|下次|预计)[^，,。；;\n]{0,10}(?:游泳|蛙泳|自由泳|仰泳|蝶泳)/.test(text);
+  if(planned&&!/实际|已游|游完|已完成/.test(text))return 'planned';
+  return reported;
+}
 
 /** Keep the legacy run field readable while retaining the actual aerobic activity. */
 export function normalizeCardio(run:RunEntry,text:string):RunEntry {
   const line=text.split(/\n|[；;]/).map(cardioComponent).find(value=>CARDIO_TEXT.test(value));
+  if(run.activity==='swimming'||(!run.activity&&line&&SWIMMING_TEXT.test(line)&&!LAND_CARDIO_TEXT.test(line))){
+    const {paceSecondsPerKm,terrain,inclinePercent,inclineSource,steps,cadence,...swim}=run;
+    return {...swim,activity:'swimming',stepsIncluded:false};
+  }
   if(!line)return run;
   let activity=run.activity;
   if(/爬坡|爬升步行|上坡走|跑步机.*坡度/.test(line))activity='incline';
