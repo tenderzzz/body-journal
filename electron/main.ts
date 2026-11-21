@@ -1,3 +1,4 @@
+import {MacDeviceSync} from './core/device-folder';
 import {todaySummary,setTodayRest} from './core/today';
 import {JournalQueries} from './core/queries';
 import {InboxSync} from './core/inbox';
@@ -31,6 +32,8 @@ const resource=(p:string)=>path.join(app.isPackaged?process.resourcesPath:app.ge
 const modelNetwork:NetworkFetch=(url,init)=>net.fetch(url,init);
 let win:BrowserWindow;let store:HealthStore;let auth:ChatGPTAuth;let assistant:AssistantService;let secrets:SecretStorage;let timer:NodeJS.Timeout;let securityError='';
 let refreshDay=()=>{};
+let deviceSync:MacDeviceSync;
+let devicePoll:ReturnType<typeof setInterval>;
 let queries:JournalQueries;let inboxSync:InboxSync;
 const attachments=new Map<string,{name:string;mime:string;base64:string}>();
 function emit(event:Record<string,unknown>){if(win&&!win.isDestroyed())win.webContents.send('health:event',event);}
@@ -41,6 +44,26 @@ async function chooseImages(){const picked=await dialog.showOpenDialog(win,{titl
 async function invoke(action:string,payload:any) {
   payload=validateMutation(action,payload);
   switch(action){
+    case 'device:status':return deviceSync.status();
+    case 'device:sync':return deviceSync.sync();
+    case 'device:pause':return deviceSync.pause();
+    case 'device:code':return deviceSync.recovery();
+    case 'device:configure':{
+      const p=z.object({mode:z.enum(['create','join','reconnect']),code:z.string().max(200).optional()}).parse(payload);
+      const chosen=await dialog.showOpenDialog(win,{title:'选择身体手记专用共享文件夹',properties:['openDirectory','createDirectory']});
+      if(chosen.canceled)return deviceSync.status();
+      return deviceSync.configure(chosen.filePaths[0],p.mode,p.code);
+    }
+    case 'device:info':return store.deviceRecords.info(idSchema.parse(payload.id));
+    case 'device:enroll':{
+      const p=z.object({id:idSchema,revision:z.number().int(),photos:z.array(z.number().int().min(0).max(7)).max(8)}).parse(payload);
+      store.deviceRecords.enroll(p.id,p.revision,p.photos);deviceSync.request();return store.deviceRecords.info(p.id);
+    }
+    case 'device:resolve':{
+      const p=z.object({id:idSchema,parents:z.array(z.uuid()).min(2).max(64),choice:z.uuid(),text:z.string().max(100000).optional()}).parse(payload);
+      store.deviceRecords.resolve(p.id,p.parents,p.choice,p.text);deviceSync.request();
+      emit({type:'changed',scopes:['records','overview','energy','profile','trends']});return store.deviceRecords.info(p.id);
+    }
     case 'today:get':return todaySummary(store);
     case 'energy:overview':return store.energy.overview(new Date(),payload?.date);
     case 'today:rest':setTodayRest(store,payload);emit({type:'changed',scopes:['today']});return;
@@ -97,7 +120,7 @@ async function invoke(action:string,payload:any) {
     case 'steps:shortcutInstall':{const error=await shell.openPath(resource('shortcuts/安装记步数.command'));if(error)throw new Error(error);return;}
     case 'docs:open':return shell.openPath(resource('docs/使用说明.html'));
     case 'backup:save':{assertAvailable();const r=await dialog.showSaveDialog(win,{title:'保存完整备份',defaultPath:`身体手记-${new Date().toISOString().slice(0,10)}.bodyjournal`,filters:[{name:'身体手记备份',extensions:['bodyjournal']}]});if(r.canceled||!r.filePath)return;store.backup(r.filePath);return r.filePath;}
-    case 'backup:restore':{assertAvailable();const r=await dialog.showOpenDialog(win,{properties:['openFile'],filters:[{name:'身体手记备份',extensions:['bodyjournal']}]});if(r.canceled)return;const confirm=await dialog.showMessageBox(win,{type:'question',buttons:['取消','恢复备份'],defaultId:0,cancelId:0,message:'用所选备份恢复档案？',detail:'当前档案会先自动备份。账号密钥不会被导入或覆盖。'});if(confirm.response!==1)return;await inboxSync.stop();let backup;try{backup=store.restoreFile(r.filePaths[0]);}finally{await restartInbox();}emit({type:'changed'});return backup;}
+    case 'backup:restore':{assertAvailable();const r=await dialog.showOpenDialog(win,{properties:['openFile'],filters:[{name:'身体手记备份',extensions:['bodyjournal']}]});if(r.canceled)return;const confirm=await dialog.showMessageBox(win,{type:'question',buttons:['取消','恢复备份'],defaultId:0,cancelId:0,message:'用所选备份恢复档案？',detail:'当前档案会先自动备份。账号密钥不会被导入或覆盖。'});if(confirm.response!==1)return;await deviceSync.pause();await inboxSync.stop();let backup;try{backup=store.restoreFile(r.filePaths[0]);}finally{await restartInbox();}emit({type:'changed'});return backup;}
     case 'export':{const r=await dialog.showOpenDialog(win,{properties:['openDirectory','createDirectory'],title:'选择导出位置'});if(r.canceled)return;const dir=path.join(r.filePaths[0],`身体手记导出-${Date.now()}`);store.exportReadable(dir);await shell.openPath(dir);return dir;}
     case 'chat:send':return assistant.chat(z.string().max(10000).parse(payload.text));
     case 'chat:cancel':assistant.cancel(z.object({taskId:idSchema.optional()}).strict().parse(payload??{}).taskId);return;
@@ -137,6 +160,11 @@ async function start(){
   const data=JSON.parse(readFileSync(resource('data/foods.json'),'utf8')) as {foods:Food[]};
   const inbox=process.env.HEALTH_TEST_VAULT||demo?path.join(root,'inbox'):path.join(homedir(),'Library/Mobile Documents/com~apple~CloudDocs/Shortcuts/BodyJournal/inbox');
   store=new HealthStore(root,new FoodCatalog(data.foods),inbox);if(process.env.HEALTH_TEST_VAULT||demo)mkdirSync(inbox,{recursive:true});
+  const keyFile=path.join(app.getPath('userData'),'device-pairing.enc');
+  deviceSync=new MacDeviceSync(store,path.join(app.getPath('userData'),'device-folder.json'),app.isPackaged?resource('journal-folder'):path.join(app.getAppPath(),'dist-electron/journal-folder'),{
+    read:async()=>existsSync(keyFile)?(await safeStorage.decryptStringAsync(readFileSync(keyFile))).result:'',
+    write:async(code)=>{if(!await safeStorage.isAsyncEncryptionAvailable())throw Error('系统钥匙串不可用，请解锁后重试。');atomicWrite(keyFile,await safeStorage.encryptStringAsync(code));}
+  },()=>{emit({type:'device-sync'});emit({type:'changed',scopes:['records','overview','energy','trends']});});
   const secretFile=path.join(app.getPath('userData'),'credentials.enc');
   secrets={async read(){if(!existsSync(secretFile))return {};if(!(await safeStorage.isAsyncEncryptionAvailable()))throw new Error('系统钥匙串暂时不可用，无法读取模型连接。');const decrypted=await safeStorage.decryptStringAsync(readFileSync(secretFile));if(decrypted.shouldReEncrypt)atomicWrite(secretFile,await safeStorage.encryptStringAsync(decrypted.result));return JSON.parse(decrypted.result);},async write(v){if(!(await safeStorage.isAsyncEncryptionAvailable()))throw new Error('系统钥匙串暂时不可用，未保存密钥。');atomicWrite(secretFile,await safeStorage.encryptStringAsync(JSON.stringify(v)));}};
   auth=new ChatGPTAuth(app.getPath('userData'),secrets,url=>shell.openExternal(url),()=>emit({type:'changed'}),modelNetwork);await auth.init().catch(e=>{securityError=readableError(e);});assistant=new AssistantService(store,auth,secrets,emit,(url)=>{let image=nativeImage.createFromDataURL(url);if(image.isEmpty())throw new Error('这张图片暂时无法读取，请转为 JPEG 或 PNG。');const size=image.getSize();if(Math.max(size.width,size.height)>1600)image=image.resize(size.width>=size.height?{width:1600}:{height:1600});return 'data:image/jpeg;base64,'+image.toJPEG(82).toString('base64');},modelNetwork);
@@ -172,7 +200,7 @@ async function start(){
   const profileImport=path.join(app.getPath('userData'),'coach-profile-import.json');if(existsSync(profileImport)){store.saveCoachProfile(JSON.parse(readFileSync(profileImport,'utf8')));renameSync(profileImport,path.join(app.getPath('userData'),'coach-profile-imported.json'));}
   win=new BrowserWindow({width:1300,height:900,minWidth:860,minHeight:650,title:'身体手记',backgroundColor:'#f7faf9',titleBarStyle:'hiddenInset',trafficLightPosition:{x:20,y:20},show:false,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true}});
   win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('will-navigate',(event)=>event.preventDefault());win.webContents.session.setPermissionRequestHandler((_wc,_perm,callback)=>callback(false));
-  ipcMain.handle('health:invoke',async(event,action,payload)=>{try{if(event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame)throw new Error('不允许的调用来源');return {ok:true,value:await invoke(String(action),payload)};}catch(e){return {ok:false,error:readableError(e)};}});
+  ipcMain.handle('health:invoke',async(event,action,payload)=>{try{if(event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame)throw new Error('不允许的调用来源');const value=await invoke(String(action),payload);if(/^record:(create|update|undo|setDeleted|analyze)$/.test(action))deviceSync.request();return {ok:true,value};}catch(e){return {ok:false,error:readableError(e)};}});
   Menu.setApplicationMenu(Menu.buildFromTemplate([{label:'身体手记',submenu:[{role:'about'},{type:'separator'},{role:'hide'},{role:'quit'}]},{label:'编辑',submenu:[{role:'undo'},{role:'redo'},{type:'separator'},{role:'cut'},{role:'copy'},{role:'paste'},{role:'selectAll'}]},{label:'窗口',submenu:[{role:'minimize'},{role:'zoom'},{role:'front'}]}]));
   if(process.env.HEALTH_DEV==='1')await win.loadURL('http://127.0.0.1:5179');else await win.loadFile(path.join(app.getAppPath(),'dist/index.html'));
   win.show();
@@ -185,11 +213,13 @@ async function start(){
   };
   refreshDay();
   powerMonitor.on('resume',()=>{refreshDay();inboxSync.request(0);});
-  win.on('focus',refreshDay);
+  deviceSync.request();devicePoll=setInterval(()=>deviceSync.request(),60000);
+  win.on('focus',()=>{refreshDay();deviceSync.request();});
+  powerMonitor.on('resume',()=>deviceSync.request());
   app.on('activate',()=>{if(!win.isDestroyed())win.show();refreshDay();inboxSync.request(0);});
 }
 if(!app.requestSingleInstanceLock()&&!process.env.HEALTH_TEST_VAULT){app.quit();}else{
   app.on('second-instance',()=>{if(win&&!win.isDestroyed()){win.show();win.focus();}});
   app.whenReady().then(start).catch(e=>{dialog.showErrorBox('身体手记未能启动',readableError(e));app.exit(1);});
-  app.on('window-all-closed',()=>app.quit());app.on('before-quit',()=>{clearTimeout(timer);assistant?.cancel();void inboxSync?.stop();store?.close();});
+  app.on('window-all-closed',()=>app.quit());app.on('before-quit',()=>{clearTimeout(timer);clearInterval(devicePoll);assistant?.cancel();void inboxSync?.stop();store?.close();});
 }

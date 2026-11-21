@@ -24,3 +24,5 @@
 .exercise-more-controls{display:flex;align-items:flex-end;flex-wrap:wrap;gap:12px;padding-top:12px}
 .exercise-more-controls .field{min-width:180px}
 @media(max-width:900px){.exercise-alias-row{grid-template-columns:minmax(100px,1fr) minmax(120px,1fr);gap:12px}.exercise-alias-row>.button{grid-column:2;justify-self:start}}
+
+.device-record,.sync-conflict{margin-block:16px;padding:12px 0;border-top:1px solid #d7e3df}.device-record summary{cursor:pointer;font-weight:650}.sync-photo,.sync-conflict>label,.pairing-code{display:flex;align-items:center;gap:12px;margin:10px 0}.sync-photo img{width:48px;height:48px;object-fit:cover;border-radius:6px}.pairing-code img{width:150px}.pairing-code code{overflow-wrap:anywhere;user-select:all}.sync-conflict small{display:block}.sync-conflict textarea{width:100%}

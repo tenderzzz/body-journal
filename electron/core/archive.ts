@@ -5,6 +5,7 @@ import path from 'node:path';
 
 // Only these schemas can be materialized from an archive. Archive SQL is never executed.
 export const VAULT_TABLES:Record<string,string> = {
+  device_records:'id TEXT PRIMARY KEY, doc TEXT NOT NULL',
   records:'id TEXT PRIMARY KEY, doc TEXT NOT NULL, fingerprint TEXT NOT NULL',
   revisions:'seq INTEGER PRIMARY KEY AUTOINCREMENT, entity TEXT NOT NULL, id TEXT NOT NULL, doc TEXT NOT NULL, at TEXT NOT NULL',
   memories:'id TEXT PRIMARY KEY, doc TEXT NOT NULL',
