@@ -19,6 +19,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [开发说明](development.md) | 架构、隔离开发、测试、构建与发布 |
+| [iPhone 与 iCloud Drive 双向同步实施计划](ios-icloud-sync-plan.md) | 个人侧载、两端编辑、阶段工期与真机验收 |
 | [贡献指南](../CONTRIBUTING.md) | 报告问题、提出功能与提交修改 |
 | [安全报告](../SECURITY.md) | 漏洞反馈方式与范围 |
 | [变更记录](../CHANGELOG.md) | 对使用者有影响的版本变化 |
