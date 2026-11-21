@@ -37,3 +37,10 @@ jobs:
             release/BodyJournal-iPhone.ipa
             release/iphone-SHA256SUMS.txt
           if-no-files-found: error
+      - name: Launch the offline app and reopen its SQLite profile in an iPhone simulator
+        run: node scripts/ios/simulator.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iPhone-simulator
+          path: release/iphone-simulator.png
+          if-no-files-found: error
