@@ -30,8 +30,11 @@ try{
     store.energy.importManualTarget(2200,140);
     add('training','synthetic-back',-5,'背日\n高位下拉 40kg 3×8');add('training','synthetic-chest',-1,'胸日\n杠铃卧推 45kg 3×8');
     add('body','synthetic-weight',-1,'测量',{weightKg:75});
-    const meal=add('meal','synthetic-meal',0,'样例豆腐 100 克');
-    store.applyAnalysis(meal.id,{summary:'合成午餐',ingredients:[ingredient('样例豆腐',100)]},'local',meal.revision);
+    // Both selected seven-day windows need a data point for the hover-reset check.
+    for(const [id,offset] of [['synthetic-meal',0],['synthetic-previous-meal',-1]]){
+      const meal=add('meal',id,offset,'样例豆腐 100 克');
+      store.applyAnalysis(meal.id,{summary:'合成午餐',ingredients:[ingredient('样例豆腐',100)]},'local',meal.revision);
+    }
   }finally{store.close();}
   const start=performance.now();let page=await launch();
   let card=page.getByRole('region',{name:'今日维持'});
@@ -68,12 +71,14 @@ try{
   await stepDialog.getByRole('button',{name:'保存步数',exact:true}).click();
   await expect(page.getByRole('region',{name:'步数',exact:true})).toContainText('6,240');
   await page.locator('.plot-column').first().hover();
-  const previous=addDays(await page.getByLabel('总览日期',{exact:true}).inputValue(),-1);
+  const selectedToday=await page.getByLabel('总览日期',{exact:true}).inputValue();
+  const previous=addDays(selectedToday,-1);
   await page.getByRole('button',{name:'总览上一天',exact:true}).click();
   await expect(page.getByLabel('总览日期',{exact:true})).toHaveValue(previous);
   await expect(page.locator('.plot-readout strong')).toHaveText(previous.slice(5).replace('-','/'));
   await page.getByRole('button',{name:'今天',exact:true}).click();
   await expect(page.getByRole('button',{name:'总览下一天',exact:true})).toBeDisabled();
+  await expect(page.locator('.plot-column').last()).toHaveAttribute('aria-label',new RegExp('^'+selectedToday+' · '));
   const date=await page.locator('.plot-column').first().getAttribute('aria-label');
   await page.locator('.plot-column').first().click();
   await expect(page.getByLabel('总览日期',{exact:true})).toHaveValue(date.slice(0,10));

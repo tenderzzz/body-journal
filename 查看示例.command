@@ -1,22 +1,24 @@
 #!/bin/zsh
-# 双击运行：用内置示例档案打开应用。与打开身体手记.command 共用安装逻辑，示例模式不读写真实档案。
-set -e
-PROJECT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
-APP_PATH="$HOME/Applications/身体手记.app"
-ZIP="$PROJECT_DIR/release/身体手记-mac-arm64.zip"
-SOURCE_VERSION="$(sed -n 's/^  "version": "\([0-9][0-9.]*\)",$/\1/p' "$PROJECT_DIR/package.json" | head -1)"
-INSTALLED_VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP_PATH/Contents/Info.plist" 2>/dev/null || true)"
-if [[ ! -d "$APP_PATH" || ( -n "$SOURCE_VERSION" && "$INSTALLED_VERSION" != "$SOURCE_VERSION" ) ]]; then
-  if [[ ! -f "$ZIP" ]]; then
-    echo "找不到安装包：$ZIP" >&2
-    echo "请先在项目目录运行 npm run package，或从 GitHub Releases 下载 body-journal-mac-arm64.zip 放进 release/。" >&2
-    echo "按回车键关闭窗口。"
-    read -r _
-    exit 1
-  fi
-  echo "正在安装身体手记 ${SOURCE_VERSION:-新版本}…"
-  mkdir -p "$HOME/Applications"
-  rm -rf "$APP_PATH"
-  ditto -x -k "$ZIP" "$HOME/Applications"
+# 从当前版本打开隔离示例。已安装的正式应用可以继续运行。
+set -eu
+project_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
+app_path="$HOME/Applications/身体手记.app"
+zip="$project_dir/release/身体手记-mac-arm64.zip"
+source_version="$(sed -n 's/^  "version": "\([0-9][0-9.]*\)",$/\1/p' "$project_dir/package.json" | head -1)"
+version_of() { /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$1/Contents/Info.plist"; }
+if [[ -d "$app_path" && "$(version_of "$app_path")" == "$source_version" ]]; then
+  /usr/bin/open -n "$app_path" --args --demo
+  exit 0
 fi
-open -n "$APP_PATH" --args --demo
+if [[ ! -f "$zip" ]]; then
+  echo "请将当前版本的 Mac 安装包放在 $zip 后重新打开示例。" >&2
+  exit 1
+fi
+stage_dir="$(mktemp -d "${TMPDIR:-/tmp}/bodyjournal-demo.XXXXXX")"
+trap '/bin/rm -rf "$stage_dir"' EXIT
+/usr/bin/ditto -x -k "$zip" "$stage_dir"
+candidate="$stage_dir/身体手记.app"
+[[ "$(version_of "$candidate")" == "$source_version" ]]
+[[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$candidate/Contents/Info.plist")" == "local.bodyjournal.personal" ]]
+/usr/bin/codesign --verify --deep --strict "$candidate"
+/usr/bin/open -W -n "$candidate" --args --demo

@@ -2,21 +2,32 @@
 
 身体手记 0.7.0 支持 iOS 16 及以上版本，可以在 iPhone 离线记录餐食、训练、身体测量、随手记和手填步数。手机原文、照片和待发变更保存在应用自己的 SQLite 档案及照片目录。Mac 可以继续使用现有的分析与食材编辑器。
 
-## 安装与第一次配对
+## 第一次安装，从 AltStore Classic 开始
 
-1. 在 Mac 打开 0.7.0 的「查看示例.command」进入隔离示例档案，或启动应用并传入 `--demo`。第一次往返请使用合成餐食和测试图片。
-2. 在本仓库的 iPhone 构建运行中下载 `BodyJournal-iPhone` artifact，解压得到 `BodyJournal-iPhone.ipa` 和校验文件。在解压目录运行 `shasum -a 256 -c iphone-SHA256SUMS.txt`。IPA 面向 iPhone 真机，AltStore 在安装时用自己的账号签名。
-3. 在 Mac 按 AltStore Classic 的说明安装 AltServer 并给 iPhone 安装 AltStore。在手机 AltStore 的 My Apps 页点「+」，选 IPA。后续续签和覆盖升级使用同一 Apple 账号和 App 标识，保留本机数据。请保留恢复码和本机资料，删除 App 会删除其沙盒。
-4. 在 Mac 的「连接与数据 → iPhone 双向同步」点「选择空目录并创建档案」，在 iCloud Drive 新建专用文件夹，例如「身体手记同步」。展开「显示配对码 / 恢复码」，把恢复码另存到密码管理器。
-5. 在手机点「同步 → 扫描 Mac 配对码」，轻点识别到的二维码，或填写恢复码。系统「文件」打开后选择同一目录。文件夹标记尚未抵达时，保持联网，稍后重选。
+需要一台解锁的 iPhone（iOS 16 或更高版本）、一根能传数据的 USB 线，以及这台 Mac。两端的 iCloud Drive 使用同一个 Apple 账号。首次安装和第一次续签都可以一直插着 USB 线。
 
-[打开 iPhone 构建记录](https://github.com/tenderzzz/body-journal/actions/workflows/ios-package.yml) · [AltStore Classic 安装指南](https://faq.altstore.io/altstore-classic/how-to-install-altstore-classic) · [刷新与续签](https://faq.altstore.io/altstore-classic/your-altstore)
+1. 在 Mac 打开官方 AltServer macOS 压缩包，解压后把 `AltServer.app` 拖入「应用程序」并打开。菜单栏出现菱形图标，即可继续。[AltServer 官方下载](https://cdn.altstore.io/file/altstore/altserver.zip)
+2. 用 USB 连接 iPhone，解锁，按提示在两端点「信任」。Mac 打开访达，在侧边栏点 iPhone →「通用」，勾选「连接到 Wi-Fi 时显示此 iPhone」并点「应用」。后续同一 Wi-Fi 下可无线刷新。
+3. 点击 Mac 菜单栏的 AltServer 菱形 → **Install AltStore** → 你的 iPhone。按 AltServer 的提示用自己的 Apple 账号登录。手机主屏幕出现 **AltStore** 后，打开「设置 → 通用 → VPN 与设备管理」，选自己的开发者账号并信任。再到「设置 → 隐私与安全性 → 开发者模式」打开开关，按提示重启并在解锁后确认。[AltStore 官方 Mac 安装图解](https://faq.altstore.io/altstore-classic/how-to-install-altstore-macos)
+4. 将 `BodyJournal-iPhone.ipa` 放在 iPhone「文件」能看到的位置。可以用 iCloud Drive，保存安装包的地方和稍后选择的共享目录分开。保持 AltServer 运行，在 iPhone 打开 AltStore → **My Apps → 左上角 +**，选择这个 IPA，按提示使用同一 Apple 账号签名。My Apps 出现「身体手记」且点开能看到五个录入按钮，即安装成功。安装包也可从仓库 iPhone 构建运行下载。[iPhone 构建记录](https://github.com/tenderzzz/body-journal/actions/workflows/ios-package.yml)
+5. Mac 首次试用在项目中双击「查看示例.command」。看到侧栏「示例档案 · 与真实数据隔离」，再进入「连接与数据 → iPhone 双向同步」。「选择空目录并创建档案」时，在 iCloud Drive 新建一个空文件夹，例如「身体手记同步试用」。点「显示配对码 / 恢复码」，用自己的密码管理器保存恢复码。
+6. iPhone 打开身体手记 →「同步 → 扫描 Mac 配对码」，轻点取景框中的二维码，或填写恢复码。系统「文件」弹出时，选择第 5 步的文件夹。看到「已连接」后，把身体手记从 App 切换器划掉再打开，确认目录仍是同一个。若提示档案标记未到，先在「文件」里打开该目录并等待 iCloud 下载，再重选。
 
-## 做一次餐食往返
+## 真机校验，按顺序操作
 
-在 iPhone 断网时点「记一餐」，输入「测试米饭一碗」，添加一张测试图，勾选「选入已配对的共享档案」及对应照片，保存。关掉应用再开，时间线上应仍有这条记录。手机联网后打开应用，晚些时候打开 Mac。两台设备都支持从同步页点「立即同步」。
+用一张测试图和一条带唯一文字的样例，例如「往返测试 A，米饭一碗」。Mac 示例可能已有其他条目，按这句原文统计数量。
 
-在 Mac 的记录详情打开「补充 / 修正食材和分量」。已有米饭时直接修改，需要时先添加米饭。将「实际吃下的比例」改为「约一半」，点「保存并重新计算」。下次手机收到后，原记录的「已核对的分量」应显示米饭和「吃了一半」，原图还能打开。不要用重新新增一条记录来修正。
+| 步骤 | 操作 | 通过条件 |
+| --- | --- | --- |
+| 1 · 离线保存 | Mac 合盖。iPhone 开飞行模式并关闭 Wi-Fi →「记一餐」，填写测试文字，选一张图，勾选「选入已配对的共享档案」和「选入照片 1」，点「保存到本机」。将 App 划掉再开。 | 时间线中这条样例只有一条，点开能看原文和照片。重开无需重选目录。 |
+| 2 · 手机发到 Mac | iPhone 恢复网络，打开同步页点「立即同步」。随后打开 Mac 示例档案，在「连接与数据 → iPhone 双向同步」点「立即同步」，去「记录」搜索样例。 | Mac 搜到一条同名餐食，原图能打开。若暂时只见文字，等待 iCloud 下载并重试。 |
+| 3 · Mac 更正，手机回读 | Mac 打开该餐 →「补充 / 修正食材和分量」。如果还没有米饭，点「添加食材」，搜索并选中「白米饭（熟）」或另一项米饭。把「实际吃下的比例」改成「约一半」，点「保存并重新计算」。两端依次同步，再在 iPhone 打开原记录。 | 手机「已核对的分量」显示米饭「吃了一半」，原文仍能读，原图仍在，样例数量仍为一。 |
+| 4 · 手动续签 | 保持 USB 连接和 AltServer 运行，iPhone 打开 AltStore → My Apps → **Refresh All**。刷新成功后重新打开身体手记。 | AltStore 与身体手记均显示刷新成功、剩余约 7 天；样例、图片、半份修正和目录授权仍在。 |
+| 5 · 一周自动续签 | 打开 AltStore 的 Background Refresh，Mac 保持 AltServer 可运行，让两台设备在这一周有机会连接相同 Wi-Fi。记下第 1 天的到期日，一周后对照新的到期日。 | 自动刷新应使到期日向后延长。记录是否需要手动干预，单次手动刷新单独计入上一步。 |
+
+可再用第二条合成样例检查离线冲突。两端先收到同一个版本，各自断网，一端删除、另一端改文字。分别恢复联网，同步到两边都列出两个版本，选中要保留的版本并保存。再次同步后应只保留一条样例，两端显示同一结果。覆盖安装测试可在有新版 IPA 时进行，使用相同的 Apple 账号和 App 标识，并保留已有安装。
+
+如果 AltStore 提示找不到 AltServer，保持 iPhone 解锁并改用 USB，先确认访达能看到设备。免费账号签名过期后可在 Mac 的 AltServer 菜单对同一设备覆盖安装 AltStore，再在 My Apps 里刷新身体手记；保留原 App 才能保住本机档案。[AltServer 连接与恢复](https://faq.altstore.io/altstore-classic/altserver) · [官方刷新说明](https://faq.altstore.io/altstore-classic/your-altstore)
 
 ## 选择资料和处理状态
 
