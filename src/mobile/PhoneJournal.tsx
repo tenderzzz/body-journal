@@ -29,7 +29,7 @@ import {
   type SyncReport,
 } from '../shared/device-sync';
 import { SyncConflict } from '../ui/SyncConflict';
-import { PhoneJournalModel, stamp, type PhoneIdentity, type Row } from './journal';
+import { PhoneJournalModel, stamp, stepsForDay, type PhoneIdentity, type Row } from './journal';
 import { InsightPage } from './PhoneInsights';
 import type { PhoneInsights } from '../shared/phone-insights';
 import './phone.css';
@@ -43,6 +43,18 @@ const dayOf = (r: PhoneRecord) => (r.kind === 'steps' ? calendarDay : journalDay
 function fieldTime(r: PhoneRecord) {
   const p = dateParts(r.occurredAt, r.timezone);
   return p.year + '-' + p.month + '-' + p.day + 'T' + p.hour + ':' + p.minute;
+}
+function blankRecord(kind: PhoneRecord['kind'], occurredAt: string, timezone: string): PhoneRecord {
+  return {
+    id: newDeviceUUID(),
+    kind,
+    text: '',
+    occurredAt,
+    timezone,
+    deleted: false,
+    photos: [],
+    portions: [],
+  };
 }
 function localValue(r: PhoneRecord) {
   return r.kind === 'steps'
@@ -151,12 +163,14 @@ function Editor({
   id,
   back,
   saved,
+  openStepDay,
 }: {
   original: PhoneRecord;
   base: Row | null;
   id: PhoneIdentity;
   back: () => void;
   saved: (r: Row) => void;
+  openStepDay?: (day: string, draft?: PhoneRecord) => void;
 }) {
   const [r, set] = useState<PhoneRecord>(() => structuredClone(original)),
     [time, setTime] = useState(fieldTime(original));
@@ -164,14 +178,31 @@ function Editor({
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   const update = (v: Partial<PhoneRecord>) => set((current) => ({ ...current, ...v }));
+  const today = calendarDay(new Date().toISOString(), r.timezone);
+  const yesterday = addCalendarDays(today, -1);
+  const stepDate = time.slice(0, 10);
+  const fullDay = r.kind === 'steps' && r.stepCoverage === 'full';
+  const changeStepDate = (day: string) => {
+    if (day === stepDate) return;
+    if (day && day <= today && openStepDay) {
+      openStepDay(day, base ? undefined : r);
+    } else {
+      setTime(day ? day + 'T' + (time.slice(11) || fieldTime(original).slice(11)) : '');
+    }
+  };
   const save = async () => {
     setBusy(true);
     setError('');
     try {
       const instant =
-        time === fieldTime(original)
+        time === fieldTime(original) || (fullDay && stepDate === dayOf(original))
           ? original.occurredAt
-          : atTime(time.slice(0, 10), Number(time.slice(11, 13)), Number(time.slice(14, 16)), r.timezone);
+          : atTime(
+              time.slice(0, 10),
+              fullDay ? 12 : Number(time.slice(11, 13)),
+              fullDay ? 0 : Number(time.slice(14, 16)),
+              r.timezone,
+            );
       if (!instant) throw Error('请核对发生时间。');
       saved(await model.save({ ...r, occurredAt: instant }, base ? stamp(base) : null, photos));
     } catch (e) {
@@ -194,38 +225,83 @@ function Editor({
         }}
       >
         <fieldset disabled={busy}>
-          <label>
-            发生时间
-            <input type="datetime-local" required value={time} onChange={(e) => setTime(e.target.value)} />
-          </label>
-          {r.kind === 'steps' && (
+          {r.kind === 'steps' ? (
+            <>
+              <label>
+                步数日期
+                <span className="record-date-field">
+                  <input
+                    type="date"
+                    required
+                    max={today}
+                    value={stepDate}
+                    onChange={(e) => changeStepDate(e.target.value)}
+                  />
+                </span>
+              </label>
+              <div className="step-dates">
+                <button
+                  type="button"
+                  aria-pressed={stepDate === yesterday}
+                  onClick={() => changeStepDate(yesterday)}
+                >
+                  昨天
+                </button>
+                <button type="button" aria-pressed={stepDate === today} onClick={() => changeStepDate(today)}>
+                  今天
+                </button>
+              </div>
+              <label>
+                {fullDay ? '全天总步数' : '累计步数'}
+                <input
+                  required
+                  type="number"
+                  inputMode="numeric"
+                  min="0"
+                  max="100000"
+                  step="1"
+                  value={r.steps ?? ''}
+                  onChange={(e) =>
+                    update({ steps: e.target.value === '' ? undefined : Number(e.target.value) })
+                  }
+                />
+              </label>
+              <label>
+                步数覆盖范围
+                <select
+                  className="coverage-select"
+                  value={r.stepCoverage ?? 'partial'}
+                  onChange={(e) => update({ stepCoverage: e.target.value as 'partial' | 'full' })}
+                >
+                  <option value="full">全天总数</option>
+                  <option value="partial">截至记录时</option>
+                </select>
+              </label>
+              {!fullDay && (
+                <label>
+                  截至时间
+                  <span className="record-date-field">
+                    <input
+                      type="time"
+                      required
+                      value={time.slice(11)}
+                      onChange={(e) => setTime(stepDate + 'T' + e.target.value)}
+                    />
+                  </span>
+                </label>
+              )}
+            </>
+          ) : (
             <label>
-              当天总步数
-              <input
-                required
-                type="number"
-                inputMode="numeric"
-                min="0"
-                max="100000"
-                step="1"
-                value={r.steps ?? ''}
-                onChange={(e) =>
-                  update({ steps: e.target.value === '' ? undefined : Number(e.target.value) })
-                }
-              />
-              <small>按 {r.timezone} 的自然日归属。</small>
-            </label>
-          )}
-          {r.kind === 'steps' && (
-            <label>
-              步数覆盖范围
-              <select
-                value={r.stepCoverage ?? 'partial'}
-                onChange={(e) => update({ stepCoverage: e.target.value as 'partial' | 'full' })}
-              >
-                <option value="partial">截至记录时</option>
-                <option value="full">全天总数</option>
-              </select>
+              发生时间
+              <span className="record-date-field">
+                <input
+                  type="datetime-local"
+                  required
+                  value={time}
+                  onChange={(e) => setTime(e.target.value)}
+                />
+              </span>
             </label>
           )}
           {r.kind === 'body' && (
@@ -482,10 +558,12 @@ export function PhoneJournal() {
     [allDates, showAll] = useState(false),
     [limit, setLimit] = useState(50),
     [selected, setSelected] = useState<string>(),
-    [editor, setEditor] = useState<{ r: PhoneRecord; base: Row | null }>();
-  const [date, setDate] = useState(journalDay(new Date().toISOString(), zone())),
+    [editor, setEditor] = useState<{ r: PhoneRecord; base: Row | null; dailySteps?: boolean }>();
+  const [timelineDay, setTimelineDay] = useState<{ date: string; chosen: boolean }>(),
     [trash, setTrash] = useState(false),
     [notice, setNotice] = useState('');
+  const date = timelineDay?.date ?? journalDay(new Date().toISOString(), zone());
+  const setDate = (day: string) => setTimelineDay({ date: day, chosen: true });
   const reload = async () => {
     const [id, list, insights] = await Promise.all([model.identity(), model.rows(), model.insights()]);
     setView(insights?.manifest.archive === id.archive ? insights : null);
@@ -518,7 +596,8 @@ export function PhoneJournal() {
   const changed = (row: Row) => {
     setRows((v) => [...v.filter((r) => r.record.id !== row.record.id), row]);
     setSelected(row.record.id);
-    setDate(dayOf(row.record));
+    const savedDay = dayOf(row.record);
+    if (!editor?.dailySteps && savedDay !== date) setTimelineDay({ date: savedDay, chosen: false });
     setEditor(undefined);
     setNotice('已存本机');
     void sync().catch((e) => setError(e.message));
@@ -526,26 +605,48 @@ export function PhoneJournal() {
   const row = rows.find((r) => r.record.id === selected),
     r = row?.record;
 
+  const openStepDay = (day: string, draft?: PhoneRecord) => {
+    setNotice('');
+    const existing = stepsForDay(rows, day);
+    if (existing) {
+      setEditor({ r: existing.record, base: existing, dailySteps: true });
+      return;
+    }
+    const now = new Date().toISOString(),
+      tz = draft?.timezone ?? zone();
+    const isToday = day === calendarDay(now, tz);
+    const occurredAt = isToday ? now : atTime(day, 12, 0, tz);
+    if (!occurredAt) {
+      setError('请核对步数日期。');
+      return;
+    }
+    setEditor({
+      r: {
+        ...blankRecord('steps', occurredAt, tz),
+        text: draft?.text ?? '',
+        steps: draft?.steps,
+        stepCoverage: isToday ? 'partial' : 'full',
+      },
+      base: null,
+      dailySteps: true,
+    });
+  };
   const create = (kind: PhoneRecord['kind']) => {
     const now = new Date().toISOString(),
       tz = zone();
-    const occurredAt =
-      date === (kind === 'steps' ? calendarDay(now, tz) : journalDay(now, tz))
-        ? now
-        : (atTime(date, 12, 0, tz) ?? now);
-    setEditor({
-      r: {
-        id: newDeviceUUID(),
-        kind,
-        text: '',
-        occurredAt,
-        timezone: tz,
-        deleted: false,
-        photos: [],
-        portions: [],
-      },
-      base: null,
-    });
+    if (kind === 'steps') {
+      const today = calendarDay(now, tz);
+      openStepDay(
+        !allDates && !trash && timelineDay?.chosen && date < today ? date : addCalendarDays(today, -1),
+      );
+      return;
+    }
+    const occurredAt = date === journalDay(now, tz) ? now : atTime(date, 12, 0, tz);
+    if (!occurredAt) {
+      setError('请核对发生日期。');
+      return;
+    }
+    setEditor({ r: blankRecord(kind, occurredAt, tz), base: null });
     setNotice('');
   };
   if (!identity)
@@ -571,6 +672,7 @@ export function PhoneJournal() {
           id={identity}
           back={() => setEditor(undefined)}
           saved={changed}
+          openStepDay={editor.dailySteps ? openStepDay : undefined}
         />
       ) : detail ? (
         <main className="phone-content">
@@ -586,7 +688,10 @@ export function PhoneJournal() {
           </button>
           <h1>{kinds[r.kind]}记录</h1>
           <p className="date-sub">
-            {fieldTime(r).replace('T', ' ')} · {r.timezone}
+            {r.kind === 'steps' && r.stepCoverage === 'full'
+              ? dayOf(r) + ' · 全天总数'
+              : fieldTime(r).replace('T', ' ')}{' '}
+            · {r.timezone}
           </p>
           <div className="entry-text">{r.text || localValue(r)}</div>
           {r.text && (r.body || r.steps !== undefined) && (
@@ -667,7 +772,7 @@ export function PhoneJournal() {
             {(Object.keys(labels) as PhoneRecord['kind'][]).map((kind) => {
               const Icon = icons[kind];
               return (
-                <button key={kind} className={'capture-' + kind} onClick={() => create(kind)}>
+                <button key={kind} onClick={() => create(kind)}>
                   <Icon />
                   <span>{labels[kind]}</span>
                 </button>
@@ -733,7 +838,13 @@ export function PhoneJournal() {
                     setNotice('');
                   }}
                 >
-                  <time>{trash || allDates ? dayOf(entry) : fieldTime(entry).slice(-5)}</time>
+                  <time>
+                    {trash || allDates
+                      ? dayOf(entry)
+                      : entry.kind === 'steps' && entry.stepCoverage === 'full'
+                        ? '全天'
+                        : fieldTime(entry).slice(-5)}
+                  </time>
                   <span>
                     <small>
                       {kinds[entry.kind]} · {deliveryLabel(v.replica, identity.device)}

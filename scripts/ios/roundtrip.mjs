@@ -2,6 +2,7 @@
 // The phone bridge below uses the same on-disk Swift SQLite and file transport as the iOS target.
 import { _electron, chromium, expect } from '@playwright/test';
 import electron from 'electron';
+import { checkRecordForms } from './check-record-forms.mjs';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -59,6 +60,7 @@ try {
   const context = await browser.newContext({
     viewport: { width: 390, height: 844 },
     isMobile: true,
+    timezoneId: 'Asia/Shanghai',
     deviceScaleFactor: 1,
   });
   const iphone = await context.newPage();
@@ -96,7 +98,12 @@ try {
     });
   });
   await iphone.goto('https://journal.test/');
+  await iphone.evaluate(checkRecordForms);
+  if (process.env.BODYJOURNAL_SCREENSHOT)
+    await iphone.screenshot({ path: process.env.BODYJOURNAL_SCREENSHOT.replace('.png', '-home.png') });
   await iphone.getByRole('button', { name: '记一餐', exact: true }).click();
+  if (process.env.BODYJOURNAL_SCREENSHOT)
+    await iphone.screenshot({ path: process.env.BODYJOURNAL_SCREENSHOT.replace('.png', '-meal.png') });
   await iphone.getByLabel('原文').fill(fixture.text);
   await iphone.getByRole('button', { name: /添加照片/ }).click();
   await iphone.getByLabel('选入照片 1').check();
@@ -154,9 +161,83 @@ try {
   await expect(iphone.getByRole('img', { name: /摄入趋势/ })).toBeVisible();
   if (process.env.BODYJOURNAL_SCREENSHOT)
     await iphone.screenshot({ path: process.env.BODYJOURNAL_SCREENSHOT.replace('.png', '-trends.png') });
+  // Use separated actual measurement dates. A connector must span the gap without adding a measurement.
+  await mac.evaluate(async () => {
+    for (const offset of [5, 2]) {
+      const day = new Date();
+      day.setDate(day.getDate() - offset);
+      day.setHours(12, 0, 0, 0);
+      await window.health.invoke('record:create', {
+        kind: 'body',
+        text: '',
+        body: { weightKg: 60 + offset },
+        occurredAt: day.toISOString(),
+        dateLocked: true,
+      });
+    }
+    await window.health.invoke('device:sync');
+  });
+  await iphone.evaluate(() => window.dispatchEvent(new Event('online')));
+  await iphone.getByLabel('趋势指标').selectOption('weight');
+  const plot = iphone.getByRole('img', { name: /体重趋势/ });
+  await expect(plot.locator('circle')).toHaveCount(2);
+  await expect(plot.locator('polyline')).toHaveCount(1);
+  const connectedPoints = await plot.evaluate((svg) => {
+    const dots = [...svg.querySelectorAll('circle')].map((p) => [p.cx.baseVal.value, p.cy.baseVal.value]);
+    const line = [...svg.querySelector('polyline').points].map((p) => [p.x, p.y]);
+    return JSON.stringify(dots) === JSON.stringify(line);
+  });
+  if (!connectedPoints) throw Error('趋势线应直接连接实际记录点');
+  if (process.env.BODYJOURNAL_SCREENSHOT)
+    await iphone.screenshot({ path: process.env.BODYJOURNAL_SCREENSHOT.replace('.png', '-gap.png') });
+  await iphone.getByRole('button', { name: '手记', exact: true }).click();
+  await iphone.getByRole('button', { name: '按日期', exact: true }).click();
+
+  // At 02:00, yesterday is relative to the civil date, even though the journal itself rolls over at 04:00.
+  await iphone.clock.setFixedTime(new Date('2026-04-01T02:10:00+08:00'));
+  await iphone.reload();
+  const enterSteps = iphone.getByRole('button', { name: '记步数', exact: true });
+  await enterSteps.click();
+  await expect(iphone.getByLabel('步数日期')).toHaveValue('2026-03-31');
+  await expect(iphone.getByLabel('步数覆盖范围')).toHaveValue('full');
+  await iphone.getByRole('button', { name: '今天', exact: true }).click();
+  await expect(iphone.getByLabel('步数日期')).toHaveValue('2026-04-01');
+  await expect(iphone.getByLabel('步数覆盖范围')).toHaveValue('partial');
+  await expect(iphone.getByLabel('截至时间')).toHaveValue('02:10');
+  await iphone.getByRole('button', { name: '昨天', exact: true }).click();
+  await iphone.getByLabel('全天总步数').fill('4321');
+  await iphone.getByRole('button', { name: '保存到本机' }).click();
+  await expect(iphone.locator('.date-sub')).toContainText('2026-03-31');
+  await iphone.getByRole('button', { name: '返回', exact: true }).click();
+  await enterSteps.click();
+  await expect(iphone.getByRole('heading', { name: '修改步数' })).toBeVisible();
+  await expect(iphone.getByLabel('全天总步数')).toHaveValue('4321');
+  await iphone.getByLabel('全天总步数').fill('4322');
+  await iphone.getByRole('button', { name: '保存到本机' }).click();
+  await iphone.getByRole('button', { name: '返回', exact: true }).click();
+  await expect(iphone.locator('.entry')).toHaveCount(1);
+  await iphone.clock.setFixedTime(new Date('2026-04-02T14:00:00+08:00'));
+  await enterSteps.click();
+  await expect(iphone.getByLabel('步数日期')).toHaveValue('2026-04-01');
+  if (process.env.BODYJOURNAL_SCREENSHOT)
+    await iphone.screenshot({ path: process.env.BODYJOURNAL_SCREENSHOT.replace('.png', '-steps.png') });
+  await iphone.getByLabel('全天总步数').fill('6000');
+  await iphone.getByRole('button', { name: '保存到本机' }).click();
+  await iphone.getByRole('button', { name: '返回', exact: true }).click();
+  await expect(iphone.getByLabel('查看日期')).toHaveValue('2026-04-02');
+  await iphone.getByRole('button', { name: '记一餐', exact: true }).click();
+  await expect(iphone.getByLabel('发生时间')).toHaveValue('2026-04-02T14:00');
+  await iphone.getByRole('button', { name: '返回', exact: true }).click();
+  await iphone.getByLabel('查看日期').fill('2026-03-26');
+  await enterSteps.click();
+  await expect(iphone.getByLabel('步数日期')).toHaveValue('2026-03-26');
+  await expect(iphone.getByLabel('步数覆盖范围')).toHaveValue('full');
+  await iphone.getByLabel('步数日期').fill('2026-03-31');
+  await expect(iphone.getByLabel('全天总步数')).toHaveValue('4322');
+  await iphone.getByRole('button', { name: '返回', exact: true }).click();
   const overflow = await iphone.evaluate(() => document.documentElement.scrollWidth > innerWidth);
   if (overflow || errors.length) throw Error('布局或脚本错误 ' + errors.join(' / '));
-  console.log('五个录入入口已加载。手机离线选图保存、重开、Mac 食材编辑器修正、手机同条记录回读及照片通过。');
+  console.log('五个录入入口与日期边界、跨缺测趋势、跨月补步数与同日修改通过。离线选图和 Mac 修正后手机回读通过。');
 } finally {
   await browser?.close();
   await app?.close();

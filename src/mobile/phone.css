@@ -109,13 +109,6 @@ summary:focus-visible {
   grid-column: span 3;
   min-height: 62px;
 }
-.capture .capture-meal {
-  background: #215f52;
-  color: white;
-}
-.capture .capture-training {
-  background: #d5e7e4;
-}
 .capture button svg {
   width: 20px;
 }
@@ -160,11 +153,15 @@ summary:focus-visible {
   text-align: left;
 }
 .entry time {
+  align-self: baseline;
+  flex: none;
+  white-space: nowrap;
   font-variant-numeric: tabular-nums;
   min-width: 48px;
   color: #356858;
 }
-.entry span {
+.entry > span {
+  align-self: baseline;
   min-width: 0;
   flex: 1;
 }
@@ -252,7 +249,9 @@ summary:focus-visible {
   margin: 14px 0;
 }
 .phone input:not([type='checkbox']):not([type='radio']),
-.phone textarea {
+.phone textarea,
+.phone .record-date-field,
+.phone .coverage-select {
   display: block;
   width: 100%;
   min-width: 0;
@@ -263,6 +262,57 @@ summary:focus-visible {
   color: #193a32;
   margin-top: 7px;
   font-size: 16px;
+}
+/* The visible border belongs to a normal block. iOS can size native date controls independently of their CSS box. */
+.phone .record-date-field {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 10px;
+}
+.phone .record-date-field input:is([type='datetime-local'], [type='date'], [type='time']) {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1 1 0;
+  min-height: 42px;
+  width: 0;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-align: start;
+}
+.record-date-field input::-webkit-date-and-time-value {
+  text-align: start;
+  margin: 0;
+}
+.record-date-field:focus-within {
+  outline: 3px solid #157b91;
+  outline-offset: 3px;
+}
+.record-date-field input:focus-visible {
+  outline: none;
+}
+.step-dates {
+  display: flex;
+  gap: 8px;
+  margin-top: -5px;
+}
+.step-dates button {
+  min-height: 36px;
+  padding: 5px 14px;
+  border: 1px solid #c1d3cd;
+  border-radius: 7px;
+  background: white;
+  color: #215f52;
+}
+.step-dates button[aria-pressed='true'] {
+  background: #e8f1ee;
+  border-color: #548474;
+  font-weight: 650;
 }
 .phone .day-nav input[type='date'] {
   width: auto;
@@ -557,7 +607,7 @@ summary:focus-visible {
 .trend-plot circle {
   fill: #215f52;
 }
-.trend-plot path {
+.trend-plot polyline {
   fill: none;
   stroke: #438772;
   stroke-width: 1.5;

@@ -245,15 +245,11 @@ function Trends({ view, openDay }: { view: PhoneInsights; openDay: (date: string
               {[13, 48, 84].map((v) => (
                 <line key={v} x1="4" x2="296" y1={v} y2={v} />
               ))}
-              {points.map((p, i) => (
-                <g key={p.date}>
-                  {i > 0 && addCalendarDays(points[i - 1].date, 1) === p.date && (
-                    <path
-                      d={`M${x(points[i - 1].date)} ${y(points[i - 1].value)} L${x(p.date)} ${y(p.value)}`}
-                    />
-                  )}
-                  <circle cx={x(p.date)} cy={y(p.value)} r="2.7" />
-                </g>
+              {points.length > 1 && (
+                <polyline points={points.map((p) => x(p.date) + ',' + y(p.value)).join(' ')} />
+              )}
+              {points.map((p) => (
+                <circle key={p.date} cx={x(p.date)} cy={y(p.value)} r="2.7" />
               ))}
             </svg>
             <div className="plot-dates">

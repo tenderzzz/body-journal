@@ -18,6 +18,15 @@ import {
 import { exchange, type ReplicaStore, type ExchangeFolder } from '../shared/device-exchange';
 
 export type Row = { revision: number; record: PhoneRecord; replica: Replica | null };
+export function stepsForDay(rows: Row[], day: string, excluding?: string) {
+  return rows.find(
+    ({ record }) =>
+      record.kind === 'steps' &&
+      !record.deleted &&
+      record.id !== excluding &&
+      calendarDay(record.occurredAt, record.timezone) === day,
+  );
+}
 export type PhoneIdentity = Pick<SyncSettings, 'archive' | 'enabled' | 'device' | 'folder'>;
 export interface JournalBridge {
   request<T>(args: Record<string, unknown>): Promise<T>;
@@ -119,16 +128,7 @@ export class PhoneJournalModel implements ReplicaStore {
       if ((prior ? stamp(prior) : null) !== expected) throw stale();
       if (record.kind === 'steps' && !record.deleted) {
         const day = calendarDay(record.occurredAt, record.timezone);
-        if (
-          (await this.rows()).some(
-            (r) =>
-              r.record.id !== record.id &&
-              r.record.kind === 'steps' &&
-              !r.record.deleted &&
-              calendarDay(r.record.occurredAt, r.record.timezone) === day,
-          )
-        )
-          throw Error('当天已有步数，请打开原记录修改。');
+        if (stepsForDay(await this.rows(), day, record.id)) throw Error('当天已有步数，请打开原记录修改。');
       }
       let replica = prior?.replica ?? null;
       const { archive, device } = await this.identity();
