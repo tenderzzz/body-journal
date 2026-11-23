@@ -1,4 +1,5 @@
 import { registerPlugin } from '@capacitor/core';
+import { receiveInsights, type PhoneInsights } from '../shared/phone-insights';
 import { calendarDay } from '../shared/dates';
 import {
   addOperation,
@@ -27,15 +28,32 @@ export const stamp = (row: Row) =>
   JSON.stringify([row.record, row.replica ? heads(row.replica).map((o) => o.id) : []]);
 function projection(record: PhoneRecord, photos: PhotoRef[]) {
   const { id, kind, text, occurredAt, timezone, deleted, portions } = record;
-  return syncRecordSchema.parse({ id, kind, text, occurredAt, timezone, deleted, portions, photos });
+  return syncRecordSchema.parse({
+    id,
+    kind,
+    text,
+    occurredAt,
+    timezone,
+    deleted,
+    portions,
+    photos,
+    ...(kind === 'body' && record.body ? { body: record.body } : {}),
+    ...(kind === 'steps' ? { steps: record.steps, stepCoverage: record.stepCoverage ?? 'partial' } : {}),
+  });
 }
 function selectPhotos(record: PhoneRecord, indices: number[]) {
   if (indices.some((i) => !Number.isInteger(i) || !record.photos[i]))
     throw Error('请重新选择需要同步的照片。');
   return record.kind === 'meal' ? record.photos.filter((_, i) => indices.includes(i)) : [];
 }
-export function validatePhoneRecord(r: PhoneRecord) {
-  if (!r.text.trim() && !r.photos.length && !Object.values(r.body ?? {}).length && r.steps === undefined)
+export function validatePhoneRecord(r: PhoneRecord, existingEmpty = false) {
+  if (
+    !existingEmpty &&
+    !r.text.trim() &&
+    !r.photos.length &&
+    !Object.values(r.body ?? {}).length &&
+    r.steps === undefined
+  )
     throw Error('请填写记录内容。');
   if (r.text.length > 100000 || r.photos.length > 8 || !Number.isFinite(Date.parse(r.occurredAt)))
     throw Error('请核对记录长度、时间和照片张数。');
@@ -64,6 +82,19 @@ export class PhoneJournalModel implements ReplicaStore {
   async rows(): Promise<Row[]> {
     return (await this.call<{ rows: string[] }>('rows')).rows.map((s) => JSON.parse(s));
   }
+  async insights(): Promise<PhoneInsights | null> {
+    const { doc } = await this.call<{ doc: string | null }>('insights');
+    return doc ? JSON.parse(doc) : null;
+  }
+  private backfill(archive: string, device: string) {
+    return this.locked(async () => {
+      for (const row of await this.rows()) {
+        if (row.replica || row.record.deleted) continue;
+        const next = appendLocal(emptyReplica(), projection(row.record, []), { archive, device });
+        await this.write(row.record, next, row);
+      }
+    });
+  }
   async replicas() {
     return (await this.rows()).flatMap((row) => (row.replica ? [row.replica] : []));
   }
@@ -83,8 +114,8 @@ export class PhoneJournalModel implements ReplicaStore {
   }
   save(record: PhoneRecord, expected: string | null, enroll?: number[]) {
     return this.locked(async () => {
-      validatePhoneRecord(record);
       const prior = await this.row(record.id);
+      validatePhoneRecord(record, !!prior && !prior.record.text.trim() && !prior.record.photos.length);
       if ((prior ? stamp(prior) : null) !== expected) throw stale();
       if (record.kind === 'steps' && !record.deleted) {
         const day = calendarDay(record.occurredAt, record.timezone);
@@ -100,12 +131,16 @@ export class PhoneJournalModel implements ReplicaStore {
           throw Error('当天已有步数，请打开原记录修改。');
       }
       let replica = prior?.replica ?? null;
-      if (replica || enroll) {
-        const { archive, device } = await this.identity();
-        if (!archive) throw Error('请先完成档案配对。');
-        const photos = replica ? heads(replica)[0].record.photos : selectPhotos(record, enroll!);
+      const { archive, device } = await this.identity();
+      if (archive && (replica || !record.deleted)) {
+        const previous = replica ? heads(replica)[0].record.photos : [];
+        const additions = selectPhotos(record, enroll ?? []);
+        const photos = [
+          ...previous,
+          ...additions.filter((p) => !previous.some((old) => old.hash === p.hash)),
+        ];
         replica = appendLocal(replica ?? emptyReplica(), projection(record, photos), { archive, device });
-      }
+      } else if (enroll?.length) throw Error('请先完成档案配对。');
       return this.write(record, replica, prior);
     });
   }
@@ -189,7 +224,21 @@ export class PhoneJournalModel implements ReplicaStore {
           },
         };
         try {
-          this.report = await exchange({ archive: id.archive, device: id.device }, this, folder);
+          await this.backfill(id.archive, id.device);
+          const files = await folder.list();
+          let viewError = '';
+          try {
+            if (files.some((f) => f.startsWith('overview-'))) {
+              const prior = await this.insights();
+              const view = await receiveInsights(id.archive, files, folder, prior);
+              if (view && view !== prior)
+                await this.call('saveInsights', { archive: id.archive, doc: JSON.stringify(view) });
+            }
+          } catch (e) {
+            viewError = '能量和趋势等待更新：' + (e instanceof Error ? e.message : String(e));
+          }
+          this.report = await exchange({ archive: id.archive, device: id.device }, this, folder, files);
+          if (viewError) this.report.issues.push(viewError);
         } catch (e) {
           this.report = {
             at: new Date().toISOString(),

@@ -129,6 +129,12 @@ final class JournalPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate
       let db = try self.db()
       switch method {
       case "identity": return try identity(db)
+      case "insights": return ["doc": (try db.get("insights") as Any?) ?? NSNull()]
+      case "saveInsights":
+        guard let archive = call.getString("archive"), try db.get("archive") == archive,
+          let doc = call.getString("doc") else { throw JournalFailure("统计所属档案不一致。") }
+        try db.set("insights", doc)
+        return [:]
       case "rows": return ["rows": try db.rows()]
       case "row": return ["doc": (try db.row(call.getString("id") ?? "")) as Any? ?? NSNull()]
       case "save":

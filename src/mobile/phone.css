@@ -379,3 +379,198 @@ summary:focus-visible {
 .phone .saved-notice {
   color: #24634f;
 }
+
+.phone-tabs {
+  padding-inline: 8px;
+  gap: 3px;
+}
+.phone-tabs button {
+  flex: 1;
+  min-height: 49px;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 2px;
+  font-size: 12px;
+}
+.insight-time {
+  color: #516a6e;
+  font-size: 14px;
+  margin: 10px 0 16px;
+}
+.energy-reading {
+  color: #fff;
+  background: #215f52;
+  border-radius: 14px;
+  padding: 19px 20px 13px;
+}
+.energy-reading h2 {
+  margin: 0 0 5px;
+  font-size: 15px;
+  font-weight: 550;
+}
+.energy-reading > strong {
+  font-size: clamp(25px, 7.5vw, 39px);
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.energy-reading p {
+  font-size: 14px;
+  margin: 4px 0 14px;
+  color: #e6f1ed;
+}
+.insights dl {
+  margin: 0;
+}
+.insights dl > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 9px 0;
+  gap: 8px;
+  border-top: 1px solid #dbe6e3;
+}
+.energy-reading dl > div {
+  border-color: #ffffff40;
+}
+.insights dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  font-weight: 600;
+}
+.reading-list dd small {
+  display: block;
+  font-weight: 400;
+}
+.insights .insight-section {
+  margin: 25px 0 0;
+}
+.chart-key,
+.plot-dates {
+  display: flex;
+  gap: 11px;
+  align-items: center;
+  font-size: 13px;
+  color: #516a6e;
+}
+.chart-key span:before {
+  content: '';
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 4px;
+  background: #287561;
+  border-radius: 2px;
+}
+.chart-key span:nth-child(2):before {
+  background: #ad613b;
+}
+.week-bars {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 3px;
+}
+.week-bars button {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.week-bars button > span {
+  display: flex;
+  align-items: end;
+  justify-content: center;
+  height: 95px;
+  border-bottom: 1px solid #cddbd9;
+  gap: 2px;
+}
+.week-bars i {
+  width: 24%;
+  background: #287561;
+  border-radius: 3px 3px 0 0;
+}
+.week-bars i[data-series='1'] {
+  background: #ad613b;
+}
+.week-bars small {
+  display: inline-block;
+  padding: 4px 0;
+}
+.week-bars [aria-pressed='true'] small {
+  color: #17584a;
+  font-weight: 700;
+}
+.period-control {
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  background: #eff5f3;
+  border-radius: 9px;
+  margin: 16px 0 24px;
+}
+.period-control button {
+  background: transparent;
+  border: 0;
+  color: #375f54;
+  padding: 9px 2px;
+  flex: 1;
+  border-radius: 7px;
+}
+.period-control button[aria-pressed='true'] {
+  background: #215f52;
+  color: white;
+}
+.trend-reading label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.trend-reading select {
+  font: inherit;
+  color: #215f52;
+  border: 1px solid #bdd3cc;
+  border-radius: 8px;
+  padding: 7px;
+  background: #fff;
+}
+.trend-reading .trend-value {
+  margin: 15px 0 0;
+  line-height: 1.15;
+  color: #215f52;
+}
+.trend-value strong {
+  font-size: 38px;
+  font-variant-numeric: tabular-nums;
+}
+.trend-value + p {
+  margin: 5px 0;
+  font-size: 14px;
+}
+.trend-plot {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: 12px;
+}
+.trend-plot line {
+  stroke: #dce6e1;
+}
+.trend-plot circle {
+  fill: #215f52;
+}
+.trend-plot path {
+  fill: none;
+  stroke: #438772;
+  stroke-width: 1.5;
+}
+.plot-dates {
+  justify-content: space-between;
+}
+.trend-details {
+  margin-top: 15px;
+}
+.insight-link {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+}

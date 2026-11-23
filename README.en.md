@@ -14,7 +14,7 @@ Capture on iPhone with Apple Shortcuts, deliver through an iCloud inbox, and kee
 
 ## iPhone companion
 
-Version 0.7.0 adds an offline iPhone app with five capture forms and an encrypted, opt-in iCloud Drive exchange with the Mac. Build the device IPA with `npm run ios:ipa` on a Mac with Xcode, or download it from the iPhone workflow. [Pairing and trial instructions (Chinese)](docs/iphone.md).
+Version 0.8.0 automatically syncs historical and new journal entries over the paired, encrypted iCloud Drive folder. The iPhone can record offline and display the Mac's energy, nutrition, steps, measurements and training summaries. Existing pairs retain their folder and key. [iPhone setup and sync (Chinese)](docs/iphone.md).
 
 
 ## Local v0.6.0

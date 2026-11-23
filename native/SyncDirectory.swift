@@ -89,7 +89,7 @@ final class SyncDirectory {
   }
   private func allowed(_ name: String) -> Bool {
     name.range(
-      of: "^(op-\(guid)|ack-\(guid)-\(guid)|img-[a-f0-9]{64})$", options: .regularExpression) != nil
+      of: "^(op-\(guid)|ack-\(guid)-\(guid)|img-[a-f0-9]{64}|overview-\(guid)|view-[a-f0-9]{64})$", options: .regularExpression) != nil
   }
   private func plain(_ data: Data, _ name: String) throws -> Data {
     do {
@@ -167,7 +167,12 @@ final class SyncDirectory {
     }
     let limit = name.hasPrefix("img-") ? 20 * 1024 * 1024 + 28 : 1024 * 1024
     return try coordinated(url, writing: false) {
-      try self.plain(self.localBytes($0, limit: limit), name)
+      let data = try self.plain(self.localBytes($0, limit: limit), name)
+      if name.hasPrefix("view-") {
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        guard name == "view-" + digest else { throw JournalFailure("统计内容校验失败，稍后会重新下载。") }
+      }
+      return data
     }
   }
   func write(_ name: String, data: Data) throws {
@@ -175,8 +180,12 @@ final class SyncDirectory {
     let url = root.appendingPathComponent(name)
     try coordinated(url, writing: true) { target in
       if self.fm.fileExists(atPath: target.path) {
-        let existing = try self.localBytes(target, limit: data.count + 28)
-        guard try self.plain(existing, name) == data else {
+        let mutable = name.hasPrefix("overview-")
+        let existing = try self.localBytes(target, limit: mutable ? 1024 * 1024 : data.count + 28)
+        if try self.plain(existing, name) == data { return }
+        if mutable {
+          try self.sealed(data, name).write(to: target, options: .atomic)
+        } else {
           throw JournalFailure("同编号文件的内容不同，请核对档案。")
         }
       } else {

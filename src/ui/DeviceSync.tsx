@@ -57,8 +57,8 @@ export function DeviceSettings({ run, onSource }: { run: Run; onSource: (id: str
     <section className="settings-section">
       <h2>iPhone 双向同步</h2>
       <p>
-        在 iCloud Drive
-        选择专用目录。配对后，可在每条记录的详情预览并选入原文、时间、人工分量和指定餐食照片。身体测量、步数和运动截图留在本机。
+        在 iCloud Drive 选择专用目录。配对后自动补齐历史记录，持续同步新增、修改、删除和恢复。iPhone 可查看
+        Mac 的能量、身体、步数和训练趋势。餐食照片可在记录详情逐张选择。
       </p>
       {status?.archive && (
         <p>
@@ -215,35 +215,43 @@ export function DeviceRecord({ r, run, photos }: { r: HealthRecord; run: Run; ph
           />
         </>
       ) : (
-        <>
-          <p>
-            选入当前原文、类别、发生时间、时区和人工确认的餐食分量。之后在任一端修改、删除或恢复，另一端也会收到。
-          </p>
-          <blockquote>{r.text}</blockquote>
-          {info.photos.map((p, i) => (
-            <label key={i} className="sync-photo">
-              <input
-                type="checkbox"
-                checked={checked.includes(i)}
-                onChange={(e) => select(e.target.checked ? [...checked, i] : checked.filter((n) => n !== i))}
-              />
-              {photos[i] && <img src={photos[i]} alt="" />}照片 {i + 1}（{Math.ceil(p.bytes / 1024)} KB）
-            </label>
-          ))}
+        <p>这条记录会在下次自动同步时发送。</p>
+      )}
+      {info.photos.length > 0 && (
+        <div>
+          {info.photos.map((p, i) => {
+            const shared = !!tip?.record.photos.some((a) => a.hash === p.hash);
+            return (
+              <label key={i} className="sync-photo">
+                <input
+                  type="checkbox"
+                  disabled={shared}
+                  checked={shared || checked.includes(i)}
+                  onChange={(e) =>
+                    select(e.target.checked ? [...checked, i] : checked.filter((n) => n !== i))
+                  }
+                />
+                {photos[i] && <img src={photos[i]} alt="" />}照片 {i + 1}
+                {shared ? '（已共享）' : ''}
+              </label>
+            );
+          })}
           <button
             className="button secondary"
+            disabled={!checked.length}
             onClick={async () => {
               try {
                 set(await run('device:enroll', { id: r.id, revision: r.revision, photos: checked }));
+                select([]);
                 setError('');
               } catch (e) {
                 setError((e as Error).message);
               }
             }}
           >
-            选入这条记录
+            共享所选照片
           </button>
-        </>
+        </div>
       )}
       {error && <p role="alert">{error}</p>}
     </details>

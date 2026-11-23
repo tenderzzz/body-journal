@@ -74,14 +74,14 @@ test('shared operations wait for parents, replay once, preserve competing delete
   assert.throws(() => addOperation(start, { ...right.ops[1], record: { ...wire, deleted: true } }, archive));
   assert.throws(() => addOperation(start, right.ops[1], randomUUID()), /档案/);
   for (const sensitive of [
-    { kind: 'body' },
+    { kind: 'body', body: { weightKg: -1 } },
     { kind: 'steps' },
     { kind: 'training', photos: [ref] },
     { analysis: {} },
     { body: { weightKg: 75 } },
   ])
     assert.equal(syncRecordSchema.safeParse({ ...wire, ...sensitive }).success, false);
-  assert.equal(operationSchema.safeParse({ ...start.ops[0], version: 2 }).success, false);
+  assert.equal(operationSchema.safeParse({ ...start.ops[0], version: 3 }).success, false);
   assert.equal(journalDay(occurredAt), '2026-11-19');
   assert.equal(journalDay(occurredAt.replace('03:59', '04:00')), '2026-11-20');
   assert.equal(calendarDay(occurredAt), '2026-11-20');
@@ -242,8 +242,17 @@ test(
         ...(kind === 'steps' ? { steps: 0 } : { body: { bodyFatPercent: 20 } }),
       };
       await phoneApp.save(priv, null);
-      assert.equal((await phoneApp.rows()).find((v) => v.record.id === priv.id)!.replica, null);
-      await assert.rejects(() => phoneApp.save({ ...priv, id: randomUUID() }, null, []));
+      assert.equal((await phoneApp.rows()).find((v) => v.record.id === priv.id)!.replica?.ops.length, 1);
+      await phoneApp.sync();
+      await deskSync();
+      const received = desktop.record(priv.id);
+      if (kind === 'body') assert.equal(received.body?.bodyFatPercent, 20);
+      else {
+        assert.equal(received.analysis?.dailyActivity?.steps, 0);
+        assert.equal(received.status, 'ready');
+        assert.equal(desktop.energy.day(calendarDay(occurredAt)).walking?.steps, 0);
+        await assert.rejects(() => phoneApp.save({ ...priv, id: randomUUID() }, null), /当天已有步数/);
+      }
     }
     const bad = new NativeFolder(bin, {
       folder,
@@ -278,16 +287,17 @@ test(
     const replacement = new PhoneJournalModel(recoveryBridge);
     assert.deepEqual((await replacement.sync())!.issues, []);
     const recovered = await replacement.rows();
-    assert.equal(recovered.length, 1);
+    assert.equal(recovered.length, 3);
+    recovered.sort((a, b) => Number(b.record.id === id) - Number(a.record.id === id));
     assert.equal(recovered[0].record.text, '备份之后的修改');
     assert.deepEqual(recovered[0].record.photos, [ref]);
     assert.deepEqual(readFileSync(path.join(restoredPhone, 'photos', ref.hash + '.png')), png);
 
-    assert.equal(desktop.records().length, 1);
+    assert.equal(desktop.records().length, 3);
   },
 );
 
-test('selective shortcut migration preserves id, private photos, original order and pre-enrollment history', async (t) => {
+test('automatic shortcut and historical backfill preserves IDs, selected photos, prior revisions and tombstones', async (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'bodyjournal-select-'));
   t.after(() => rmSync(dir, { force: true, recursive: true }));
   const inbox = path.join(dir, 'legacy-inbox');
@@ -310,12 +320,16 @@ test('selective shortcut migration preserves id, private photos, original order 
   assert.equal(store.scanInbox().imported, 1);
   const replicas = store.deviceRecords;
   replicas.device = mac;
-  replicas.bind(archive);
   store.revise(legacy.id, { text: '第一次历史修改' }, 1);
-  replicas.enroll(legacy.id, 2, [0, 2, 3, 6]);
-  replicas.enroll(legacy.id, 2, [0, 1]);
+  replicas.bind(archive);
+  replicas.backfill();
+  replicas.backfill();
   assert.equal(replicas.get(legacy.id)!.ops.length, 1);
-  assert.equal(replicas.get(legacy.id)!.ops[0].record.photos.length, 4);
+  assert.deepEqual(replicas.get(legacy.id)!.ops[0].record.photos, []);
+  replicas.enroll(legacy.id, 2, [0, 2, 3, 6]);
+  replicas.enroll(legacy.id, 2, [0, 2, 3, 6]);
+  assert.equal(replicas.get(legacy.id)!.ops.length, 2);
+  assert.equal(heads(replicas.get(legacy.id)!)[0].record.photos.length, 4);
   assert.equal(store.scanInbox().imported, 0);
   assert.equal(store.records().length, 1);
   assert.equal(store.history(legacy.id).length, 1);
@@ -327,7 +341,7 @@ test('selective shortcut migration preserves id, private photos, original order 
   store.revise(legacy.id, { text: '再改一次' }, store.record(legacy.id).revision);
   store.undoRecord(legacy.id);
   assert.equal(heads(replicas.get(legacy.id)!)[0].record.text, '第一次历史修改');
-  assert.equal(replicas.get(legacy.id)!.ops.length, 3);
+  assert.equal(replicas.get(legacy.id)!.ops.length, 4);
   const steps = store.importEnvelope({
     ...legacy,
     kind: 'note',
@@ -336,9 +350,7 @@ test('selective shortcut migration preserves id, private photos, original order 
     attachments: [],
   }).record;
   assert.ok(steps.analysis?.dailyActivity);
-  assert.equal(replicas.info(steps.id).eligible, false);
-  assert.throws(() => replicas.enroll(steps.id, steps.revision, []));
-  assert.equal(replicas.get(steps.id), null);
+  assert.equal(replicas.get(steps.id)?.ops[0].record.text, steps.text);
   const body = store.importEnvelope({
     ...legacy,
     kind: 'body',
@@ -346,7 +358,10 @@ test('selective shortcut migration preserves id, private photos, original order 
     body: { weightKg: 70 },
     attachments: [],
   }).record;
-  assert.throws(() => replicas.enroll(body.id, body.revision, []));
+  assert.deepEqual(replicas.get(body.id)?.ops[0].record.body, { weightKg: 70 });
+  store.setRecordDeleted(body.id, true);
+  replicas.backfill();
+  assert.equal(heads(replicas.get(body.id)!)[0].record.deleted, true);
 });
 
 test('eight late photos are checked individually, other records progress and future-version packets survive retries', async (t) => {
@@ -378,7 +393,7 @@ test('eight late photos are checked individually, other records progress and fut
   const files = new Map<string, string>([
     ['op-' + change.id, JSON.stringify(change)],
     ['op-' + other.id, JSON.stringify(other)],
-    [future, '{"version":2}'],
+    [future, '{"version":3}'],
   ]);
   let capacity = 3;
   const folder = {
@@ -414,6 +429,119 @@ test('eight late photos are checked individually, other records progress and fut
     images.map((i) => i.photo.hash),
   );
   assert.equal(records.get(id)!.receipts.length, 2);
-  assert.equal(files.get(future), '{"version":2}');
+  assert.equal(files.get(future), '{"version":3}');
   assert.equal(s.records().length, 2);
+});
+
+test('upgrade seeds offline phone history once and resumes without sharing unselected photos or reviving trash', async () => {
+  let paired = false;
+  const rows = new Map<string, string>(),
+    files = new Map<string, string>();
+  const bridge: JournalBridge = {
+    async request<T>(args: Record<string, unknown>) {
+      const id = String(args.id),
+        data = args.args as { command: string; name: string; text: string } | undefined;
+      switch (args.method) {
+        case 'identity':
+          return { device: phone, archive: paired ? archive : undefined, enabled: paired } as T;
+        case 'row':
+          return { doc: rows.get(id) ?? null } as T;
+        case 'rows':
+          return { rows: [...rows.values()] } as T;
+        case 'save':
+          rows.set(id, String(args.doc));
+          return {} as T;
+        case 'folder':
+          if (data?.command === 'list') return { names: [...files.keys()] } as T;
+          if (data?.command === 'write') {
+            files.set(data.name, data.text);
+            return {} as T;
+          }
+      }
+      throw Error('unexpected test bridge operation');
+    },
+  };
+  const app = new PhoneJournalModel(bridge);
+  await app.save({ ...wire, photos: [ref] }, null);
+  await app.save({ ...wire, kind: 'steps', id: 'old-steps', steps: 3275, text: '' }, null);
+  await app.save({ ...wire, id: 'old-trash', deleted: true }, null);
+  assert.ok((await app.rows()).every((row) => !row.replica));
+  paired = true;
+  assert.deepEqual((await app.sync())?.issues, []);
+  assert.equal(files.size, 2);
+  const meal = (await app.rows()).find((r) => r.record.id === id)!;
+  assert.deepEqual(heads(meal.replica!)[0].record.photos, []);
+  assert.equal(meal.record.photos.length, 1);
+  await app.save({ ...meal.record, text: '晚到的离线修改' }, stamp(meal));
+  const restarted = new PhoneJournalModel(bridge);
+  await restarted.sync();
+  await restarted.sync();
+  assert.equal(files.size, 3);
+  assert.equal((await restarted.rows()).filter((r) => r.record.deleted && !r.replica).length, 1);
+});
+
+test('phone statistics match desktop estimates and atomically replace cached history after late months arrive', async (t) => {
+  const { publishInsights } = await import('../electron/core/phone-insights');
+  const { receiveInsights } = await import('../src/shared/phone-insights');
+  const dir = mkdtempSync(path.join(tmpdir(), 'bodyjournal-insights-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const store = new HealthStore(dir, new FoodCatalog([]), path.join(dir, 'inbox'), false);
+  t.after(() => store.close());
+  const first = new Date('2026-11-21T02:30:00+08:00'),
+    today = store.energy.today(first);
+  const old = store.importEnvelope({
+    version: 1,
+    id: 'older-measurement',
+    kind: 'body',
+    occurredAt: '2025-02-01T10:00:00+08:00',
+    timezone: 'Asia/Shanghai',
+    text: '',
+    body: { weightKg: 73 },
+  }).record;
+  store.energy.saveSteps(
+    { date: '2026-11-21', steps: 0, timezone: 'Asia/Shanghai', coverage: 'partial' },
+    first,
+  );
+  const data = new Map<string, string>(),
+    puts: string[] = [];
+  const folder = {
+    list: async () => [...data.keys()],
+    read: async (n: string) => {
+      if (!data.has(n)) throw Error('waiting for iCloud');
+      return data.get(n)!;
+    },
+    write: async (n: string, v: string) => {
+      data.set(n, v);
+      puts.push(n);
+    },
+    photo: async () => {},
+  };
+  const publish = (time: Date) =>
+    publishInsights(store, { archive, device: mac }, folder, [...data.keys()], time);
+  await publish(first);
+  const cache = await receiveInsights(archive, [...data.keys()], folder, null);
+  assert.ok(cache);
+  assert.equal(cache.manifest.today, today);
+  assert.equal(cache.manifest.civilToday, '2026-11-21');
+  assert.equal(cache.days.find((d) => d.date === '2025-02-01')!.weight, 73);
+  assert.equal(cache.days.find((d) => d.date === '2026-11-21')!.steps, 0);
+  const selected = store.energy.overview(first);
+  assert.deepEqual(cache.days.find((d) => d.date === today)!.intake, selected.days.at(-1)!.intake);
+  assert.deepEqual(cache.days.find((d) => d.date === today)!.balance, selected.balance);
+  const count = puts.length;
+  await publish(new Date(+first + 1000));
+  assert.equal(puts.length, count);
+  store.revise(old.id, { body: { weightKg: 75 } }, old.revision);
+  await publish(new Date(+first + 2000));
+  assert.equal(puts.length, count + 2);
+  const file = puts.at(-2)!,
+    bytes = data.get(file)!;
+  data.delete(file);
+  await assert.rejects(receiveInsights(archive, [...data.keys()], folder, cache), /waiting/);
+  assert.equal(cache.days.find((d) => d.date === '2025-02-01')!.weight, 73);
+  data.set(file, bytes);
+  const updated = await receiveInsights(archive, [...data.keys()], folder, cache);
+  assert.equal(updated!.days.find((d) => d.date === '2025-02-01')!.weight, 75);
+  assert.ok(!JSON.stringify(updated).includes(old.id));
+  assert.equal(await receiveInsights(archive, [...data.keys()], folder, updated), updated);
 });

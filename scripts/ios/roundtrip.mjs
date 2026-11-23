@@ -99,7 +99,6 @@ try {
   await iphone.getByRole('button', { name: '记一餐', exact: true }).click();
   await iphone.getByLabel('原文').fill(fixture.text);
   await iphone.getByRole('button', { name: /添加照片/ }).click();
-  await iphone.getByLabel('选入已配对的共享档案').check();
   await iphone.getByLabel('选入照片 1').check();
   await iphone.getByRole('button', { name: '保存到本机' }).click();
   await expect(iphone.locator('.entry-text')).toHaveText(fixture.text);
@@ -110,7 +109,7 @@ try {
   connected = true;
   await iphone.getByRole('button', { name: '返回', exact: true }).click();
   await iphone.getByRole('button', { name: /^同步/ }).click();
-  await iphone.getByRole('button', { name: '立即同步' }).click();
+  await iphone.evaluate(() => window.dispatchEvent(new Event('online')));
   await expect(iphone.getByText('最近一次检查')).toBeVisible();
   await expect.poll(() => readdirSync(shared).filter((f) => f.startsWith('op-')).length).toBe(1);
   await mac.getByRole('button', { name: '立即同步', exact: true }).click();
@@ -142,6 +141,19 @@ try {
   await expect(iphone.getByRole('button', { name: '查看照片 1' })).toBeVisible();
   if (process.env.BODYJOURNAL_SCREENSHOT)
     await iphone.screenshot({ path: process.env.BODYJOURNAL_SCREENSHOT });
+  await iphone.getByRole('button', { name: '返回', exact: true }).click();
+  await iphone.getByRole('button', { name: '全部记录', exact: true }).click();
+  await expect(iphone.locator('.entry')).toHaveCount(1);
+  await iphone.getByRole('button', { name: '能量', exact: true }).click();
+  await expect(iphone.getByRole('heading', { name: '已记录摄入' })).toBeVisible();
+  await expect(iphone.getByText(/1 餐记录，1 餐已估算/)).toBeVisible();
+  if (process.env.BODYJOURNAL_SCREENSHOT)
+    await iphone.screenshot({ path: process.env.BODYJOURNAL_SCREENSHOT.replace('.png', '-energy.png') });
+  await iphone.getByRole('button', { name: '趋势', exact: true }).click();
+  await iphone.getByLabel('趋势指标').selectOption('intake');
+  await expect(iphone.getByRole('img', { name: /摄入趋势/ })).toBeVisible();
+  if (process.env.BODYJOURNAL_SCREENSHOT)
+    await iphone.screenshot({ path: process.env.BODYJOURNAL_SCREENSHOT.replace('.png', '-trends.png') });
   const overflow = await iphone.evaluate(() => document.documentElement.scrollWidth > innerWidth);
   if (overflow || errors.length) throw Error('布局或脚本错误 ' + errors.join(' / '));
   console.log('五个录入入口已加载。手机离线选图保存、重开、Mac 食材编辑器修正、手机同条记录回读及照片通过。');

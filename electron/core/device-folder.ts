@@ -11,6 +11,8 @@ import {
   type SyncReport,
   type PhotoRef,
 } from '../../src/shared/device-sync';
+import { publishInsights } from './phone-insights';
+import { calendarDay } from '../../src/shared/dates';
 import { exchange, type ExchangeFolder } from '../../src/shared/device-exchange';
 
 type Prefs = { device: string; enabled: boolean; folder?: string; archive?: string };
@@ -61,6 +63,8 @@ export class MacDeviceSync {
   private running?: Promise<SyncSettings>;
   private timer?: ReturnType<typeof setTimeout>;
   private binding = false;
+  private insightStamp = '';
+  private requestedWhileRunning = false;
   constructor(
     private store: HealthStore,
     private file: string,
@@ -151,6 +155,10 @@ export class MacDeviceSync {
   }
   request(delay = 250) {
     if (!this.prefs.enabled || this.binding) return;
+    if (this.running) {
+      this.requestedWhileRunning = true;
+      return;
+    }
     clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       void this.sync().catch(() => {});
@@ -161,6 +169,10 @@ export class MacDeviceSync {
     if (!this.prefs.enabled || this.binding) return Promise.resolve(this.status());
     this.running = this.run().finally(() => {
       this.running = undefined;
+      if (this.requestedWhileRunning) {
+        this.requestedWhileRunning = false;
+        this.request();
+      }
     });
     return this.running;
   }
@@ -174,7 +186,24 @@ export class MacDeviceSync {
         { folder, code: await this.recovery(), local: path.join(this.store.root, 'attachments') },
         () => this.prefs.enabled,
       );
-      this.report = await exchange({ archive, device }, this.store.deviceRecords, dir);
+      this.store.deviceRecords.backfill();
+      const files = await dir.list();
+      this.report = await exchange({ archive, device }, this.store.deviceRecords, dir, files);
+      const now = new Date();
+      const stamp = [
+        archive,
+        this.store.db.prepare('SELECT total_changes() AS n').get()!.n,
+        this.store.energy.today(now),
+        calendarDay(now.toISOString(), this.store.getSettings().timezone),
+      ].join('/');
+      if (stamp !== this.insightStamp || !files.includes('overview-' + device)) {
+        try {
+          await publishInsights(this.store, { archive, device }, dir, files, now);
+          this.insightStamp = stamp;
+        } catch (e) {
+          this.report.issues.push('能量和趋势等待更新：' + (e instanceof Error ? e.message : String(e)));
+        }
+      }
     } catch (e) {
       this.report = {
         at: new Date().toISOString(),

@@ -9,6 +9,7 @@ on:
       - 'mobile/**'
       - 'src/mobile/**'
       - 'src/shared/device-*.ts'
+      - 'src/shared/phone-insights.ts'
       - 'src/ui/SyncConflict.tsx'
       - 'scripts/ios/**'
       - 'capacitor.config.json'

@@ -204,7 +204,7 @@ export class HealthStore {
     const r:HealthRecord={id:e.id,kind:e.kind,occurredAt:resolved?.occurredAt??e.occurredAt,capturedAt:e.occurredAt,dateLocked:e.dateLocked,...(resolved?{dateResolution:{originalAt:e.occurredAt,matchedText:resolved.matchedText,dateOnly:resolved.dateOnly}}:{}),...(recoveredTime&&!resolved?{timeSource:'file_modified' as const}:{}),timezone:e.timezone,text:e.text,attachments:prepared.map(p=>p.attachment),body,analysis:parsed.analysis,status:parsed.status,analysisPending:e.kind!=='body'&&(parsed.status!=='ready'||prepared.length>0),revision:1,createdAt:iso(),updatedAt:iso(),deleted:false,source};
     for(const p of prepared) atomicWrite(safePath(this.root,p.attachment.file),p.data);
     atomicWrite(path.join(this.root,'raw',`${e.id}.json`),JSON.stringify({...e,...(recoveredTime?{occurredAt:'',timeRecovery:{source:'file_modified',usedAt:recoveredTime}}:{}),attachments:r.attachments,imageBase64:undefined},null,2));
-    this.putRecord(r,fp);this.saveEpisode(r.text,r.occurredAt,{recordId:r.id,recordRevision:r.revision}); this.refreshAutomaticMemories(); return {record:r,duplicate:false};
+    this.transaction(()=>{this.putRecord(r,fp);this.deviceRecords.userChange(r);});this.saveEpisode(r.text,r.occurredAt,{recordId:r.id,recordRevision:r.revision}); this.refreshAutomaticMemories(); return {record:r,duplicate:false};
   }
   importMany(envelopes:unknown[],source='历史笔记'):HealthRecord[] {
     envelopes.forEach(e=>envelopeSchema.parse(e));
@@ -289,23 +289,31 @@ export class HealthStore {
       const base=r.analysis??{engine:'local' as const,at:iso(),summary:'已接收人工核对的餐食分量',assumptions:[],questions:[]};
       return {...base,ingredients,...this.catalog.calculate(ingredients)};
     };
+    const kind=wire.kind==='steps'?'note':wire.kind;
+    const body=kind==='body'?wire.body??null:null;
+    const activity=wire.kind==='steps'?{steps:wire.steps!,scope:'all' as const,coverage:wire.stepCoverage??'partial' as const,sourceApp:'iPhone 手动记录'}:null;
+    const stepAnalysis=activity?{engine:'local' as const,at:iso(),summary:`手动记录 ${activity.steps} 步`,questions:[],assumptions:[],dailyActivity:activity,
+      activityOverrides:{dailyActivity:activity}}:null;
     this.applyingDevice=true;
     try{
       if(!found){
-        const parsed=this.localStatus({kind:wire.kind,text:wire.text,body:null},wire.occurredAt);
-        const r:HealthRecord={id:wire.id,kind:wire.kind,text:wire.text,occurredAt:wire.occurredAt,timezone:wire.timezone,
-          dateLocked:true,body:null,attachments:incoming,...parsed,userPortions:wire.portions,deleted:wire.deleted,
-          revision:1,createdAt:iso(),updatedAt:iso(),source:'iPhone 双向同步',analysisPending:true};
+        const parsed=stepAnalysis?{analysis:stepAnalysis,status:'ready' as const}:this.localStatus({kind,text:wire.text,body},wire.occurredAt);
+        const r:HealthRecord={id:wire.id,kind,text:wire.text,occurredAt:wire.occurredAt,timezone:wire.timezone,
+          dateLocked:true,body,attachments:incoming,...parsed,userPortions:wire.portions,deleted:wire.deleted,
+          revision:1,createdAt:iso(),updatedAt:iso(),source:'iPhone 双向同步',analysisPending:kind!=='body'&&!activity};
         if(wire.portions.length)r.analysis=portionAnalysis(r);
-        atomicWrite(path.join(this.root,'raw',wire.id+'.json'),JSON.stringify({version:1,id:r.id,kind:r.kind,text:r.text,occurredAt:r.occurredAt,timezone:r.timezone,attachments:r.attachments}));
+        atomicWrite(path.join(this.root,'raw',wire.id+'.json'),JSON.stringify({version:1,id:r.id,kind:r.kind,text:r.text,occurredAt:r.occurredAt,timezone:r.timezone,body:wire.body,attachments:r.attachments}));
         this.putRecord(r,sha256('device-sync/'+r.id));
         if(!r.deleted)this.saveEpisode(r.text,r.occurredAt,{recordId:r.id,recordRevision:r.revision});
         this.refreshAutomaticMemories();
         return;
       }
       let r=parseJSON<HealthRecord>(found.doc);
-      if(r.text!==wire.text||r.occurredAt!==wire.occurredAt||r.deleted!==wire.deleted){
-        r=this.revise(r.id,{text:wire.text,occurredAt:wire.occurredAt,deleted:wire.deleted},r.revision);
+      if(r.text!==wire.text||r.occurredAt!==wire.occurredAt||r.deleted!==wire.deleted||(kind==='body'&&JSON.stringify(r.body)!==JSON.stringify(body))){
+        r=this.revise(r.id,{text:wire.text,occurredAt:wire.occurredAt,deleted:wire.deleted,...(kind==='body'?{body}: {})},r.revision);
+      }
+      if(stepAnalysis&&(r.analysis?.dailyActivity?.steps!==activity!.steps||r.analysis.dailyActivity.coverage!==activity!.coverage||r.status!=='ready')){
+        r=this.commitRevision(r,{...r,analysis:stepAnalysis,status:'ready',analysisPending:false});
       }
       // An enrolled Mac record can also contain photos the user kept private.
       const fromPhone=r.source==='iPhone 双向同步';

@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import type { BodyMeasurement } from './types';
 
 export function newDeviceUUID() {
   if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -32,7 +31,16 @@ const portionSchema = z.strictObject({
 export const syncRecordSchema = z
   .strictObject({
     id: recordId,
-    kind: z.enum(['meal', 'training', 'note']),
+    kind: z.enum(['meal', 'training', 'note', 'body', 'steps']),
+    body: z
+      .strictObject({
+        weightKg: z.number().min(10).max(500).optional(),
+        waistCm: z.number().min(20).max(300).optional(),
+        bodyFatPercent: z.number().gt(0).lt(100).optional(),
+      })
+      .optional(),
+    steps: z.number().int().min(0).max(100000).optional(),
+    stepCoverage: z.enum(['partial', 'full']).optional(),
     text: z.string().max(100000),
     occurredAt: z.iso.datetime({ offset: true }),
     timezone: z
@@ -51,14 +59,22 @@ export const syncRecordSchema = z
     photos: z.array(photoSchema).max(8),
     portions: z.array(portionSchema).max(40),
   })
-  .refine(
-    (r) => r.text.trim().length > 0 || r.photos.length > 0 || r.portions.length > 0,
-    '请填写可同步的文字或选入至少一张餐食照片',
+  .refine((r) => r.kind === 'body' || r.body === undefined)
+  .refine((r) =>
+    r.kind === 'steps' ? r.steps !== undefined : r.steps === undefined && r.stepCoverage === undefined,
   )
-  .refine((r) => r.kind === 'meal' || (!r.photos.length && !r.portions.length), '仅餐食可选入照片和食材分量');
+  .refine((r) => r.kind === 'meal' || (!r.photos.length && !r.portions.length), '仅餐食可共享照片和食材分量');
+export type PhotoRef = z.infer<typeof photoSchema>;
+export type Portion = z.infer<typeof portionSchema>;
+export type SyncRecord = z.infer<typeof syncRecordSchema>;
+// Local records may also contain photos that never enter the encrypted exchange.
+export type PhoneRecord = SyncRecord;
+function supportsOriginalFormat(r: SyncRecord) {
+  return r.kind !== 'steps' && r.kind !== 'body' && !!(r.text.trim() || r.photos.length || r.portions.length);
+}
 export const operationSchema = z
   .strictObject({
-    version: z.literal(1),
+    version: z.union([z.literal(1), z.literal(2)]),
     archive: deviceId,
     id: deviceId,
     device: deviceId,
@@ -66,16 +82,9 @@ export const operationSchema = z
     action: z.enum(['create', 'edit', 'delete', 'restore', 'merge']),
     record: syncRecordSchema,
   })
+  .refine((o) => o.version === 2 || supportsOriginalFormat(o.record))
   .refine((o) => new Set(o.parents).size === o.parents.length && !o.parents.includes(o.id));
-export type PhotoRef = z.infer<typeof photoSchema>;
-export type Portion = z.infer<typeof portionSchema>;
-export type SyncRecord = z.infer<typeof syncRecordSchema>;
 export type Operation = z.infer<typeof operationSchema>;
-export type PhoneRecord = Omit<SyncRecord, 'kind'> & {
-  kind: SyncRecord['kind'] | 'body' | 'steps';
-  body?: BodyMeasurement;
-  steps?: number;
-};
 export type Replica = { ops: Operation[]; written: string[]; acknowledged: string[]; receipts: string[] };
 export const emptyReplica = (): Replica => ({ ops: [], written: [], acknowledged: [], receipts: [] });
 export type Identity = { archive: string; device: string };
@@ -129,7 +138,7 @@ export function addOperation(state: Replica, input: Operation, archive: string):
           : prior.deleted !== op.record.deleted
     )
       throw Error('删除或恢复操作不匹配');
-    if (JSON.stringify(prior.photos) !== JSON.stringify(op.record.photos))
+    if (op.version === 1 && JSON.stringify(prior.photos) !== JSON.stringify(op.record.photos))
       throw Error('选入的照片清单发生变化');
   }
   return { ...state, ops: [...state.ops, op] };
@@ -157,7 +166,18 @@ export function appendLocal(state: Replica, record: SyncRecord, identity: Identi
           : 'restore';
   const next = addOperation(
     state,
-    { version: 1, ...identity, id: newDeviceUUID(), parents: tips.map((t) => t.id), action, record: clean },
+    {
+      version:
+        supportsOriginalFormat(clean) &&
+        (!previous || JSON.stringify(previous.photos) === JSON.stringify(clean.photos))
+          ? 1
+          : 2,
+      ...identity,
+      id: newDeviceUUID(),
+      parents: tips.map((t) => t.id),
+      action,
+      record: clean,
+    },
     identity.archive,
   );
   if (next === 'waiting') throw Error('缺少本地版本');

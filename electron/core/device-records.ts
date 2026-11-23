@@ -60,10 +60,17 @@ export function applyPortions(items: Ingredient[], before: Portion[], after: Por
   });
   return [...previous.filter((i) => !before.some((p) => p.name === i.name)), ...confirmed];
 }
-function visible(r: HealthRecord, photos: PhotoRef[]): SyncRecord {
+function visible(r: HealthRecord, photos: PhotoRef[], prior?: SyncRecord): SyncRecord {
   return syncRecordSchema.parse({
     id: r.id,
-    kind: r.kind,
+    kind: prior?.kind === 'steps' ? 'steps' : r.kind,
+    ...(r.kind === 'body' && r.body ? { body: r.body } : {}),
+    ...(prior?.kind === 'steps'
+      ? {
+          steps: r.analysis?.dailyActivity?.steps ?? prior.steps,
+          stepCoverage: r.analysis?.dailyActivity?.coverage ?? prior.stepCoverage,
+        }
+      : {}),
     text: r.text,
     occurredAt: r.occurredAt,
     timezone: r.timezone,
@@ -122,35 +129,53 @@ export class MacReplicas implements ReplicaStore {
       replica,
       photos,
       missing,
-      eligible: r.kind !== 'body' && !r.analysis?.dailyActivity,
+      eligible: true,
     };
   }
   enroll(id: string, revision: number, indices: number[]) {
     if (!this.archive) throw Error('请先在「连接与数据」配对共享文件夹。');
     return this.store.transaction(() => {
       const r = this.store.record(id);
-      if (this.get(id)) return;
-      if (r.revision !== revision) throw Error('记录已更新，请重新预览后选入。');
+      if (r.revision !== revision) throw Error('记录已更新，请重新打开后选择照片。');
       const info = this.info(id);
-      if (!info.eligible || indices.some((i) => !info.photos[i])) throw Error('记录或照片不在可选范围。');
-      const photos = info.photos.filter((_, i) => indices.includes(i));
-      this.put(
-        id,
-        appendLocal(emptyReplica(), visible(r, photos), { archive: this.archive!, device: this.device }),
-      );
+      if (indices.some((i) => !info.photos[i])) throw Error('请重新选择餐食照片。');
+      const replica = info.replica ?? emptyReplica(),
+        prior = heads(replica)[0]?.record;
+      const existing = prior?.photos ?? [];
+      const photos = [
+        ...existing,
+        ...info.photos.filter((p, i) => indices.includes(i) && !existing.some((old) => old.hash === p.hash)),
+      ];
+      const next = appendLocal(replica, visible(r, photos, prior), {
+        archive: this.archive!,
+        device: this.device,
+      });
+      if (next !== replica) this.put(id, next);
+    });
+  }
+  backfill() {
+    if (!this.archive) return;
+    const rows = this.store.db
+      .prepare(
+        `SELECT r.doc FROM records r LEFT JOIN device_records d ON d.id=r.id
+      WHERE d.id IS NULL AND COALESCE(json_extract(r.doc,'$.deleted'),0)=0`,
+      )
+      .all();
+    this.store.transaction(() => {
+      for (const row of rows) this.userChange(JSON.parse(String(row.doc)));
     });
   }
   userChange(r: HealthRecord) {
-    const replica = this.get(r.id);
-    if (!replica) return;
-    const current = heads(replica)[0];
-    this.put(
-      r.id,
-      appendLocal(replica, visible(r, current.record.photos), {
-        archive: current.archive,
-        device: this.device,
-      }),
-    );
+    const archive = this.archive;
+    if (!archive) return;
+    const replica = this.get(r.id) ?? emptyReplica();
+    if (r.deleted && !replica.ops.length) return;
+    const prior = heads(replica)[0]?.record;
+    const next = appendLocal(replica, visible(r, prior?.photos ?? [], prior), {
+      archive,
+      device: this.device,
+    });
+    if (replica !== next) this.put(r.id, next);
   }
   async accept(op: Operation) {
     return this.store.transaction(() => {

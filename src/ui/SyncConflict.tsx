@@ -19,7 +19,7 @@ export function SyncConflict({
   return (
     <section className="sync-conflict">
       <h3>两端都改过这条记录</h3>
-      <p>选定要保留的时间、分量和删除状态，也可以合并文字。</p>
+      <p>选定要保留的版本，也可以合并文字。</p>
       {tips.map((op) => (
         <label key={op.id}>
           <input
@@ -39,6 +39,22 @@ export function SyncConflict({
             {new Date(op.record.occurredAt).toLocaleString('zh-CN', { timeZone: op.record.timezone })}
             <br />
             {op.record.text}
+            {op.record.steps !== undefined && (
+              <small>
+                {op.record.steps} 步 · {op.record.stepCoverage === 'full' ? '全天' : '截至记录时'}
+              </small>
+            )}
+            {op.record.body && (
+              <small>
+                {[
+                  op.record.body.weightKg && op.record.body.weightKg + ' kg',
+                  op.record.body.waistCm && op.record.body.waistCm + ' cm',
+                  op.record.body.bodyFatPercent && op.record.body.bodyFatPercent + '%',
+                ]
+                  .filter(Boolean)
+                  .join(' / ')}
+              </small>
+            )}
             {op.record.portions.map((p, i) => (
               <small key={i}>{portionLabel(p)}</small>
             ))}

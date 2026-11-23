@@ -12,6 +12,8 @@ import {
   StickyNote,
   ImagePlus,
   FolderSync,
+  Activity,
+  TrendingUp,
   BookOpen,
   Trash2,
 } from 'lucide-react';
@@ -28,6 +30,8 @@ import {
 } from '../shared/device-sync';
 import { SyncConflict } from '../ui/SyncConflict';
 import { PhoneJournalModel, stamp, type PhoneIdentity, type Row } from './journal';
+import { InsightPage } from './PhoneInsights';
+import type { PhoneInsights } from '../shared/phone-insights';
 import './phone.css';
 
 const model = new PhoneJournalModel();
@@ -51,7 +55,7 @@ function localValue(r: PhoneRecord) {
         ]
           .filter(Boolean)
           .join(' / ') ||
-        r.photos.length + ' 张照片';
+        (r.photos.length ? r.photos.length + ' 张照片' : '无文字记录');
 }
 function photoKey(p: PhotoRef, i: number) {
   return p.hash + '-' + i;
@@ -116,10 +120,12 @@ function PhonePhoto({
 function PhotoConsent({
   r,
   selected,
+  shared,
   set,
 }: {
   r: PhoneRecord;
   selected: number[];
+  shared: PhotoRef[];
   set: (v: number[]) => void;
 }) {
   if (r.kind !== 'meal' || !r.photos.length) return null;
@@ -129,7 +135,8 @@ function PhotoConsent({
         <label key={photoKey(p, i)}>
           <input
             type="checkbox"
-            checked={selected.includes(i)}
+            disabled={shared.some((old) => old.hash === p.hash)}
+            checked={selected.includes(i) || shared.some((old) => old.hash === p.hash)}
             onChange={(e) => set(e.target.checked ? [...selected, i] : selected.filter((n) => n !== i))}
           />
           选入照片 {i + 1}
@@ -153,11 +160,9 @@ function Editor({
 }) {
   const [r, set] = useState<PhoneRecord>(() => structuredClone(original)),
     [time, setTime] = useState(fieldTime(original));
-  const [share, setShare] = useState(false),
-    [photos, select] = useState<number[]>([]),
+  const [photos, select] = useState<number[]>([]),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
-  const localOnly = r.kind === 'body' || r.kind === 'steps';
   const update = (v: Partial<PhoneRecord>) => set((current) => ({ ...current, ...v }));
   const save = async () => {
     setBusy(true);
@@ -168,13 +173,7 @@ function Editor({
           ? original.occurredAt
           : atTime(time.slice(0, 10), Number(time.slice(11, 13)), Number(time.slice(14, 16)), r.timezone);
       if (!instant) throw Error('请核对发生时间。');
-      saved(
-        await model.save(
-          { ...r, occurredAt: instant },
-          base ? stamp(base) : null,
-          share ? photos : undefined,
-        ),
-      );
+      saved(await model.save({ ...r, occurredAt: instant }, base ? stamp(base) : null, photos));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -215,6 +214,18 @@ function Editor({
                 }
               />
               <small>按 {r.timezone} 的自然日归属。</small>
+            </label>
+          )}
+          {r.kind === 'steps' && (
+            <label>
+              步数覆盖范围
+              <select
+                value={r.stepCoverage ?? 'partial'}
+                onChange={(e) => update({ stepCoverage: e.target.value as 'partial' | 'full' })}
+              >
+                <option value="partial">截至记录时</option>
+                <option value="full">全天总数</option>
+              </select>
             </label>
           )}
           {r.kind === 'body' && (
@@ -296,24 +307,16 @@ function Editor({
               添加照片（{r.photos.length}/8）
             </button>
           )}
-          {localOnly ? (
-            <p className="muted">这条{r.kind === 'steps' ? '步数' : '身体'}记录仅存本机。</p>
-          ) : (
-            id.archive &&
-            !base?.replica && (
-              <div className="share-choice">
-                <label>
-                  <input type="checkbox" checked={share} onChange={(e) => setShare(e.target.checked)} />
-                  选入已配对的共享档案
-                </label>
-                {share && (
-                  <>
-                    <small>发送原文、发生时间、类别和人工分量。请核对上方内容。</small>
-                    <PhotoConsent r={r} selected={photos} set={select} />
-                  </>
-                )}
-              </div>
-            )
+          {id.archive && (
+            <div className="share-choice">
+              <small>{id.enabled ? '保存后自动同步。' : '同步已暂停，恢复后会自动发送。'}</small>
+              <PhotoConsent
+                r={r}
+                selected={photos}
+                set={select}
+                shared={base?.replica ? heads(base.replica)[0].record.photos : []}
+              />
+            </div>
           )}
           {error && <p role="alert">{error}</p>}
           <button type="submit" className="primary" disabled={busy}>
@@ -463,7 +466,9 @@ function Pairing({
           ))}
         </section>
       )}
-      <p className="muted">身体测量、步数和运动截图保存在这部 iPhone。已选入的餐食照片在离开本机前加密。</p>
+      <p className="muted">
+        配对后自动补齐历史，并同步新增、修改和删除的记录。餐食照片可逐张共享，其他照片保存在原设备。
+      </p>
     </main>
   );
 }
@@ -472,14 +477,18 @@ export function PhoneJournal() {
     [rows, setRows] = useState<Row[]>([]),
     [report, setReport] = useState<SyncReport>(),
     [error, setError] = useState('');
-  const [page, setPage] = useState<'journal' | 'sync'>('journal'),
+  const [page, setPage] = useState<'journal' | 'energy' | 'trends' | 'sync'>('journal'),
+    [view, setView] = useState<PhoneInsights | null>(null),
+    [allDates, showAll] = useState(false),
+    [limit, setLimit] = useState(50),
     [selected, setSelected] = useState<string>(),
     [editor, setEditor] = useState<{ r: PhoneRecord; base: Row | null }>();
   const [date, setDate] = useState(journalDay(new Date().toISOString(), zone())),
     [trash, setTrash] = useState(false),
     [notice, setNotice] = useState('');
   const reload = async () => {
-    const [id, list] = await Promise.all([model.identity(), model.rows()]);
+    const [id, list, insights] = await Promise.all([model.identity(), model.rows(), model.insights()]);
+    setView(insights?.manifest.archive === id.archive ? insights : null);
     setId(id);
     setRows(list);
   };
@@ -516,7 +525,7 @@ export function PhoneJournal() {
   };
   const row = rows.find((r) => r.record.id === selected),
     r = row?.record;
-  const eligible = row && !row.replica && identity?.archive && r?.kind !== 'body' && r?.kind !== 'steps';
+
   const create = (kind: PhoneRecord['kind']) => {
     const now = new Date().toISOString(),
       tz = zone();
@@ -549,7 +558,7 @@ export function PhoneJournal() {
       </div>
     );
   const visible = rows
-    .filter((v) => v.record.deleted === trash && (trash || dayOf(v.record) === date))
+    .filter((v) => v.record.deleted === trash && (trash || allDates || dayOf(v.record) === date))
     .sort((a, b) => Date.parse(b.record.occurredAt) - Date.parse(a.record.occurredAt));
   const detail = !!row && !!r;
   return (
@@ -617,7 +626,7 @@ export function PhoneJournal() {
           )}
           <div className="actions">
             <button className="secondary" onClick={() => setEditor({ r, base: row })}>
-              {eligible ? '修改或选入同步' : '修改记录'}
+              修改记录
             </button>
             <button
               className="text"
@@ -633,6 +642,19 @@ export function PhoneJournal() {
             </button>
           </div>
         </main>
+      ) : page === 'energy' || page === 'trends' ? (
+        <InsightPage
+          page={page}
+          view={view}
+          paired={!!identity.archive}
+          connect={() => setPage('sync')}
+          openDay={(d) => {
+            setDate(d);
+            showAll(false);
+            setTrash(false);
+            setPage('journal');
+          }}
+        />
       ) : page === 'sync' ? (
         <Pairing id={identity} report={report} refresh={reload} sync={sync} rows={rows} open={setSelected} />
       ) : (
@@ -667,6 +689,22 @@ export function PhoneJournal() {
               </button>
             </div>
             {!trash && (
+              <div className="period-control" aria-label="记录时间范围">
+                <button aria-pressed={!allDates} onClick={() => showAll(false)}>
+                  按日期
+                </button>
+                <button
+                  aria-pressed={allDates}
+                  onClick={() => {
+                    showAll(true);
+                    setLimit(50);
+                  }}
+                >
+                  全部记录
+                </button>
+              </div>
+            )}
+            {!trash && !allDates && (
               <div className="day-nav">
                 <button aria-label="上一天" onClick={() => setDate(addCalendarDays(date, -1))}>
                   <ChevronLeft />
@@ -684,7 +722,7 @@ export function PhoneJournal() {
                 </button>
               </div>
             )}
-            {visible.map((v) => {
+            {visible.slice(0, allDates && !trash ? limit : undefined).map((v) => {
               const entry = v.record;
               return (
                 <button
@@ -695,7 +733,7 @@ export function PhoneJournal() {
                     setNotice('');
                   }}
                 >
-                  <time>{trash ? dayOf(entry) : fieldTime(entry).slice(-5)}</time>
+                  <time>{trash || allDates ? dayOf(entry) : fieldTime(entry).slice(-5)}</time>
                   <span>
                     <small>
                       {kinds[entry.kind]} · {deliveryLabel(v.replica, identity.device)}
@@ -706,9 +744,18 @@ export function PhoneJournal() {
                 </button>
               );
             })}
+            {allDates && !trash && visible.length > limit && (
+              <button className="line-button" onClick={() => setLimit((n) => n + 50)}>
+                显示更早的记录
+              </button>
+            )}
             {!visible.length && (
               <p className="empty">
-                {trash ? '还没有删除的记录。' : '这一天还没有记录。可从上方记下第一笔。'}
+                {trash
+                  ? '还没有删除的记录。'
+                  : allDates
+                    ? '还没有收到记录。配对后历史记录会自动出现。'
+                    : '这一天还没有记录。选「全部记录」可以查看其他日期。'}
               </p>
             )}
           </section>
@@ -730,6 +777,14 @@ export function PhoneJournal() {
           <button aria-current={page === 'journal' ? 'page' : undefined} onClick={() => setPage('journal')}>
             <BookOpen />
             手记
+          </button>
+          <button aria-current={page === 'energy' ? 'page' : undefined} onClick={() => setPage('energy')}>
+            <Activity />
+            能量
+          </button>
+          <button aria-current={page === 'trends' ? 'page' : undefined} onClick={() => setPage('trends')}>
+            <TrendingUp />
+            趋势
           </button>
           <button aria-current={page === 'sync' ? 'page' : undefined} onClick={() => setPage('sync')}>
             <FolderSync />

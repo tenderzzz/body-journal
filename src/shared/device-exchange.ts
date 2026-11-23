@@ -27,11 +27,12 @@ export async function exchange(
   id: Identity,
   store: ReplicaStore,
   folder: ExchangeFolder,
+  listing?: string[],
 ): Promise<SyncReport> {
   const report: SyncReport = { at: new Date().toISOString(), changed: 0, waiting: 0, issues: [] };
   const issues = new Set<string>();
   const issue = (e: unknown) => issues.add(e instanceof Error ? e.message : String(e));
-  const files = await folder.list();
+  const files = listing ?? (await folder.list());
   let replicas = await store.replicas();
   const known = new Map(replicas.flatMap((r) => r.ops.map((op) => [op.id, op] as const)));
   const pending: Operation[] = [];
@@ -40,7 +41,7 @@ export async function exchange(
     if (!match || known.has(match[1])) continue;
     try {
       const input = JSON.parse(await folder.read(file));
-      if (input.version !== 1) throw Error('发现新版变更，升级两端后点「立即同步」。');
+      if (input.version !== 1 && input.version !== 2) throw Error('发现新版变更，升级两端后点「立即同步」。');
       const op = operationSchema.parse(input);
       if (op.id !== match[1] || op.archive !== id.archive) throw Error('共享变更与文件编号或档案不一致。');
       pending.push(op);
