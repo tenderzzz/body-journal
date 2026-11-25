@@ -1,4 +1,7 @@
+import {parseAnalysisOutput,finishRecordAnalysis,withActivityOverrides} from './record-analysis';
 import {MacReplicas,confirmedPortions,editedPortions,applyPortions} from './device-records';
+import {historyResult,type HistoryResult} from '../../src/shared/personal-library';
+import {detailOf} from '../../src/shared/record-detail';
 import type {SyncRecord} from '../../src/shared/device-sync';
 import {isPersonalEvidence} from './memory-evidence';
 import {recordCardio} from '../../src/shared/cardio';
@@ -24,7 +27,6 @@ import { foodPer100g, foodText, matchFoodPreset, normalizeFoodName,prepareMealIn
 import { mealLabel, mealSlot } from '../../src/shared/meals';
 import { DEFAULT_COACH, weeklyContext } from './coaching';
 import { EnergyStore } from './energy-store';
-import {normalizeModelOutput} from '../ai/model-output';
 import {detectTrainingNotation,mergeTrainingNotation,type TrainingNotation} from './training-notation';
 import {memoryTopic,memoryRevision,memoryDependency,selectMemories,type MemoryPurpose} from './memory';
 import {createRecordIndex,queryPeriod,periodBounds,queryKind,episodeFrom,topicOf,temporalScope,sanitizeSource,memoryEvidenceSources,habitFamiliarity,RECALL_VERSION,type Episode} from './recall';
@@ -43,18 +45,6 @@ export function sniffImage(data:Buffer):string {
 }
 function parseJSON<T>(s:unknown):T { return JSON.parse(String(s)) as T; }
 function iso() { return new Date().toISOString(); }
-// Model output cannot replace user corrections, including fields explicitly cleared.
-function withActivityOverrides<T extends Pick<Analysis,'run'|'training'|'dailyActivity'|'activityOverrides'>>(analysis:T,overrides:Analysis['activityOverrides']):T {
-  const next={...analysis,activityOverrides:overrides};
-  for(const group of ['run','training','dailyActivity'] as const){
-    if(overrides?.[group])Object.assign(next,{[group]:{...next[group],...overrides[group]}});
-  }
-  for(const field of overrides?.cleared??[]){
-    const [group,key]=field.split('.');
-    if(['run','training','dailyActivity'].includes(group)&&key){const object=next[group as 'run'] as Record<string,unknown>|undefined;if(object)delete object[key];}
-  }
-  return next;
-}
 const recordProgressSchema=z.object({analysisPending:z.boolean().optional(),analysisError:z.string().max(2000).optional(),analysisAttemptedRevision:z.number().int().positive().optional(),followups:z.array(z.object({answer:z.string().min(1).max(10000),questions:z.array(z.string().max(500)).max(2),at:z.iso.datetime({offset:true}),previousAnalysis:analysisSchema.partial().optional()})).max(30).optional()});
 class MemoryCandidateError extends Error {}
 export class HealthStore {
@@ -86,6 +76,7 @@ export class HealthStore {
     // A crashed request is never presented as a completed answer or forgotten spend.
     this.db.prepare("UPDATE usage SET state='uncertain' WHERE state='reserved'").run();
     for(const m of this.messages()) if(m.status==='streaming') this.putMessage({...m,status:'failed',error:'上次请求被中断，请重新提问。'});
+    if(!this.getConfig('deviceDetailSince'))this.setConfig('deviceDetailSince',iso());
     if(version===1)this.backup(path.join(root,'backups',`before-energy-v2-${Date.now()}.bodyjournal`));
     this.energy=new EnergyStore(this);
     if(version===2)this.backup(path.join(root,'backups',`before-activity-v3-${Date.now()}.bodyjournal`));
@@ -271,14 +262,14 @@ export class HealthStore {
     return this.commitRevision(old,updated,{userEdit:true});
   }
   private commitRevision(old:HealthRecord,updated:HealthRecord,options?:{skipInvalidate?:string[];preserveStrength?:boolean;userEdit?:boolean}):HealthRecord {
-    const normalized=updated.analysis?withActivityOverrides(normalizeAnalysis(updated.analysis,updated.text,this.exerciseAliases(),this.exerciseRules()),updated.analysis.activityOverrides):updated.analysis;
+    const normalized=this.applyingDevice?updated.analysis:updated.analysis?withActivityOverrides(normalizeAnalysis(updated.analysis,updated.text,this.exerciseAliases(),this.exerciseRules()),updated.analysis.activityOverrides):updated.analysis;
     const analysis=normalized&&options?.preserveStrength?{...normalized,sets:updated.analysis!.sets,training:updated.analysis!.training}:normalized;
     const next={...updated,analysis,revision:old.revision+1,updatedAt:iso()};
-    const result=this.transaction(()=>{ this.db.prepare('INSERT INTO revisions(entity,id,doc,at) VALUES(?,?,?,?)').run('record',old.id,JSON.stringify(old),iso()); this.putRecord(next); if(options?.userEdit&&!this.applyingDevice)this.deviceRecords.userChange(next); this.invalidate(old.id,new Set(options?.skipInvalidate??[])); return next; });
+    const result=this.transaction(()=>{ this.db.prepare('INSERT INTO revisions(entity,id,doc,at) VALUES(?,?,?,?)').run('record',old.id,JSON.stringify(old),iso()); this.putRecord(next); if(!this.applyingDevice&&(options?.userEdit||this.deviceRecords.get(old.id)?.ops.some(o=>o.record.detail)||this.getConfig('personalLibraryEnabled')))this.deviceRecords.userChange(next); this.invalidate(old.id,new Set(options?.skipInvalidate??[])); return next; });
     this.db.prepare("DELETE FROM memory_episodes WHERE json_extract(doc,'$.recordId')=?").run(old.id);if(!updated.deleted)this.saveEpisode(updated.text,updated.occurredAt,{recordId:old.id,recordRevision:next.revision});
     this.refreshAutomaticMemories(); return result;
   }
-  applyDeviceRecord(wire:SyncRecord,previous?:SyncRecord){
+  applyDeviceRecord(wire:SyncRecord,previous?:SyncRecord,hydrating=false){
     const found=this.db.prepare('SELECT doc FROM records WHERE id=?').get(wire.id);
     const incoming=wire.photos.flatMap((p,index)=>{
       const file='attachments/'+wire.id+'/'+p.hash+'.'+p.mime.split('/')[1];
@@ -294,6 +285,8 @@ export class HealthStore {
     const activity=wire.kind==='steps'?{steps:wire.steps!,scope:'all' as const,coverage:wire.stepCoverage??'partial' as const,sourceApp:'iPhone 手动记录'}:null;
     const stepAnalysis=activity?{engine:'local' as const,at:iso(),summary:`手动记录 ${activity.steps} 步`,questions:[],assumptions:[],dailyActivity:activity,
       activityOverrides:{dailyActivity:activity}}:null;
+    const detail=hydrating&&found?undefined:wire.detail;
+    const received=detail?{analysis:detail.analysis,status:detail.status,followups:detail.followups,analysisPending:detail.pending,dishId:detail.dishId,analysisError:undefined}:{};
     this.applyingDevice=true;
     try{
       if(!found){
@@ -301,7 +294,8 @@ export class HealthStore {
         const r:HealthRecord={id:wire.id,kind,text:wire.text,occurredAt:wire.occurredAt,timezone:wire.timezone,
           dateLocked:true,body,attachments:incoming,...parsed,userPortions:wire.portions,deleted:wire.deleted,
           revision:1,createdAt:iso(),updatedAt:iso(),source:'iPhone 双向同步',analysisPending:kind!=='body'&&!activity};
-        if(wire.portions.length)r.analysis=portionAnalysis(r);
+        if(detail)Object.assign(r,received,{createdAt:detail.createdAt,updatedAt:detail.updatedAt,revision:detail.revision});
+        else if(wire.portions.length)r.analysis=portionAnalysis(r);
         atomicWrite(path.join(this.root,'raw',wire.id+'.json'),JSON.stringify({version:1,id:r.id,kind:r.kind,text:r.text,occurredAt:r.occurredAt,timezone:r.timezone,body:wire.body,attachments:r.attachments}));
         this.putRecord(r,sha256('device-sync/'+r.id));
         if(!r.deleted)this.saveEpisode(r.text,r.occurredAt,{recordId:r.id,recordRevision:r.revision});
@@ -309,10 +303,10 @@ export class HealthStore {
         return;
       }
       let r=parseJSON<HealthRecord>(found.doc);
-      if(r.text!==wire.text||r.occurredAt!==wire.occurredAt||r.deleted!==wire.deleted||(kind==='body'&&JSON.stringify(r.body)!==JSON.stringify(body))){
+      if(!hydrating&&(r.text!==wire.text||r.occurredAt!==wire.occurredAt||r.deleted!==wire.deleted||(kind==='body'&&JSON.stringify(r.body)!==JSON.stringify(body)))){
         r=this.revise(r.id,{text:wire.text,occurredAt:wire.occurredAt,deleted:wire.deleted,...(kind==='body'?{body}: {})},r.revision);
       }
-      if(stepAnalysis&&(r.analysis?.dailyActivity?.steps!==activity!.steps||r.analysis.dailyActivity.coverage!==activity!.coverage||r.status!=='ready')){
+      if(!hydrating&&stepAnalysis&&(r.analysis?.dailyActivity?.steps!==activity!.steps||r.analysis.dailyActivity.coverage!==activity!.coverage||r.status!=='ready')){
         r=this.commitRevision(r,{...r,analysis:stepAnalysis,status:'ready',analysisPending:false});
       }
       // An enrolled Mac record can also contain photos the user kept private.
@@ -326,40 +320,28 @@ export class HealthStore {
         }
       }
       const changedPhotos=JSON.stringify(attachments)!==JSON.stringify(r.attachments);
-      const changedPortions=JSON.stringify(confirmedPortions(r))!==JSON.stringify(wire.portions);
-      if(changedPhotos||changedPortions||wire.timezone!==r.timezone){
+      const changedPortions=!hydrating&&JSON.stringify(confirmedPortions(r))!==JSON.stringify(wire.portions);
+      const localDetail=detail?detailOf(r):undefined;
+      const detailChanged=detail && localDetail && JSON.stringify({...localDetail,revision:detail.revision,createdAt:detail.createdAt,updatedAt:detail.updatedAt})!==JSON.stringify(detail);
+      if(changedPhotos||changedPortions||detailChanged||wire.timezone!==r.timezone){
         this.commitRevision(r,{...r,timezone:wire.timezone,attachments,userPortions:wire.portions,...(changedPortions?{analysis:portionAnalysis(r)}:{}),
-          analysisPending:changedPhotos||r.analysisPending});
+          analysisPending:(changedPhotos&&!wire.detail)||r.analysisPending,...received});
       }
     }finally{this.applyingDevice=false;}
   }
   undoRecord(id:string) { const old=this.record(id); const row=this.db.prepare("SELECT doc FROM revisions WHERE entity='record' AND id=? ORDER BY seq DESC LIMIT 1").get(id); if(!row) throw new Error('这条记录还没有可撤销的修改'); const prior=parseJSON<HealthRecord>(row.doc);return this.commitRevision(old,{...prior,dateLocked:old.occurredAt!==prior.occurredAt?true:prior.dateLocked},{userEdit:true}); }
+  keepAnalysisHistory(original:HealthRecord,value:unknown,engine:Analysis['engine'],modelRun:ModelRun){
+    const {a}=parseAnalysisOutput(original,value,engine);a.memoryChanges=[];
+    const {analysis}=finishRecordAnalysis(this,original,a,engine,false,modelRun);
+    const item=historyResult.parse({id:randomUUID(),record:original.id,revision:original.revision,at:analysis.at,analysis});
+    this.setConfig('recordAnalysisHistory',[...(this.getConfig<HistoryResult[]>('recordAnalysisHistory')??[]),item]);
+  }
   applyAnalysis(id:string,value:unknown,engine:Analysis['engine'],expectedRevision:number,manualMeal=false,modelRun?:ModelRun):HealthRecord {
     return this.transaction(()=>this.applyAnalysisAtomic(id,value,engine,expectedRevision,manualMeal,modelRun));
   }
   private applyAnalysisAtomic(id:string,value:unknown,engine:Analysis['engine'],expectedRevision:number,manualMeal=false,modelRun?:ModelRun):HealthRecord {
     const old=this.record(id); if(old.revision!==expectedRevision) throw new Error('分析期间记录已修改，本次结果未覆盖新内容，请重新分析。'); if(old.deleted) throw new Error('记录已删除');
-    // Earlier meal prompts requested only the source id for an identical meal.
-    // Supply the display text locally for that response; ordinary analyses still
-    // require their summary, and source/ingredient validation below stays intact.
-    const normalized=engine==='local'?{value,memoryWarnings:[] as string[]}:normalizeModelOutput(value,'analysis');
-    value=normalized.value;
-    const result=value&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:undefined;
-    const copyResult=old.kind==='meal'&&result?.summary===undefined&&typeof result?.copyFromRecordId==='string';
-    let a=withActivityOverrides(analysisSchema.parse(copyResult?{...result,summary:'按历史同款餐食复用'}:value),old.analysis?.activityOverrides);
-    if(engine!=='local'){
-      a={...a,memoryWarnings:normalized.memoryWarnings};
-      if(a.sets){
-        const source=[old.text,...(old.followups??[]).map(f=>f.answer)].join('\n');
-        const sourceSets=old.attachments.length?[]:parseTraining(source)?.sets??[];
-        a.sets=a.sets.map(set=>{
-          const named=sourceSets.filter(s=>s.exercise===set.exercise||s.originalExercise===set.exercise||s.originalExercise===set.originalExercise&&!!set.originalExercise);
-          const missingWeight=named.length>0&&named.every(s=>s.kg===null)&&!/(?:kg|公斤|千克|磅|lb|斤)/i.test(source);
-          return {...set,...(set.loadBasis==='unknown'?{basisSource:'unresolved',confirmed:false}:{}),
-            ...(missingWeight&&set.kg!==null?{kg:null,confirmed:false}:{})};
-        });
-      }
-    }
+    let {a,normalized}=parseAnalysisOutput(old,value,engine);
     // 分析结果里附带的长期记忆（补剂标签、记法、偏好等）：先校验原文依据与数字，再自动保存。
     const pendingChanges=a.memoryChanges??[];
     if(pendingChanges.length){
@@ -396,37 +378,9 @@ export class HealthStore {
       }
       a={...a,memoryChanges:[],memoryReceipt:saved};
     }
-    // 明确说“和某天哪一餐一样”时，食材与分量整份复制，本地重新计算营养；模型的临时估算不采用。
-    const changedPortion=engine!=='local'&&a.copyFromRecordId&&/(?:但|改成|改为|这次).{0,20}(?:半|少|多|换|去掉|不加|没吃)/.test(old.text);
-    if(changedPortion){
-      a={...a,copyFromRecordId:undefined,...(!a.ingredients?.length?{questions:['和上次相比，哪些食材或分量有变化？']}: {})};
-    }
-    const mealClarification=old.kind==='meal'&&engine!=='local'&&!a.ingredients?.length&&!a.copyFromRecordId&&
-      /照旧|一样|同上|同款|相同/.test(old.text)?a.questions[0]:undefined;
-    if(mealClarification&&old.analysis?.ingredients?.length)a={...a,ingredients:old.analysis.ingredients};
-    if(a.copyFromRecordId){
-      let source;try{source=this.record(a.copyFromRecordId);}catch{throw new Error('引用的那餐记录不存在，请换一条或直接描述这餐。');}
-      if(Date.parse(source.occurredAt)>Date.parse(old.occurredAt))throw new Error('不能使用发生日期之后的餐食作历史依据');
-      if(source.id===old.id) throw new Error('不能把这条记录设为复制自身');
-      if(source.kind!=='meal'||source.deleted||!source.analysis?.ingredients?.length) throw new Error('引用的那餐没有可复制的食材记录，请换一条或直接描述这餐。');
-      const label=mealLabel(source.occurredAt,source.timezone);
-      a={...a,copyFromRecordId:undefined,ingredients:source.analysis.ingredients.map(i=>({...i,assumption:`${i.assumption}；复制自 ${label}`})),summary:`${a.summary}（按 ${label} 的同款记录复制）`,assumptions:[...a.assumptions,`食材与分量取自 ${label} 的同款记录；如需改动可在记录详情调整。`],copiedFrom:{recordId:source.id,occurredAt:source.occurredAt,slot:mealSlot(source.occurredAt,source.timezone),label}};
-    }
-    // 常用食物（蛋白粉等）的标签营养由本地强制覆盖，避免模型每次重新估计。
-    if(a.ingredients){
-      const exclusions=new Set(old.analysis?.excludedIngredientIdentities??[]);
-      if(manualMeal){const incoming=new Set(a.ingredients.map(ingredientIdentity));for(const i of old.analysis?.ingredients??[])if(!incoming.has(ingredientIdentity(i)))exclusions.add(ingredientIdentity(i));for(const id of incoming)exclusions.delete(id);}
-      a={...a,excludedIngredientIdentities:[...exclusions],ingredients:prepareMealIngredients(this.catalog.resolveIngredients(a.ingredients),this.foodPresets(new Date(old.occurredAt)),{previous:old.analysis?.ingredients,manual:manualMeal,text:old.text,attachHashes:old.attachments.map(a=>a.sha256)}).filter(i=>!exclusions.has(ingredientIdentity(i)))};
-      const sourceNotes=a.ingredients!.filter(i=>i.nutrition?.provenance==='preset').map(i=>`营养按常用食物“${i.name}”的${i.nutrition?.source==='label'?'标签数据':'已保存的估算数据'}计算。`);
-      a={...a,assumptions:[...new Set([...a.assumptions.filter(note=>!/^营养按常用食物“.*”的(?:标签数据|已保存的估算数据)计算。$/.test(note)),...sourceNotes])].slice(0,20)};
-      if(old.kind==='meal')a={...a,questions:this.catalog.mealQuestions(a.ingredients!,a.questions)};
-    }
-    const calc:Partial<ReturnType<FoodCatalog['calculate']>>=a.ingredients?this.catalog.calculate(a.ingredients):{};
-    if(old.kind==='meal'&&engine!=='local'&&!mealClarification&&(!a.ingredients?.length||('unmatched' in calc&&calc.unmatched?.length))){const detail=calc.unmatched?.slice(0,6).join('、')||'模型未返回可计算的食材';throw new Error(`食材暂时不能合计：${detail}。原记录已保留，请核对计量单位或营养估算依据。`);}
-    if(mealClarification)a={...a,questions:[mealClarification]};
     const proposed=(a.memories??[]).map(m=>memoryInputSchema.parse({kind:m.kind,text:m.text,startsAt:old.occurredAt,expiresAt:m.kind==='state'?(m.expiresAt??new Date(Date.parse(old.occurredAt)+7*86400000).toISOString()):null,sourceIds:[id],evidence:[old.text.includes(m.text)?{quote:m.text,origin:'record',recordId:id,recordRevision:old.revision+1,at:old.occurredAt}:{quote:'',origin:'unknown'}],active:true,confirmed:false}));
-    const analysis:Analysis=normalizeAnalysis({...a,...calc,engine,...(engine!=='local'&&modelRun?{modelRun}:{}),at:iso()},old.text,this.exerciseAliases(),this.exerciseRules());
-    const r=this.commitRevision(old,{...old,...(manualMeal?{userPortions:editedPortions(old,analysis.ingredients??[])}:{}),analysis,analysisPending:false,analysisError:undefined,analysisAttemptedRevision:old.revision+1,status:mealClarification?'needs_info':old.kind==='meal'&&(!a.ingredients?.length||('unmatched' in calc&&calc.unmatched?.length))?'pending':a.questions.length?'needs_info':'ready'},{skipInvalidate:analysis.memoryReceipt?.map(m=>m.id)??[],userEdit:manualMeal});
+    const {analysis,status}=finishRecordAnalysis(this,old,a,engine,manualMeal,modelRun);
+    const r=this.commitRevision(old,{...old,...(manualMeal?{userPortions:editedPortions(old,analysis.ingredients??[])}:{}),analysis,analysisPending:false,analysisError:undefined,analysisAttemptedRevision:old.revision+1,status},{skipInvalidate:analysis.memoryReceipt?.map(m=>m.id)??[],userEdit:manualMeal});
     for(const m of proposed) this.saveMemory(m);
     return r;
   }
@@ -846,13 +800,18 @@ export class HealthStore {
   undoMemory(id:string) { const row=this.db.prepare("SELECT doc FROM revisions WHERE entity='memory' AND id=? ORDER BY seq DESC LIMIT 1").get(id); if(!row) throw new Error('没有可撤销的记忆修改'); const m=parseJSON<Memory>(row.doc); return this.saveMemory(m,id); }
   messages():Message[] { return this.db.prepare('SELECT doc FROM messages ORDER BY rowid').all().map(r=>parseJSON<Message>(r.doc)); }
   putMessage(m:Message) { this.db.prepare('INSERT INTO messages VALUES(?,?) ON CONFLICT(id) DO UPDATE SET doc=excluded.doc').run(m.id,JSON.stringify(m));if(m.role==='user'&&m.status==='complete'&&this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='memory_episodes'").get())this.saveEpisode(m.text,m.createdAt,{messageId:m.id}); }
-  history(id:string) { return this.db.prepare('SELECT doc,at FROM revisions WHERE id=? ORDER BY seq DESC LIMIT 30').all(id).map(r=>({at:r.at,record:parseJSON(r.doc)})); }
+  history(id:string) {
+    const revisions=this.db.prepare("SELECT doc,at FROM revisions WHERE entity='record' AND id=? ORDER BY seq DESC LIMIT 30").all(id).map(r=>({at:String(r.at),record:parseJSON<HealthRecord>(r.doc)}));
+    const attempts=(this.getConfig<HistoryResult[]>('recordAnalysisHistory')??[]).filter(v=>v.record===id);
+    const late=attempts.map(v=>({at:v.at,record:{...(revisions.find(r=>r.record.revision===v.revision)?.record??this.record(id)),revision:v.revision,analysis:v.analysis},late:true}));
+    return [...revisions,...late].sort((a,b)=>b.at.localeCompare(a.at)).slice(0,30);
+  }
   usage(month=iso().slice(0,7)) {
     const rows=this.db.prepare("SELECT * FROM usage WHERE month=? AND provider='deepseek'").all(month);
     return {month,inputTokens:rows.reduce((s,r)=>s+Number(r.input),0),outputTokens:rows.reduce((s,r)=>s+Number(r.output),0),cost:rows.reduce((s,r)=>s+Number(r.cost),0),uncertain:rows.some(r=>['uncertain','reserved'].includes(String(r.state)))};
   }
   reserveUsage(provider:string,estimate:number):string {
-    const s=this.getSettings(); if(provider==='deepseek' && (s.deepseekBudget<=0||this.usage().cost+estimate>s.deepseekBudget)) throw new Error('本月预算不足，未发送请求。可在设置中查看或调整预算。');
+    const s=this.getSettings(); if(provider==='deepseek' && !s.deepseekUnlimited && (s.deepseekBudget<=0||this.usage().cost+estimate>s.deepseekBudget)) throw new Error('本月预算不足，未发送请求。可在设置中查看或调整预算。');
     const id=randomUUID(); this.db.prepare('INSERT INTO usage VALUES(?,?,?,?,?,?,?,?)').run(id,iso().slice(0,7),provider,0,0,estimate,'reserved',iso()); return id;
   }
   finishUsage(id:string,input:number,output:number,cost:number,state='complete') { this.db.prepare('UPDATE usage SET input=?,output=?,cost=?,state=? WHERE id=?').run(input,output,cost,state,id); }

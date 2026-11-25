@@ -1,3 +1,4 @@
+import {detailOf} from '../../src/shared/record-detail';
 import path from 'node:path';
 import { statSync } from 'node:fs';
 import { ingredientAmount } from '../../src/shared/food';
@@ -20,48 +21,11 @@ import type { HealthRecord, Ingredient } from '../../src/shared/types';
 import type { HealthStore } from './store';
 import type { ReplicaStore } from '../../src/shared/device-exchange';
 
-function portionOf(i: Ingredient): Portion {
-  const { low, high, unit } = ingredientAmount(i);
-  return {
-    name: i.name,
-    amount: { low, high },
-    unit,
-    ...(i.consumedFraction ? { eaten: i.consumedFraction } : {}),
-  };
-}
-export function confirmedPortions(r: HealthRecord): Portion[] {
-  return r.userPortions ?? (r.analysis?.ingredients ?? []).filter((i) => i.userCorrected).map(portionOf);
-}
-export function editedPortions(old: HealthRecord, items: Ingredient[]): Portion[] {
-  const confirmed = confirmedPortions(old),
-    before = (old.analysis?.ingredients ?? []).map(portionOf);
-  return items
-    .map(portionOf)
-    .filter(
-      (p) =>
-        confirmed.some((v) => v.name === p.name) ||
-        !before.some((v) => JSON.stringify(v) === JSON.stringify(p)),
-    );
-}
-export function applyPortions(items: Ingredient[], before: Portion[], after: Portion[]): Ingredient[] {
-  const previous = [...items];
-  const confirmed = after.map((p) => {
-    const i = previous.findIndex((v) => v.name === p.name);
-    const base =
-      i < 0 ? { name: p.name, foodId: null, assumption: '人工核对的分量' } : previous.splice(i, 1)[0];
-    return {
-      ...base,
-      amount: { ...p.amount, unit: p.unit },
-      grams: p.unit === 'g' ? p.amount : { low: 0, high: 0 },
-      consumedFraction: p.eaten,
-      portionSource: 'reported' as const,
-      userCorrected: true,
-    };
-  });
-  return [...previous.filter((i) => !before.some((p) => p.name === i.name)), ...confirmed];
-}
-function visible(r: HealthRecord, photos: PhotoRef[], prior?: SyncRecord): SyncRecord {
+export { confirmedPortions,editedPortions,applyPortions } from '../../src/shared/portions';
+import {confirmedPortions} from '../../src/shared/portions';
+function visible(r: HealthRecord, photos: PhotoRef[], prior?: SyncRecord, detailed = !!prior?.detail): SyncRecord {
   return syncRecordSchema.parse({
+    detail: detailed ? detailOf(r) : undefined,
     id: r.id,
     kind: prior?.kind === 'steps' ? 'steps' : r.kind,
     ...(r.kind === 'body' && r.body ? { body: r.body } : {}),
@@ -111,7 +75,7 @@ export class MacReplicas implements ReplicaStore {
     const r = this.store.record(id),
       replica = this.get(id);
     const photos =
-      r.kind === 'meal'
+      r.kind === 'meal' || !!heads(replica ?? emptyReplica())[0]?.record.detail || !!this.store.getConfig('personalLibraryEnabled')
         ? r.attachments.map((a) =>
             photoSchema.parse({
               hash: a.sha256,
@@ -165,17 +129,24 @@ export class MacReplicas implements ReplicaStore {
       for (const row of rows) this.userChange(JSON.parse(String(row.doc)));
     });
   }
-  userChange(r: HealthRecord) {
+  userChange(r: HealthRecord, migrate = false) {
     const archive = this.archive;
     if (!archive) return;
     const replica = this.get(r.id) ?? emptyReplica();
-    if (r.deleted && !replica.ops.length) return;
+    if (r.deleted && !replica.ops.length && !migrate) return;
     const prior = heads(replica)[0]?.record;
-    const next = appendLocal(replica, visible(r, prior?.photos ?? [], prior), {
+    const full = !!this.store.getConfig('personalLibraryEnabled');
+    const since = this.store.getConfig<string>('deviceDetailSince');
+    const detailed = full || !!prior?.detail || !!since && r.createdAt >= since;
+    const available = full ? this.info(r.id).photos : [];
+    const photos = full ? [...available,...(prior?.photos??[]).filter(p=>!available.some(v=>v.hash===p.hash))] : prior?.photos ?? [];
+    const next = appendLocal(replica, visible(r, photos, prior, detailed), {
       archive,
       device: this.device,
     });
-    if (replica !== next) this.put(r.id, next);
+    if (replica === next) return false;
+    this.put(r.id, next);
+    return true;
   }
   async accept(op: Operation) {
     return this.store.transaction(() => {
@@ -212,6 +183,6 @@ export class MacReplicas implements ReplicaStore {
   }
   async hydrate(id: string) {
     const r = this.get(id);
-    if (r) this.store.transaction(() => this.store.applyDeviceRecord(heads(r)[0].record, heads(r)[0].record));
+    if (r) this.store.transaction(() => this.store.applyDeviceRecord(heads(r)[0].record, heads(r)[0].record, true));
   }
 }

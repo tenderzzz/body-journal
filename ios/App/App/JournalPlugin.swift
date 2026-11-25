@@ -13,7 +13,7 @@ final class JournalViewController: CAPBridgeViewController {
 
 @objc(JournalPlugin)
 final class JournalPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate,
-  PHPickerViewControllerDelegate, UIAdaptivePresentationControllerDelegate
+  UIImagePickerControllerDelegate, UINavigationControllerDelegate, PHPickerViewControllerDelegate, UIAdaptivePresentationControllerDelegate
 {
   let identifier = "JournalPlugin"
   let jsName = "Journal"
@@ -22,6 +22,7 @@ final class JournalPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate
   ]
   private let queue = DispatchQueue(label: "bodyjournal.phone.storage", qos: .userInitiated)
   private let transfers = DispatchQueue(label: "bodyjournal.phone.files", qos: .utility)
+  private let models = MobileModel()
   private var database: PhoneDatabase?
   private var pending: CAPPluginCall?
   private func db() throws -> PhoneDatabase {
@@ -112,7 +113,11 @@ final class JournalPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate
   }
   @objc func request(_ call: CAPPluginCall) {
     let method = call.getString("method") ?? ""
-    if ["pick", "choose", "scan"].contains(method) {
+    if method.hasPrefix("model") {
+      DispatchQueue.main.async { self.models.handle(method, call, presenter: self.bridge?.viewController) }
+      return
+    }
+    if ["pick", "camera", "choose", "scan"].contains(method) {
       DispatchQueue.main.async { self.presentPicker(method, call: call) }
       return
     }
@@ -129,6 +134,13 @@ final class JournalPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate
       let db = try self.db()
       switch method {
       case "identity": return try identity(db)
+      case "personalBackup": try db.backupPersonal(); return [:]
+      case "personalGet", "personalSet":
+        guard let name = call.getString("name"), ["library", "libraryHash", "migration", "migrationCursor", "attempts", "lastSync"].contains(name) else { throw JournalFailure("历史档案项目无效。") }
+        if method == "personalGet" { return ["doc": (try db.get(name) as Any?) ?? NSNull()] }
+        guard let value = call.getString("doc") else { throw JournalFailure("历史内容缺失。") }
+        try db.set(name, value)
+        return [:]
       case "insights": return ["doc": (try db.get("insights") as Any?) ?? NSNull()]
       case "saveInsights":
         guard let archive = call.getString("archive"), try db.get("archive") == archive,
@@ -170,6 +182,12 @@ final class JournalPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate
       let p = UIDocumentPickerViewController(forOpeningContentTypes: [.folder], asCopy: false)
       p.delegate = self
       picker = p
+    } else if method == "camera" {
+      guard UIImagePickerController.isSourceTypeAvailable(.camera) else { failPicker("此设备无法打开相机。"); return }
+      let camera = UIImagePickerController()
+      camera.sourceType = .camera
+      camera.delegate = self
+      picker = camera
     } else if method == "pick" {
       var config = PHPickerConfiguration(photoLibrary: .shared())
       config.filter = .images
@@ -266,6 +284,21 @@ final class JournalPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate
       dest, image, [kCGImageDestinationLossyCompressionQuality: 0.88] as CFDictionary)
     guard CGImageDestinationFinalize(dest) else { throw JournalFailure("照片转换未完成") }
     return data as Data
+  }
+  func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { picker.dismiss(animated: true); cancelled() }
+  func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+    picker.dismiss(animated: true)
+    guard let call = pending, let image = info[.originalImage] as? UIImage else { cancelled(); return }
+    pending = nil
+    perform(call) { [self] in
+      guard let data = image.jpegData(compressionQuality: 0.88) else { throw JournalFailure("照片保存失败。") }
+      let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+      let photo = JournalPhoto(hash: hash, bytes: data.count, mime: "image/jpeg")
+      try photo.verify(data)
+      let file = try db().photos.appendingPathComponent(hash + ".jpeg")
+      try data.write(to: file, options: .atomic)
+      return ["photos": [["hash": hash, "bytes": data.count, "mime": "image/jpeg"]]]
+    }
   }
   func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
     picker.dismiss(animated: true)

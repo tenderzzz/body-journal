@@ -59,6 +59,24 @@ final class PhoneDatabase {
       }
     }
   }
+  func backupPersonal() throws {
+    if let name = try get("personalBackup"), FileManager.default.fileExists(atPath: root.appendingPathComponent(name).appendingPathComponent("journal.sqlite").path) { return }
+    let fm = FileManager.default
+    let name = "backups/before-personal-" + UUID().uuidString.lowercased()
+    let dest = root.appendingPathComponent(name)
+    try fm.createDirectory(at: dest, withIntermediateDirectories: true)
+    var completed = false
+    defer { if !completed { try? fm.removeItem(at: dest) } }
+    var target: OpaquePointer?
+    guard sqlite3_open(dest.appendingPathComponent("journal.sqlite").path, &target) == SQLITE_OK else { sqlite3_close(target); throw failure() }
+    defer { sqlite3_close(target) }
+    guard let backup = sqlite3_backup_init(target, "main", db, "main") else { throw failure() }
+    let step = sqlite3_backup_step(backup, -1), finish = sqlite3_backup_finish(backup)
+    guard step == SQLITE_DONE, finish == SQLITE_OK else { throw failure() }
+    try fm.copyItem(at: photos, to: dest.appendingPathComponent("photos"))
+    try set("personalBackup", name)
+    completed = true
+  }
   func rows() throws -> [String] { try query("SELECT doc FROM journal ORDER BY rowid", []) }
   func row(_ id: String) throws -> String? {
     try query("SELECT doc FROM journal WHERE id=?", [id]).first

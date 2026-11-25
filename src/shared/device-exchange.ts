@@ -41,7 +41,7 @@ export async function exchange(
     if (!match || known.has(match[1])) continue;
     try {
       const input = JSON.parse(await folder.read(file));
-      if (input.version !== 1 && input.version !== 2) throw Error('发现新版变更，升级两端后点「立即同步」。');
+      if (input.version !== 1 && input.version !== 2 && input.version !== 3 && input.version !== 4) throw Error('发现新版变更，升级两端后点「立即同步」。');
       const op = operationSchema.parse(input);
       if (op.id !== match[1] || op.archive !== id.archive) throw Error('共享变更与文件编号或档案不一致。');
       pending.push(op);

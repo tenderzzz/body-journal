@@ -2,7 +2,7 @@
 
 **把随手记下的训练、饮食与身体变化，连成一份看得懂、可追溯的个人档案。**
 
-手机用快捷指令记录，iCloud 负责送达，Mac 本地保存与计算。需要理解照片、复盘训练或讨论目标时，再由你主动调用 AI。
+iPhone 与 Mac 都可以记录、分析餐食和训练、查看能量与趋势。个人版通过自己的加密 iCloud Drive 目录同步，也可以继续使用快捷指令录入。详见 [iPhone 使用说明](docs/iphone.md)。
 
 [![Release](https://img.shields.io/github/v/release/tenderzzz/body-journal?label=download)](https://github.com/tenderzzz/body-journal/releases/latest)
 [![macOS 安装包](https://github.com/tenderzzz/body-journal/actions/workflows/macos-package.yml/badge.svg)](https://github.com/tenderzzz/body-journal/actions/workflows/macos-package.yml)
@@ -113,7 +113,7 @@ flowchart LR
 
 - 热量、营养和训练分析都是参考估算。混合菜的用油与分量、训练时长及步数来源会影响结果；暂定步数范围是产品假设，尚未经个体能耗验证。
 - 自动测试使用合成数据和模拟模型响应。真实模型授权、额度、照片识别质量，以及 iPhone 实机和跨设备同步，需要在自己的环境中验证。
-- 当前没有 Apple Health／手表自动同步、原生 iPhone App、后台主动建议或 Windows／Intel Mac 发布包。
+- 当前没有 Apple Health／手表自动同步、后台主动建议或 Windows／Intel Mac 发布包。
 - 本项目用于个人记录与一般健身复盘，不提供医疗诊断或治疗建议。
 
 ## 文档与参与

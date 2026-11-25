@@ -1,3 +1,4 @@
+import {PersonalSync} from './personal-library';
 import { spawn } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
@@ -59,6 +60,7 @@ export class NativeFolder implements ExchangeFolder {
 }
 export class MacDeviceSync {
   private prefs: Prefs;
+  private personal:PersonalSync;
   private report?: SyncReport;
   private running?: Promise<SyncSettings>;
   private timer?: ReturnType<typeof setTimeout>;
@@ -72,6 +74,7 @@ export class MacDeviceSync {
     private secrets: Secrets,
     private changed: () => void,
   ) {
+    this.personal=new PersonalSync(store);
     this.prefs = existsSync(file)
       ? JSON.parse(readFileSync(file, 'utf8'))
       : { device: randomUUID(), enabled: false };
@@ -137,6 +140,7 @@ export class MacDeviceSync {
       if (mode === 'create') await this.secrets.write(code!);
       await dir.call(mode === 'create' ? 'create' : 'bind');
       if (mode === 'join') await this.secrets.write(code!);
+      if(mode==='join'&&!this.store.records(true).length)this.store.setConfig('personalRestoreReader',true);
       this.store.deviceRecords.bind(archive);
       this.prefs = { ...this.prefs, archive, folder: selected, enabled: true };
       this.save();
@@ -189,6 +193,11 @@ export class MacDeviceSync {
       this.store.deviceRecords.backfill();
       const files = await dir.list();
       this.report = await exchange({ archive, device }, this.store.deviceRecords, dir, files);
+      try {
+        if (await this.personal.exchange({ archive, device }, dir, files)) this.requestedWhileRunning = true;
+      } catch (e) {
+        this.report.issues.push('历史档案：' + (e as Error).message);
+      }
       const now = new Date();
       const stamp = [
         archive,

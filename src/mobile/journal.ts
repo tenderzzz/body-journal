@@ -1,3 +1,10 @@
+import {
+  exchangeHistory,
+  pullLibrary,
+  validateLibrary,
+  type HistoryResult,
+  type PersonalLibrary,
+} from '../shared/personal-library';
 import { registerPlugin } from '@capacitor/core';
 import { receiveInsights, type PhoneInsights } from '../shared/phone-insights';
 import { calendarDay } from '../shared/dates';
@@ -46,6 +53,7 @@ function projection(record: PhoneRecord, photos: PhotoRef[]) {
     deleted,
     portions,
     photos,
+    detail: record.detail,
     ...(kind === 'body' && record.body ? { body: record.body } : {}),
     ...(kind === 'steps' ? { steps: record.steps, stepCoverage: record.stepCoverage ?? 'partial' } : {}),
   });
@@ -53,7 +61,7 @@ function projection(record: PhoneRecord, photos: PhotoRef[]) {
 function selectPhotos(record: PhoneRecord, indices: number[]) {
   if (indices.some((i) => !Number.isInteger(i) || !record.photos[i]))
     throw Error('请重新选择需要同步的照片。');
-  return record.kind === 'meal' ? record.photos.filter((_, i) => indices.includes(i)) : [];
+  return record.kind === 'meal' || record.detail ? record.photos.filter((_, i) => indices.includes(i)) : [];
 }
 export function validatePhoneRecord(r: PhoneRecord, existingEmpty = false) {
   if (
@@ -95,6 +103,124 @@ export class PhoneJournalModel implements ReplicaStore {
     const { doc } = await this.call<{ doc: string | null }>('insights');
     return doc ? JSON.parse(doc) : null;
   }
+  private cachedLibrary?: PersonalLibrary | null;
+  private getPersonal<T>(name: string): Promise<T | null> {
+    return this.call<{ doc: string | null }>('personalGet', { name }).then(({ doc }) =>
+      doc ? JSON.parse(doc) : null,
+    );
+  }
+  private setPersonal(name: string, value: unknown) {
+    return this.call('personalSet', { name, doc: JSON.stringify(value) });
+  }
+  async library(): Promise<PersonalLibrary | null> {
+    if (this.cachedLibrary === undefined)
+      this.cachedLibrary = await this.getPersonal<PersonalLibrary>('library');
+    return this.cachedLibrary;
+  }
+  attempts() {
+    return this.getPersonal<HistoryResult[]>('attempts').then((v) => v ?? []);
+  }
+  keepAttempt(value: HistoryResult) {
+    return this.locked(async () => {
+      const rows = await this.attempts();
+      if (!rows.some((r) => r.id === value.id)) await this.setPersonal('attempts', [...rows, value]);
+    });
+  }
+  migrationOn() {
+    return this.getPersonal<boolean>('migration');
+  }
+  async migrationPreview() {
+    await this.call('personalBackup');
+    const id = await this.identity();
+    const rows = await this.rows(),
+      refs = new Set(rows.flatMap((r) => r.record.photos.map((p) => p.hash)));
+    return {
+      records: rows.length,
+      photos: refs.size,
+      pending: rows.filter(
+        (r) =>
+          !r.replica ||
+          r.replica.ops.some((o) => !r.replica!.written.includes(o.id) && o.device === id.device),
+      ).length,
+      confirmed: !!(await this.getPersonal('migration')),
+    };
+  }
+  async progress() {
+    const phase = await this.getPersonal<{ phase: string; at: string; files?: number; issues?: string[] }>(
+      'lastSync',
+    );
+    const cursor = await this.getPersonal<{ next: number }>('migrationCursor');
+    const library = await this.library();
+    return {
+      phase,
+      photos: cursor?.next ?? 0,
+      total: library?.photos.length ?? 0,
+      revisions: library?.revisions.length ?? 0,
+    };
+  }
+  async confirmMigration() {
+    const id = await this.identity();
+    if (!id.archive || !id.enabled) throw Error('请先连接原共享目录。');
+    await this.call('personalBackup');
+    await this.setPersonal('migration', true);
+    return this.sync();
+  }
+  private async personalSync(
+    id: { archive: string; device: string },
+    folder: ExchangeFolder,
+    files: string[],
+  ) {
+    const oldHash = await this.getPersonal<string>('libraryHash');
+    await this.setPersonal('lastSync', {
+      phase: '核对历史档案',
+      files: files.length,
+      at: new Date().toISOString(),
+    });
+    const downloaded = await pullLibrary(id.archive, folder, files, oldHash ?? undefined);
+    let library = await this.library();
+    if (downloaded) {
+      const checked = await this.call<{ hex: string }>('modelDigest', { text: downloaded.text });
+      if (checked.hex !== downloaded.manifest.hash) throw Error('完整档案校验失败，已保留上次副本。');
+      library = validateLibrary(JSON.parse(downloaded.text));
+      await this.call('personalBackup');
+      await this.setPersonal('library', library);
+      await this.setPersonal('libraryHash', downloaded.manifest.hash);
+      this.cachedLibrary = library;
+    }
+    await exchangeHistory(id, folder, files, await this.attempts(), (v) => this.keepAttempt(v));
+    const consent = await this.getPersonal<boolean>('migration');
+    if (consent && !files.includes('ready-' + id.device))
+      await folder.write(
+        'ready-' + id.device,
+        JSON.stringify({ version: 1, ...id, role: 'iphone', backup: true }),
+      );
+    if (!library) return;
+    if (consent) {
+      for (const row of await this.rows()) {
+        const selected = row.replica ? heads(row.replica) : [];
+        if (selected.length !== 1 || !row.record.detail) continue;
+        const shared = selected[0].record.photos;
+        if (row.record.photos.some((p) => !shared.some((s) => s.hash === p.hash))) {
+          await this.save(
+            row.record,
+            stamp(row),
+            row.record.photos.map((_, i) => i),
+          );
+          this.rerun = true;
+        }
+      }
+    }
+    const key = downloaded?.manifest.hash ?? oldHash;
+    const progress = await this.getPersonal<{ hash: string; next: number }>('migrationCursor');
+    let index = progress?.hash === key ? (progress?.next ?? 0) : 0;
+    while (index < library.photos.length) {
+      const { record, photo } = library.photos[index];
+      await folder.photo(record, photo, false);
+      index++;
+      if (index % 12 === 0 || index === library.photos.length)
+        await this.setPersonal('migrationCursor', { hash: key, next: index });
+    }
+  }
   private backfill(archive: string, device: string) {
     return this.locked(async () => {
       for (const row of await this.rows()) {
@@ -124,6 +250,32 @@ export class PhoneJournalModel implements ReplicaStore {
   save(record: PhoneRecord, expected: string | null, enroll?: number[]) {
     return this.locked(async () => {
       const prior = await this.row(record.id);
+      if (
+        prior?.record.detail &&
+        record.detail &&
+        prior.record.detail.revision === record.detail.revision &&
+        (prior.record.text !== record.text ||
+          prior.record.occurredAt !== record.occurredAt ||
+          prior.record.deleted !== record.deleted ||
+          JSON.stringify(prior.record.body) !== JSON.stringify(record.body))
+      ) {
+        const content = prior.record.text !== record.text;
+        record = {
+          ...record,
+          detail: {
+            ...record.detail,
+            revision: record.detail.revision + 1,
+            updatedAt: new Date().toISOString(),
+            ...(content
+              ? {
+                  pending: true,
+                  status: 'pending',
+                  analysis: record.detail.analysis ? { ...record.detail.analysis, macros: null } : null,
+                }
+              : {}),
+          },
+        };
+      }
       validatePhoneRecord(record, !!prior && !prior.record.text.trim() && !prior.record.photos.length);
       if ((prior ? stamp(prior) : null) !== expected) throw stale();
       if (record.kind === 'steps' && !record.deleted) {
@@ -210,6 +362,7 @@ export class PhoneJournalModel implements ReplicaStore {
       do {
         this.rerun = false;
         const id = await this.identity();
+
         if (!id.enabled || !id.archive) return this.report;
         const command = <T>(name: string, args: Record<string, unknown> = {}) =>
           this.call<T>('folder', { args: { command: name, ...args } });
@@ -225,7 +378,13 @@ export class PhoneJournalModel implements ReplicaStore {
         };
         try {
           await this.backfill(id.archive, id.device);
+          await this.setPersonal('lastSync', { phase: '读取共享目录', at: new Date().toISOString() });
           const files = await folder.list();
+          await this.setPersonal('lastSync', {
+            phase: '接收记录及统计',
+            files: files.length,
+            at: new Date().toISOString(),
+          });
           let viewError = '';
           try {
             if (files.some((f) => f.startsWith('overview-'))) {
@@ -239,6 +398,11 @@ export class PhoneJournalModel implements ReplicaStore {
           }
           this.report = await exchange({ archive: id.archive, device: id.device }, this, folder, files);
           if (viewError) this.report.issues.push(viewError);
+          try {
+            await this.personalSync({ archive: id.archive, device: id.device }, folder, files);
+          } catch (e) {
+            this.report.issues.push('历史档案等待同步：' + (e as Error).message);
+          }
         } catch (e) {
           this.report = {
             at: new Date().toISOString(),
@@ -249,6 +413,11 @@ export class PhoneJournalModel implements ReplicaStore {
             ],
           };
         }
+        await this.setPersonal('lastSync', {
+          phase: this.report?.issues.length ? '等待同步重试' : '本次同步已完成',
+          at: new Date().toISOString(),
+          issues: this.report?.issues ?? [],
+        });
       } while (this.rerun);
       return this.report;
     })().finally(() => {

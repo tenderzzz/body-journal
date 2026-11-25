@@ -1,3 +1,4 @@
+import { detailSchema } from './record-detail';
 import { z } from 'zod';
 
 export function newDeviceUUID() {
@@ -30,6 +31,7 @@ const portionSchema = z.strictObject({
 });
 export const syncRecordSchema = z
   .strictObject({
+    detail: detailSchema.optional(),
     id: recordId,
     kind: z.enum(['meal', 'training', 'note', 'body', 'steps']),
     body: z
@@ -63,7 +65,8 @@ export const syncRecordSchema = z
   .refine((r) =>
     r.kind === 'steps' ? r.steps !== undefined : r.steps === undefined && r.stepCoverage === undefined,
   )
-  .refine((r) => r.kind === 'meal' || (!r.photos.length && !r.portions.length), '仅餐食可共享照片和食材分量');
+  .refine(r => r.kind === 'meal' || !r.portions.length)
+  .refine(r => r.kind === 'meal' || !r.photos.length || !!r.detail);
 export type PhotoRef = z.infer<typeof photoSchema>;
 export type Portion = z.infer<typeof portionSchema>;
 export type SyncRecord = z.infer<typeof syncRecordSchema>;
@@ -74,7 +77,7 @@ function supportsOriginalFormat(r: SyncRecord) {
 }
 export const operationSchema = z
   .strictObject({
-    version: z.union([z.literal(1), z.literal(2)]),
+    version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
     archive: deviceId,
     id: deviceId,
     device: deviceId,
@@ -82,7 +85,7 @@ export const operationSchema = z
     action: z.enum(['create', 'edit', 'delete', 'restore', 'merge']),
     record: syncRecordSchema,
   })
-  .refine((o) => o.version === 2 || supportsOriginalFormat(o.record))
+  .refine(o => o.version >= 3 || !o.record.detail && (o.version === 2 || supportsOriginalFormat(o.record)))
   .refine((o) => new Set(o.parents).size === o.parents.length && !o.parents.includes(o.id));
 export type Operation = z.infer<typeof operationSchema>;
 export type Replica = { ops: Operation[]; written: string[]; acknowledged: string[]; receipts: string[] };
@@ -155,6 +158,9 @@ export function appendLocal(state: Replica, record: SyncRecord, identity: Identi
   const previous = tips[0]?.record;
   const clean = syncRecordSchema.parse(record);
   if (!mergeParents && previous && JSON.stringify(previous) === JSON.stringify(clean)) return state;
+  const detail = clean.detail;
+  const needsTrainingSource = detail?.analysis?.sets?.some((set) => set.basisSource) ||
+    detail?.followups.some((entry) => entry.previousAnalysis?.sets?.some((set) => set.basisSource));
   const action = mergeParents
     ? 'merge'
     : !previous
@@ -167,7 +173,7 @@ export function appendLocal(state: Replica, record: SyncRecord, identity: Identi
   const next = addOperation(
     state,
     {
-      version:
+      version: needsTrainingSource ? 4 : detail ? 3 :
         supportsOriginalFormat(clean) &&
         (!previous || JSON.stringify(previous.photos) === JSON.stringify(clean.photos))
           ? 1

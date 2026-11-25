@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>NSCameraUsageDescription</key><string>扫描 Mac 上的档案配对二维码。</string>
+  <key>NSCameraUsageDescription</key><string>拍摄本条记录的照片，或扫描 Mac 上的档案配对二维码。</string>
   <key>CAPACITOR_DEBUG</key>
 	<string>$(CAPACITOR_DEBUG)</string>
 	<key>CFBundleDevelopmentRegion</key>

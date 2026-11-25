@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BB0000000000000000000402 /* MobileModel in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000401; };
 		BB0000000000000000000302 /* PhoneDatabase in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000301; };
 		BB0000000000000000000202 /* SyncDirectory in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000201; };
 		BB0000000000000000000102 /* JournalPlugin in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000101; };
@@ -22,6 +23,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		BB0000000000000000000401 /* MobileModel */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MobileModel.swift"; sourceTree = "<group>"; };
 		BB0000000000000000000301 /* PhoneDatabase */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../../../native/PhoneDatabase.swift"; sourceTree = "<group>"; };
 		BB0000000000000000000201 /* SyncDirectory */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../../../native/SyncDirectory.swift"; sourceTree = "<group>"; };
 		BB0000000000000000000101 /* JournalPlugin */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "JournalPlugin.swift"; sourceTree = "<group>"; };
@@ -72,6 +74,7 @@
 			children = (
 				BB0000000000000000000101 /* JournalPlugin */,
 				BB0000000000000000000201 /* SyncDirectory */,
+				BB0000000000000000000401 /* MobileModel */,
 				BB0000000000000000000301 /* PhoneDatabase */,
 				9582B6822FE993A50072D4E8 /* SceneDelegate.swift */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
@@ -170,6 +173,7 @@
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
 				BB0000000000000000000102 /* JournalPlugin in Sources */,
 				BB0000000000000000000202 /* SyncDirectory in Sources */,
+				BB0000000000000000000402 /* MobileModel in Sources */,
 				BB0000000000000000000302 /* PhoneDatabase in Sources */,
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
 			);
@@ -312,14 +316,14 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 5;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.8.1;
+				MARKETING_VERSION = 0.9.0;
 				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" \"-DDEBUG\"";
 				PRODUCT_BUNDLE_IDENTIFIER = local.bodyjournal.personal.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -334,14 +338,14 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 5;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.8.1;
+				MARKETING_VERSION = 0.9.0;
 				PRODUCT_BUNDLE_IDENTIFIER = local.bodyjournal.personal.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";

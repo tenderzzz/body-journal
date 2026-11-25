@@ -45,7 +45,7 @@ const manifestSchema = z.strictObject({
 });
 export type InsightDay = z.infer<typeof daySchema>;
 export type InsightManifest = z.infer<typeof manifestSchema>;
-export type PhoneInsights = { manifest: InsightManifest; days: InsightDay[] };
+export type PhoneInsights = { local?:boolean;partial?:boolean;manifest: InsightManifest; days: InsightDay[] };
 
 export async function receiveInsights(
   archive: string,

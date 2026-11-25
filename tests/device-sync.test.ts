@@ -81,7 +81,7 @@ test('shared operations wait for parents, replay once, preserve competing delete
     { body: { weightKg: 75 } },
   ])
     assert.equal(syncRecordSchema.safeParse({ ...wire, ...sensitive }).success, false);
-  assert.equal(operationSchema.safeParse({ ...start.ops[0], version: 3 }).success, false);
+  assert.equal(operationSchema.safeParse({ ...start.ops[0], version: 5 }).success, false);
   assert.equal(journalDay(occurredAt), '2026-11-19');
   assert.equal(journalDay(occurredAt.replace('03:59', '04:00')), '2026-11-20');
   assert.equal(calendarDay(occurredAt), '2026-11-20');
@@ -393,7 +393,7 @@ test('eight late photos are checked individually, other records progress and fut
   const files = new Map<string, string>([
     ['op-' + change.id, JSON.stringify(change)],
     ['op-' + other.id, JSON.stringify(other)],
-    [future, '{"version":3}'],
+    [future, '{"version":5}'],
   ]);
   let capacity = 3;
   const folder = {
@@ -429,7 +429,7 @@ test('eight late photos are checked individually, other records progress and fut
     images.map((i) => i.photo.hash),
   );
   assert.equal(records.get(id)!.receipts.length, 2);
-  assert.equal(files.get(future), '{"version":3}');
+  assert.equal(files.get(future), '{"version":5}');
   assert.equal(s.records().length, 2);
 });
 
@@ -442,6 +442,8 @@ test('upgrade seeds offline phone history once and resumes without sharing unsel
       const id = String(args.id),
         data = args.args as { command: string; name: string; text: string } | undefined;
       switch (args.method) {
+        case 'personalSet': return {} as T;
+        case 'personalGet': return {doc:null} as T;
         case 'identity':
           return { device: phone, archive: paired ? archive : undefined, enabled: paired } as T;
         case 'row':

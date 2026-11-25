@@ -315,7 +315,7 @@ export function InsightPage({
       {view ? (
         <>
           <p className="insight-time">
-            Mac 更新于{' '}
+            {view.local?'本机计算于':'Mac 更新于'}{' '}
             {new Date(view.manifest.updated).toLocaleString('zh-CN', {
               month: 'numeric',
               day: 'numeric',
@@ -323,6 +323,7 @@ export function InsightPage({
               minute: '2-digit',
             })}
           </p>
+          {view.partial&&<p className="insight-time">本机已分析的日期按现有明细计算。完成历史迁移后会纳入旧餐食和消耗资料。</p>}
           {page === 'energy' ? (
             <Energy view={view} openDay={openDay} />
           ) : (

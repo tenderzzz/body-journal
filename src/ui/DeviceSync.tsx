@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type {MigrationInventory} from '../../electron/core/personal-library';
 import QRCode from 'qrcode';
 import {
   deliveryLabel,
@@ -11,6 +12,7 @@ import type { HealthRecord } from '../shared/types';
 import { SyncConflict } from './SyncConflict';
 type Run = <T = unknown>(action: string, payload?: unknown) => Promise<T>;
 export function DeviceSettings({ run, onSource }: { run: Run; onSource: (id: string) => void }) {
+  const [inventory,setInventory]=useState<MigrationInventory>();
   const [status, set] = useState<SyncSettings>(),
     [key, setKey] = useState(''),
     [qr, setQr] = useState(''),
@@ -58,8 +60,13 @@ export function DeviceSettings({ run, onSource }: { run: Run; onSource: (id: str
       <h2>iPhone 双向同步</h2>
       <p>
         在 iCloud Drive 选择专用目录。配对后自动补齐历史记录，持续同步新增、修改、删除和恢复。iPhone 可查看
-        Mac 的能量、身体、步数和训练趋势。餐食照片可在记录详情逐张选择。
+        能量、身体、步数和训练趋势。两端升级后可在下方迁移完整历史。
       </p>
+      {status?.archive&&<details><summary>完整历史档案</summary>
+        <button className="button" disabled={busy} onClick={async()=>{setBusy(true);try{setInventory(await run<MigrationInventory>('device:migrationPreview'));}catch(e){setError((e as Error).message);}finally{setBusy(false);}}}>备份并查看迁移清单</button>
+        {inventory&&<><p>已建立本机备份 {inventory.backup}</p><p>{inventory.records} 条记录 · {inventory.analyses} 份分析 · {inventory.revisions} 个历史版本 · {inventory.photos} 张原照片 · {inventory.messages} 条旧对话 · {inventory.memories} 条记忆 · {inventory.dishes} 份常吃餐食 · {inventory.targets} 个目标版本。包括训练规则和每日能量核对。</p>
+        <button className="button primary" disabled={busy||inventory.enabled} onClick={async()=>{await act('device:migrationConfirm',{ticket:inventory.ticket});setInventory(undefined);}}>确认通过原加密目录迁移</button></>}
+      </details>}
       {status?.archive && (
         <p>
           {status.enabled ? '已启用' : '已暂停'} · {status.folder?.split('/').at(-1)} · {status.pending}{' '}

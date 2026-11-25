@@ -1,3 +1,4 @@
+import {recordPrompt} from './record-prompt';
 import {analysisInstructions} from './prompts/analysis';
 import {chatInstructions} from './prompts/chat';
 import {CURRENT_PROMPT,type PromptVersion} from './prompts/version';
@@ -133,19 +134,16 @@ export class AssistantService {
     });
   }
   private async analyzeRecord(id:string):Promise<HealthRecord>{
-    const r=this.store.record(id),previousAnalysis=r.kind==='meal'?(r.analysis?.ingredients?.length?r.analysis:r.followups?.at(-1)?.previousAnalysis??r.analysis):(r.followups?.at(-1)?.previousAnalysis??r.analysis);const personalFoods=this.store.foodPresets(new Date(r.occurredAt)).sort((a,b)=>Number(r.text.includes(b.name))-Number(r.text.includes(a.name))).slice(0,12);
-    const dishes=r.kind==='meal'?this.store.commonDishes(new Date(r.occurredAt)).filter(d=>d.active):[];
-    const commonDish=matchDish(r,dishes);
-    const matchedDish=dishes.find(d=>d.id===commonDish?.id);
-    const commonDishCandidates=dishes.filter(d=>d.id!==commonDish?.id).sort((a,b)=>dishNameSimilarity(r.text,b.name)-dishNameSimilarity(r.text,a.name)).slice(0,8).map(d=>({id:d.id,name:d.name,brand:d.brand,aliases:d.aliases,sourceRecordId:d.latestRecordId,ingredients:d.template}));
-    const foods=this.store.catalog.promptCatalog(r.text).map(f=>({id:f.id,name:f.zh??f.description,description:f.description}));
-    const selection=this.store.memoryContext(r.kind==='training'?'training':'meal',r.text,new Date(r.occurredAt));
-    const personalMemories=selection.items.filter(m=>!commonDish||m.autoCategory!=='meal'||m.subject!==commonDish.id).slice(0,40).map(({id,revision,kind,text,subject,versionStartsAt,startsAt,expiresAt,evidence,confirmed,mealTemplate,topicKey,food})=>({id,revision,kind,text,subject,versionStartsAt,startsAt,expiresAt,evidence,confirmed,mealTemplate,topicKey,food:food?{name:food.name,brand:food.brand}:undefined}));
-    const mealHistory=r.kind==='meal'&&/一样|照旧|同上|同款|相同/.test(r.text)?this.store.records().filter(x=>!x.deleted&&x.kind==='meal'&&x.id!==r.id&&Date.parse(x.occurredAt)<=Date.parse(r.occurredAt)&&Date.parse(x.occurredAt)>=Date.parse(r.occurredAt)-90*86400000&&x.analysis?.ingredients?.length).sort((a,b)=>Date.parse(b.occurredAt)-Date.parse(a.occurredAt)).slice(0,40).map(x=>({id:x.id,occurredAt:x.occurredAt,day:journalDay(x.occurredAt,this.store.getSettings().timezone),slot:mealSlot(x.occurredAt,x.timezone),text:x.text.slice(0,240),ingredients:x.analysis!.ingredients!.map(i=>({name:i.name,grams:i.grams,amount:i.amount,consumedFraction:i.consumedFraction,portionSource:i.portionSource,foodState:i.foodState,productId:i.productId})),macros:x.analysis!.macros?{kcal:x.analysis!.macros.kcal,protein:x.analysis!.macros.protein}:undefined})):[];
-    const prompt=JSON.stringify({personalMemories,personalFoods,mealHistory,commonDish:matchedDish?{id:matchedDish.id,name:matchedDish.name,brand:matchedDish.brand,sourceRecordId:matchedDish.latestRecordId,occurredAt:matchedDish.latestAt,...(!previousAnalysis?.ingredients?.length?{ingredients:matchedDish.template}:{})}:undefined,commonDishCandidates,now:new Date().toISOString(),record:{id:r.id,kind:r.kind,occurredAt:r.occurredAt,timeSource:r.timeSource,dateResolution:r.dateResolution,text:r.text,attachments:r.attachments.map(a=>({sha256:a.sha256,name:a.name})),body:r.body,previousIngredients:previousAnalysis?.ingredients,followups:r.followups?.map(({answer,questions,at})=>({answer,questions,at})),previousAnalysis:previousAnalysis?{summary:previousAnalysis.summary,questions:previousAnalysis.questions,assumptions:previousAnalysis.assumptions,training:previousAnalysis.training,sets:previousAnalysis.sets,run:previousAnalysis.run}:undefined},foodCatalog:foods});
+    const {r,prompt}=recordPrompt({record:id=>this.store.record(id),records:()=>this.store.records(),foodPresets:at=>this.store.foodPresets(at),commonDishes:at=>this.store.commonDishes(at),catalog:this.store.catalog,timezone:this.store.getSettings().timezone,memoryContext:(purpose,query,at)=>this.store.memoryContext(purpose,query,at)},id);
     const response=await this.request(analysisInstructions(r.kind,r.kind==='training'?coachInstructions(this.store.coachProfile(),'训练记录').text:'',this.promptVersion),prompt,r.attachments.slice(0,4).map((_,i)=>this.store.attachmentData(id,i)),this.settings().provider,()=>{});
     if(this.cancelRequested)throw new Error('分析已取消，尚未保存这条结果。');
-    const value=parseModelJSON(response.text),record=this.store.applyAnalysis(id,value,this.settings().provider,r.revision,false,this.modelRun());this.store.saveEpisodeCandidates((value as any)?.episodeCandidates,{recordId:id,recordRevision:record.revision},r.text,r.occurredAt);this.emit({type:'changed',scopes:['records','overview','energy','profile','trends','messages']});return record;
+    const value=parseModelJSON(response.text);
+    if(this.store.record(id).revision!==r.revision){
+      try {this.store.keepAnalysisHistory(r,value,this.settings().provider,this.modelRun());}
+      catch(error){throw Error('分析期间记录已修改。旧回答未通过校验：'+readableError(error));}
+      throw Error('分析期间记录已修改，返回结果保存在修改历史。');
+    }
+    const record=this.store.applyAnalysis(id,value,this.settings().provider,r.revision,false,this.modelRun());this.store.saveEpisodeCandidates((value as any)?.episodeCandidates,{recordId:id,recordRevision:record.revision},r.text,r.occurredAt);this.emit({type:'changed',scopes:['records','overview','energy','profile','trends','messages']});return record;
   }
   async chat(question:string){return this.exclusive(async()=>{
     question=question.trim();if(!question||question.length>10000)throw new Error('请输入 1–10000 字的问题');

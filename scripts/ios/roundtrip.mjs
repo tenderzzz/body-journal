@@ -67,6 +67,7 @@ try {
   iphone.on('pageerror', (e) => errors.push(e.message));
   let connected = false;
   await iphone.exposeFunction('syntheticJournal', (opts) => {
+    if (opts.method === 'modelRead') return {value:null};
     if (opts.method === 'identity') return { device, archive, enabled: true, folder: '测试目录' };
     if (opts.method === 'folder' && !connected) throw Error('测试设备处于离线状态');
     if (opts.method === 'pick') return { photos: [photo] };

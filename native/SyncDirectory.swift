@@ -89,7 +89,7 @@ final class SyncDirectory {
   }
   private func allowed(_ name: String) -> Bool {
     name.range(
-      of: "^(op-\(guid)|ack-\(guid)-\(guid)|img-[a-f0-9]{64}|overview-\(guid)|view-[a-f0-9]{64})$", options: .regularExpression) != nil
+      of: "^(op-\(guid)|ack-\(guid)-\(guid)|img-[a-f0-9]{64}|overview-\(guid)|view-[a-f0-9]{64}|library-\(guid)|ready-\(guid)|part-[a-f0-9]{64}|attempt-\(guid))$", options: .regularExpression) != nil
   }
   private func plain(_ data: Data, _ name: String) throws -> Data {
     do {
@@ -168,9 +168,9 @@ final class SyncDirectory {
     let limit = name.hasPrefix("img-") ? 20 * 1024 * 1024 + 28 : 1024 * 1024
     return try coordinated(url, writing: false) {
       let data = try self.plain(self.localBytes($0, limit: limit), name)
-      if name.hasPrefix("view-") {
+      if name.hasPrefix("view-") || name.hasPrefix("part-") {
         let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-        guard name == "view-" + digest else { throw JournalFailure("统计内容校验失败，稍后会重新下载。") }
+        guard name.hasSuffix(digest) else { throw JournalFailure("统计内容校验失败，稍后会重新下载。") }
       }
       return data
     }
@@ -180,7 +180,7 @@ final class SyncDirectory {
     let url = root.appendingPathComponent(name)
     try coordinated(url, writing: true) { target in
       if self.fm.fileExists(atPath: target.path) {
-        let mutable = name.hasPrefix("overview-")
+        let mutable = name.hasPrefix("overview-") || name.hasPrefix("library-")
         let existing = try self.localBytes(target, limit: mutable ? 1024 * 1024 : data.count + 28)
         if try self.plain(existing, name) == data { return }
         if mutable {

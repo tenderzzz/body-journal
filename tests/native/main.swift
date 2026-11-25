@@ -8,6 +8,9 @@ do {
   let db = try PhoneDatabase(root: URL(fileURLWithPath: args["local"] as! String))
   var output: [String: Any] = [:]
   switch args["method"] as! String {
+  case "personalBackup": try db.backupPersonal()
+  case "personalGet": output["doc"] = (try db.get(args["name"] as! String) as Any?) ?? NSNull()
+  case "personalSet": try db.set(args["name"] as! String, args["doc"] as! String)
   case "insights": output["doc"] = (try db.get("insights") as Any?) ?? NSNull()
   case "saveInsights": try db.set("insights", args["doc"] as! String)
   case "rows": output["rows"] = try db.rows()

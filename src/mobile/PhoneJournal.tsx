@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useMemo, useEffect, useState } from 'react';
 import {
   ArrowLeft,
   ChevronLeft,
@@ -32,9 +32,19 @@ import { SyncConflict } from '../ui/SyncConflict';
 import { PhoneJournalModel, stamp, stepsForDay, type PhoneIdentity, type Row } from './journal';
 import { InsightPage } from './PhoneInsights';
 import type { PhoneInsights } from '../shared/phone-insights';
+import { PhoneAnalysis, healthRecord } from './analysis';
+import { detailOf } from '../shared/record-detail';
+import { RecordAnalysis } from './RecordAnalysis';
+import { localInsights } from './local-insights';
+import type { PersonalLibrary } from '../shared/personal-library';
+import { LibraryPanel } from './LibraryPanel';
+import { MobileModels } from './models';
+import { ModelSettings } from './ModelSettings';
 import './phone.css';
 
 const model = new PhoneJournalModel();
+const models = new MobileModels(model);
+const analysis = new PhoneAnalysis(model, models);
 const labels = { meal: '记一餐', training: '记训练', body: '记身体', note: '随手记', steps: '记步数' };
 const kinds = { meal: '餐食', training: '训练', body: '身体', note: '手记', steps: '步数' };
 const icons = { meal: Utensils, training: Dumbbell, body: Scale, note: StickyNote, steps: Footprints };
@@ -140,7 +150,7 @@ function PhotoConsent({
   shared: PhotoRef[];
   set: (v: number[]) => void;
 }) {
-  if (r.kind !== 'meal' || !r.photos.length) return null;
+  if (!['meal', 'training', 'note'].includes(r.kind) || !r.photos.length) return null;
   return (
     <div className="consent-photos">
       {r.photos.map((p, i) => (
@@ -174,6 +184,13 @@ function Editor({
 }) {
   const [r, set] = useState<PhoneRecord>(() => structuredClone(original)),
     [time, setTime] = useState(fieldTime(original));
+  const [sharingLibrary, setSharingLibrary] = useState(false);
+  useEffect(() => {
+    void model
+      .migrationOn()
+      .then((v) => setSharingLibrary(!!v))
+      .catch(() => {});
+  }, []);
   const [photos, select] = useState<number[]>([]),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
@@ -204,7 +221,14 @@ function Editor({
               r.timezone,
             );
       if (!instant) throw Error('请核对发生时间。');
-      saved(await model.save({ ...r, occurredAt: instant }, base ? stamp(base) : null, photos));
+      const fresh = { ...r, occurredAt: instant };
+      if (!base)
+        fresh.detail = detailOf({
+          ...healthRecord(fresh),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+      saved(await model.save(fresh, base ? stamp(base) : null, photos));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -247,7 +271,11 @@ function Editor({
                 >
                   昨天
                 </button>
-                <button type="button" aria-pressed={stepDate === today} onClick={() => changeStepDate(today)}>
+                <button
+                  type="button"
+                  aria-pressed={stepDate === today}
+                  onClick={() => changeStepDate(today)}
+                >
                   今天
                 </button>
               </div>
@@ -370,8 +398,35 @@ function Editor({
               onClick={async () => {
                 setBusy(true);
                 try {
-                  const v = await model.call<{ photos?: PhotoRef[] }>('pick', { limit: 8 - r.photos.length });
-                  if (v.photos) update({ photos: [...r.photos, ...v.photos] });
+                  const result = await model.call<{ photos?: PhotoRef[] }>('camera');
+                  if (result.photos) {
+                    update({ photos: [...r.photos, ...result.photos] });
+                    if (id.archive) select([...photos, r.photos.length]);
+                  }
+                } catch (e) {
+                  setError((e as Error).message);
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              拍照
+            </button>
+          )}
+          {!base && ['meal', 'training', 'note'].includes(r.kind) && r.photos.length < 8 && (
+            <button
+              type="button"
+              className="secondary"
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  const v = await model.call<{ photos?: PhotoRef[] }>('pick', {
+                    limit: 8 - r.photos.length,
+                  });
+                  if (v.photos) {
+                    update({ photos: [...r.photos, ...v.photos] });
+                    if (id.archive) select([...photos, ...v.photos.map((_, i) => r.photos.length + i)]);
+                  }
                 } catch (e) {
                   setError((e as Error).message);
                 } finally {
@@ -386,12 +441,16 @@ function Editor({
           {id.archive && (
             <div className="share-choice">
               <small>{id.enabled ? '保存后自动同步。' : '同步已暂停，恢复后会自动发送。'}</small>
-              <PhotoConsent
-                r={r}
-                selected={photos}
-                set={select}
-                shared={base?.replica ? heads(base.replica)[0].record.photos : []}
-              />
+              {sharingLibrary && r.photos.length > 0 ? (
+                <small>完整档案会同步原照片。分析时可以另选发给模型的照片。</small>
+              ) : (
+                <PhotoConsent
+                  r={r}
+                  selected={photos}
+                  set={select}
+                  shared={base?.replica ? heads(base.replica)[0].record.photos : []}
+                />
+              )}
             </div>
           )}
           {error && <p role="alert">{error}</p>}
@@ -445,6 +504,8 @@ function Pairing({
   return (
     <main className="phone-content">
       <h1>设备同步</h1>
+      <ModelSettings models={models} />
+      <LibraryPanel model={model} sync={sync} at={report?.at} />
       <p>
         {id.archive
           ? id.enabled
@@ -564,8 +625,19 @@ export function PhoneJournal() {
     [notice, setNotice] = useState('');
   const date = timelineDay?.date ?? journalDay(new Date().toISOString(), zone());
   const setDate = (day: string) => setTimelineDay({ date: day, chosen: true });
+  const [library, setLibrary] = useState<PersonalLibrary | null>(null);
+  const computed = useMemo(
+    () => (identity ? localInsights(rows, library, view, identity) : view),
+    [rows, library, view, identity],
+  );
   const reload = async () => {
-    const [id, list, insights] = await Promise.all([model.identity(), model.rows(), model.insights()]);
+    const [id, list, insights, history] = await Promise.all([
+      model.identity(),
+      model.rows(),
+      model.insights(),
+      model.library(),
+    ]);
+    setLibrary(history);
     setView(insights?.manifest.archive === id.archive ? insights : null);
     setId(id);
     setRows(list);
@@ -719,6 +791,9 @@ export function PhoneJournal() {
               <PhonePhoto key={photoKey(p, i)} photo={p} index={i} refresh={report?.at} />
             ))}
           </div>
+          {['meal', 'training'].includes(r.kind) && (
+            <RecordAnalysis key={r.id} row={row} service={analysis} model={model} changed={changed} />
+          )}
           <p className="delivery">{deliveryLabel(row.replica, identity.device)}</p>
           {row.replica && (
             <SyncConflict
@@ -750,7 +825,7 @@ export function PhoneJournal() {
       ) : page === 'energy' || page === 'trends' ? (
         <InsightPage
           page={page}
-          view={view}
+          view={computed}
           paired={!!identity.archive}
           connect={() => setPage('sync')}
           openDay={(d) => {
@@ -761,7 +836,14 @@ export function PhoneJournal() {
           }}
         />
       ) : page === 'sync' ? (
-        <Pairing id={identity} report={report} refresh={reload} sync={sync} rows={rows} open={setSelected} />
+        <Pairing
+          id={identity}
+          report={report}
+          refresh={reload}
+          sync={sync}
+          rows={rows}
+          open={setSelected}
+        />
       ) : (
         <main className="phone-content">
           <header className="book-heading">

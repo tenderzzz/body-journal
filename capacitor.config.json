@@ -1,6 +1,7 @@
 {
   "appId": "local.bodyjournal.personal.ios",
   "appName": "身体手记",
+  "loggingBehavior": "none",
   "webDir": "dist-mobile",
   "ios": { "contentInset": "never" }
 }

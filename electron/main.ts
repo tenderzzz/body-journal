@@ -1,3 +1,4 @@
+import {migrationPreview,confirmMigration} from './core/personal-library';
 import {MacDeviceSync} from './core/device-folder';
 import {todaySummary,setTodayRest} from './core/today';
 import {JournalQueries} from './core/queries';
@@ -46,6 +47,8 @@ async function chooseImages(){const picked=await dialog.showOpenDialog(win,{titl
 async function invoke(action:string,payload:any) {
   payload=validateMutation(action,payload);
   switch(action){
+    case 'device:migrationPreview':return migrationPreview(store);
+    case 'device:migrationConfirm':confirmMigration(store,z.string().uuid().parse(payload.ticket));deviceSync.request();return deviceSync.status();
     case 'device:status':return deviceSync.status();
     case 'device:sync':return deviceSync.sync();
     case 'device:pause':return deviceSync.pause();

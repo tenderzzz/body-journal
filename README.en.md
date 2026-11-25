@@ -1,5 +1,7 @@
 # BodyJournal · 身体手记
 
+The personal iPhone app can analyze meals and workouts directly with the selected provider. It recalculates portions, daily energy and trends on the device. Mac and iPhone exchange saved results through a paired encrypted iCloud Drive folder. [iPhone setup and migration](docs/iphone.md)
+
 **A local-first journal that connects workouts, meals, body measurements, and everyday notes.**
 
 Capture on iPhone with Apple Shortcuts, deliver through an iCloud inbox, and keep your journal on your Mac. Invoke AI when you want to interpret photos, review training, or discuss goals.
@@ -77,7 +79,7 @@ Quit any running instance first. Demo mode uses an isolated synthetic journal; p
 - Health records and exported backups are **not encrypted by the application**. Credentials use macOS-protected storage and are excluded from health backups. Soft deletion retains recoverable data. Details: [privacy documentation (Chinese)](docs/privacy.md).
 - Energy and nutrition are estimates. Provisional step references are product assumptions, not individually validated expenditure measurements. This application does not provide medical diagnosis or treatment.
 - Automated checks use synthetic data and mocked model responses. They do not establish live model quality, account access, or iPhone/iCloud reliability in your environment.
-- Apple Health, automatic watch sync, a native iPhone app, proactive background advice, Windows and Intel Mac distributions are outside the current release.
+- Apple Health, automatic watch sync, proactive background advice, Windows and Intel Mac distributions are outside the current release.
 
 ## Contribute
 

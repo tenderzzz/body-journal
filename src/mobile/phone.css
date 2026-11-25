@@ -624,3 +624,26 @@ summary:focus-visible {
   align-items: center;
   justify-content: space-between;
 }
+
+.phone-model, .phone-analysis {
+  padding: 16px 0;
+  border-block-start: 1px solid #d4e0dc;
+}
+.phone-model summary, .phone-analysis h2 { font-weight: 650; color: #24463c; }
+.phone-model fieldset, .phone-analysis fieldset { display: grid; gap: 10px; margin-top: 12px; }
+.phone-model fieldset > label, .phone-analysis fieldset > label { margin: 0; }
+.phone-model select, .phone-analysis select {
+  min-height: 44px;
+  max-width: 100%;
+  border: 1px solid #acc0b8;
+  border-radius: 7px;
+  background: white;
+  color: #28483f;
+  padding: 6px 10px;
+  font: inherit;
+}
+.phone-model label > select { display: block; width: 100%; margin-top: 6px; }
+.phone-model button, .phone-analysis button { min-height: 44px; }
+.food-correction { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 10px 0; border-block-start: 1px solid #dce6e1; }
+.food-correction span { min-width: 0; overflow-wrap: anywhere; }
+.food-correction small { display: block; color: #4c6961; }
