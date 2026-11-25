@@ -11,7 +11,7 @@ import {
 } from '../../src/shared/personal-library';
 import { heads, photoSchema, type Identity } from '../../src/shared/device-sync';
 import type { ExchangeFolder } from '../../src/shared/device-exchange';
-import type { HealthRecord } from '../../src/shared/types';
+import type { HealthRecord, Memory } from '../../src/shared/types';
 export const hashText = async (text: string) => createHash('sha256').update(text).digest('hex');
 function revisions(store: HealthStore): LibraryRevision[] {
   return store.db
@@ -111,6 +111,10 @@ export function confirmMigration(store: HealthStore, ticket: string) {
 }
 function restoreLibrary(store: HealthStore, data: PersonalLibrary) {
   store.transaction(() => {
+    const defaults = store.getConfig<Memory[]>('initialMemoryDefaults') ?? [];
+    const removeDefault = store.db.prepare('DELETE FROM memories WHERE id=? AND doc=?');
+    for (const initial of defaults) removeDefault.run(initial.id, JSON.stringify(initial));
+    if (defaults.length) store.setConfig('initialMemoryDefaults', []);
     for (const table of ['memories', 'messages'] as const) {
       for (const doc of data[table])
         store.db

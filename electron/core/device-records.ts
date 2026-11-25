@@ -148,7 +148,19 @@ export class MacReplicas implements ReplicaStore {
     this.put(r.id, next);
     return true;
   }
-  async accept(op: Operation) {
+  // A fresh reader gets original revisions from the library. Replaying old packets
+  // as new edits would create a second, locally dated history for the same records.
+  forExchange(files: string[]): ReplicaStore {
+    if (!this.store.getConfig('personalRestoreReader') || this.store.getConfig('personalRestoreHash') ||
+        !files.some((file) => file.startsWith('library-'))) return this;
+    return {
+      replicas: () => this.replicas(),
+      accept: (op) => this.accept(op, true),
+      mark: (id, op, status) => this.mark(id, op, status),
+      hydrate: (id, photos) => this.hydrate(id, photos, true),
+    };
+  }
+  async accept(op: Operation, restoring = false) {
     return this.store.transaction(() => {
       const prior = this.get(op.record.id) ?? emptyReplica();
       const next = addOperation(prior, op, this.archive ?? '');
@@ -157,14 +169,17 @@ export class MacReplicas implements ReplicaStore {
       if (!prior.ops.length && this.store.db.prepare('SELECT 1 FROM records WHERE id=?').get(op.record.id))
         throw Error('本机已有同编号记录。请先在记录详情核对并选入，再处理版本。');
       this.put(op.record.id, next);
-      this.materialize(prior, next);
+      this.materialize(prior, next, restoring);
       return 'added' as const;
     });
   }
-  private materialize(prior: Replica, next: Replica) {
+  private materialize(prior: Replica, next: Replica, restoring = false) {
     const previous = heads(prior)[0],
       chosen = heads(next)[0];
-    if (previous?.id !== chosen.id) this.store.applyDeviceRecord(chosen.record, previous?.record);
+    if (previous?.id !== chosen.id) {
+      const replay = restoring && !next.ops.some((op) => op.device === this.device);
+      this.store.applyDeviceRecord(chosen.record, previous?.record, replay ? 'archive' : 'change');
+    }
   }
   resolve(id: string, parents: string[], choice: string, text?: string) {
     this.store.transaction(() => {
@@ -181,8 +196,11 @@ export class MacReplicas implements ReplicaStore {
     const r = this.get(id);
     if (r && !r[status].includes(op)) this.put(id, { ...r, [status]: [...r[status], op] });
   }
-  async hydrate(id: string) {
-    const r = this.get(id);
-    if (r) this.store.transaction(() => this.store.applyDeviceRecord(heads(r)[0].record, heads(r)[0].record, true));
+  async hydrate(id: string, _photos: PhotoRef[] = [], restoring = false) {
+    const replica = this.get(id);
+    if (!replica) return;
+    const record = heads(replica)[0].record;
+    const replay = restoring && !replica.ops.some((op) => op.device === this.device);
+    this.store.transaction(() => this.store.applyDeviceRecord(record, record, replay ? 'archive' : 'hydrate'));
   }
 }

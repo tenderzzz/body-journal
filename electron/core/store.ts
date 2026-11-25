@@ -269,7 +269,9 @@ export class HealthStore {
     this.db.prepare("DELETE FROM memory_episodes WHERE json_extract(doc,'$.recordId')=?").run(old.id);if(!updated.deleted)this.saveEpisode(updated.text,updated.occurredAt,{recordId:old.id,recordRevision:next.revision});
     this.refreshAutomaticMemories(); return result;
   }
-  applyDeviceRecord(wire:SyncRecord,previous?:SyncRecord,hydrating=false){
+  applyDeviceRecord(wire:SyncRecord,previous?:SyncRecord,mode:'change'|'hydrate'|'archive'='change'){
+    const hydrating=mode==='hydrate';
+    const restoring=mode==='archive';
     const found=this.db.prepare('SELECT doc FROM records WHERE id=?').get(wire.id);
     const incoming=wire.photos.flatMap((p,index)=>{
       const file='attachments/'+wire.id+'/'+p.hash+'.'+p.mime.split('/')[1];
@@ -289,17 +291,18 @@ export class HealthStore {
     const received=detail?{analysis:detail.analysis,status:detail.status,followups:detail.followups,analysisPending:detail.pending,dishId:detail.dishId,analysisError:undefined}:{};
     this.applyingDevice=true;
     try{
-      if(!found){
-        const parsed=stepAnalysis?{analysis:stepAnalysis,status:'ready' as const}:this.localStatus({kind,text:wire.text,body},wire.occurredAt);
+      if(!found||restoring){
+        const parsed=detail?{analysis:detail.analysis,status:detail.status}:stepAnalysis?{analysis:stepAnalysis,status:'ready' as const}:this.localStatus({kind,text:wire.text,body},wire.occurredAt);
         const r:HealthRecord={id:wire.id,kind,text:wire.text,occurredAt:wire.occurredAt,timezone:wire.timezone,
           dateLocked:true,body,attachments:incoming,...parsed,userPortions:wire.portions,deleted:wire.deleted,
           revision:1,createdAt:iso(),updatedAt:iso(),source:'iPhone 双向同步',analysisPending:kind!=='body'&&!activity};
         if(detail)Object.assign(r,received,{createdAt:detail.createdAt,updatedAt:detail.updatedAt,revision:detail.revision});
         else if(wire.portions.length)r.analysis=portionAnalysis(r);
         atomicWrite(path.join(this.root,'raw',wire.id+'.json'),JSON.stringify({version:1,id:r.id,kind:r.kind,text:r.text,occurredAt:r.occurredAt,timezone:r.timezone,body:wire.body,attachments:r.attachments}));
-        this.putRecord(r,sha256('device-sync/'+r.id));
+        this.putRecord(r,found?undefined:sha256('device-sync/'+r.id));
+        if(restoring&&found)this.db.prepare("DELETE FROM memory_episodes WHERE json_extract(doc,'$.recordId')=?").run(r.id);
         if(!r.deleted)this.saveEpisode(r.text,r.occurredAt,{recordId:r.id,recordRevision:r.revision});
-        this.refreshAutomaticMemories();
+        if(!restoring)this.refreshAutomaticMemories();
         return;
       }
       let r=parseJSON<HealthRecord>(found.doc);

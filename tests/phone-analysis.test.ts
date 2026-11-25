@@ -261,4 +261,21 @@ test('migration requires two local backups and consent, chunks recover after int
   assert.equal(heads(rows[0].replica!)[0].record.id, r.id);
   const phone = localInsights(rows, lib, null, { ...fresh, enabled: true }, now)!;
   assert.deepEqual(phone.days, [...buildInsights(store, now).months.values()].flat());
+  const replacement = new HealthStore(path.join(root, 'replacement'), new FoodCatalog(data.foods), path.join(root, 'other-inbox'));
+  t.after(() => replacement.close());
+  replacement.migrateMemoryTopics();
+  replacement.deviceRecords.bind(archive);
+  replacement.setConfig('personalRestoreReader', true);
+  const other = { archive, device: replacement.deviceRecords.device };
+  const filesOnDisk = [...files.keys()];
+  const receivingStore = replacement.deviceRecords.forExchange(filesOnDisk);
+  await exchange(other, receivingStore, folder, filesOnDisk);
+  await new PersonalSync(replacement).exchange(other, folder, filesOnDisk);
+  const revisionHistory = (s: HealthStore) =>
+    s.db.prepare('SELECT entity,id,at,doc FROM revisions ORDER BY seq').all()
+      .map((r) => ({ ...r, doc: JSON.parse(String(r.doc)) }));
+  assert.deepEqual(revisionHistory(replacement), revisionHistory(store));
+  assert.equal(replacement.record(r.id).revision, store.record(r.id).revision);
+  assert.equal(replacement.record(r.id).updatedAt, store.record(r.id).updatedAt);
+  assert.deepEqual(replacement.memories().map((m) => m.id).sort(), store.memories().map((m) => m.id).sort());
 });

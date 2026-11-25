@@ -192,7 +192,7 @@ export class MacDeviceSync {
       );
       this.store.deviceRecords.backfill();
       const files = await dir.list();
-      this.report = await exchange({ archive, device }, this.store.deviceRecords, dir, files);
+      this.report = await exchange({ archive, device }, this.store.deviceRecords.forExchange(files), dir, files);
       try {
         if (await this.personal.exchange({ archive, device }, dir, files)) this.requestedWhileRunning = true;
       } catch (e) {
