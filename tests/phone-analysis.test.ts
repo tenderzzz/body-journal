@@ -263,6 +263,8 @@ test('migration requires two local backups and consent, chunks recover after int
   assert.deepEqual(phone.days, [...buildInsights(store, now).months.values()].flat());
   const replacement = new HealthStore(path.join(root, 'replacement'), new FoodCatalog(data.foods), path.join(root, 'other-inbox'));
   t.after(() => replacement.close());
+  assert.equal(replacement.getSettings().goals.goal, '');
+  assert.deepEqual(replacement.memories(), []);
   replacement.migrateMemoryTopics();
   replacement.deviceRecords.bind(archive);
   replacement.setConfig('personalRestoreReader', true);

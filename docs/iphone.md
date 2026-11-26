@@ -42,7 +42,7 @@ iCloud 目录中的上述文件均为加密文件，由应用管理。两端数�
 1. 在 Mac 打开官方 AltServer macOS 压缩包，解压后把 `AltServer.app` 拖入「应用程序」并打开。菜单栏出现菱形图标，即可继续。[AltServer 官方下载](https://cdn.altstore.io/file/altstore/altserver.zip)
 2. 用 USB 连接 iPhone，解锁，按提示在两端点「信任」。Mac 打开访达，在侧边栏点 iPhone →「通用」，勾选「连接到 Wi-Fi 时显示此 iPhone」并点「应用」。后续同一 Wi-Fi 下可无线刷新。
 3. 点击 Mac 菜单栏的 AltServer 菱形 → **Install AltStore** → 你的 iPhone。按 AltServer 的提示用自己的 Apple 账号登录。手机主屏幕出现 **AltStore** 后，打开「设置 → 通用 → VPN 与设备管理」，选自己的开发者账号并信任。再到「设置 → 隐私与安全性 → 开发者模式」打开开关，按提示重启并在解锁后确认。[AltStore 官方 Mac 安装图解](https://faq.altstore.io/altstore-classic/how-to-install-altstore-macos)
-4. 将 `BodyJournal-iPhone.ipa` 放在 iPhone「文件」能看到的位置。可以用 iCloud Drive，保存安装包的地方和稍后选择的共享目录分开。保持 AltServer 运行，在 iPhone 打开 AltStore → **My Apps → 左上角 +**，选择这个 IPA，按提示使用同一 Apple 账号签名。My Apps 出现「身体手记」且点开能看到五个录入按钮，即安装成功。安装包也可从仓库 iPhone 构建运行下载。[iPhone 构建记录](https://github.com/tenderzzz/body-journal/actions/workflows/ios-package.yml)
+4. 将 `BodyJournal-iPhone.ipa` 放在 iPhone「文件」能看到的位置。可以用 iCloud Drive，保存安装包的地方和稍后选择的共享目录分开。保持 AltServer 运行，在 iPhone 打开 AltStore → **My Apps → 左上角 +**，选择这个 IPA，按提示使用同一 Apple 账号签名。My Apps 出现「身体手记」且点开能看到五个录入按钮，即安装成功。公开 IPA 由版本标签构建，使用你自己的 Apple 账号签名。[下载 iPhone 安装包](https://github.com/tenderzzz/body-journal/releases/latest/download/BodyJournal-iPhone.ipa)
 5. Mac 首次试用在项目中双击「查看示例.command」。看到侧栏「示例档案 · 与真实数据隔离」，再进入「连接与数据 → iPhone 双向同步」。「选择空目录并创建档案」时，在 iCloud Drive 新建一个空文件夹，例如「身体手记同步试用」。点「显示配对码 / 恢复码」，用自己的密码管理器保存恢复码。
 6. iPhone 打开身体手记 →「同步 → 扫描 Mac 配对码」，轻点取景框中的二维码，或填写恢复码。系统「文件」弹出时，选择第 5 步的文件夹。看到「已连接」后，把身体手记从 App 切换器划掉再打开，确认目录仍是同一个。若提示档案标记未到，先在「文件」里打开该目录并等待 iCloud 下载，再重选。
 

@@ -1,4 +1,4 @@
-name: macOS 安装包
+name: Mac 与 iPhone 安装包
 
 # 触发方式：
 #   1. 推送 v* 标签（如 v0.2.2）：构建、测试，并把安装包与校验文件发布到同名 GitHub Release。
@@ -30,7 +30,7 @@ concurrency:
 
 jobs:
   package:
-    name: Build and publish macOS app
+    name: Build and publish release packages
     # 当前 macos-latest 是 macOS 26 arm64（Apple Silicon）标准 runner；打包脚本固定产出 arm64 包。
     runs-on: macos-latest
     timeout-minutes: 45
@@ -89,6 +89,9 @@ jobs:
       - name: Build and package
         run: npm run package
 
+      - name: Build unsigned iPhone app
+        run: npm run ios:ipa
+
       - name: Verify package and normalize asset names
         shell: bash
         run: |
@@ -96,7 +99,8 @@ jobs:
           cd release
           # 发布资产统一用 ASCII 文件名，避免下载工具处理中文名时出问题（与 README 一致）。
           mv "身体手记-mac-arm64.zip" "body-journal-mac-arm64.zip"
-          shasum -a 256 body-journal-mac-arm64.zip > SHA256SUMS.txt
+          shasum -a 256 body-journal-mac-arm64.zip BodyJournal-iPhone.ipa > SHA256SUMS.txt
+          shasum -a 256 -c SHA256SUMS.txt
           cat SHA256SUMS.txt
           # 解压一遍并验证 ad-hoc 签名，确认要上传的就是能正常打开的 app。
           rm -rf /tmp/bodyjournal-verify
@@ -116,9 +120,10 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
         with:
-          name: body-journal-mac-arm64
+          name: body-journal-installers
           path: |
             release/body-journal-mac-arm64.zip
+            release/BodyJournal-iPhone.ipa
             release/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
@@ -129,33 +134,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          electron_version="$(node -p "require('electron/package.json').version")"
-          prev_tag="$(git describe --tags --abbrev=0 "$RELEASE_TAG^" 2>/dev/null || true)"
           {
-            # 注意：macOS 自带的 bash 3.2 在 UTF-8 locale 下会把紧跟变量的全角标点当成变量名的一部分，
-            # 所以变量后面接中文标点时一律写成 ${var} 形式。
-            echo "本版本由 GitHub Actions 在 GitHub 托管的 macOS（Apple Silicon）runner 上自动构建：Electron ${electron_version}，本地 ad-hoc 签名，未经 Apple Developer ID 公证。"
+            awk -v v="${RELEASE_TAG#v}" '/^## / {if (found) exit; found=($2==v); next} found {print}' CHANGELOG.md
             echo
-            echo "### 本版本提交"
+            echo 'Mac 下载 `body-journal-mac-arm64.zip` 并解压，使用「隐私与安全性」确认首次打开。'
+            echo 'iPhone 下载 `BodyJournal-iPhone.ipa`，用自己的 Apple 账号在 AltStore Classic 中签名安装。'
+            echo '下载两个安装包和 `SHA256SUMS.txt` 后，可运行 `shasum -a 256 -c SHA256SUMS.txt` 核对。'
             echo
-            if [ -n "$prev_tag" ]; then
-              git log --pretty='- %s' -n 30 "$prev_tag..$RELEASE_TAG"
-              echo
-              echo "**完整变更**：$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$prev_tag...$RELEASE_TAG"
-            else
-              git log --pretty='- %s' -n 30 "$RELEASE_TAG"
-            fi
-            echo
-            echo "### 安装"
-            echo
-            echo "1. 下载 \`body-journal-mac-arm64.zip\` 并解压。"
-            echo "2. 把 \`身体手记.app\` 放进「应用程序」（~/Applications）或任意位置打开。"
-            echo "3. 首次打开若被系统拦截，在 Finder 中右键应用 →「打开」。"
-            echo "4. 校验：\`shasum -a 256 body-journal-mac-arm64.zip\`，与 \`SHA256SUMS.txt\` 对照。"
-            echo
-            echo "手机快捷指令：发布包只包含 unsigned 源文件；请用自己的 Apple 账号签名（见 README）。"
+            echo "[iPhone 安装、配对与恢复]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$RELEASE_TAG/docs/iphone.md)"
           } > release/RELEASE_NOTES.md
-          cat release/RELEASE_NOTES.md
 
       - name: Publish GitHub Release
         if: env.IS_RELEASE == 'true'
@@ -169,6 +156,7 @@ jobs:
             echo "Release $RELEASE_TAG 已存在（isDraft=${release_draft}），覆盖上传资产"
             gh release upload "$RELEASE_TAG" \
               release/body-journal-mac-arm64.zip \
+              release/BodyJournal-iPhone.ipa \
               release/SHA256SUMS.txt \
               --clobber --repo "$GITHUB_REPOSITORY"
             if [ "$release_draft" = "true" ]; then
@@ -179,6 +167,7 @@ jobs:
             echo "创建 Release $RELEASE_TAG"
             gh release create "$RELEASE_TAG" \
               release/body-journal-mac-arm64.zip \
+              release/BodyJournal-iPhone.ipa \
               release/SHA256SUMS.txt \
               --repo "$GITHUB_REPOSITORY" \
               --title "身体手记 $RELEASE_TAG" \

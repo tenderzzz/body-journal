@@ -111,7 +111,7 @@ test('adding a common food in chat does not require the word 记住',t=>{
  const reply={id:'assistant-message-food1',role:'assistant' as const,text:'已添加。',createdAt:now(),status:'complete' as const,sources:[],provider:'chatgpt',stale:false};
  store.completeChat(reply,[{operation:'upsert',key:'food.sample_oat_square',kind:'food',food:{name:'青柠燕麦方块',servingGrams:100,perServing:{kcal:248,protein:7.5,carbs:37.5,fat:7.8}},evidenceQuote:quote}],user,store.memories(),store.getSettings().goals);
  const preset=store.foodPresets().find(p=>p.name==='青柠燕麦方块');
- assert.ok(preset);assert.equal(preset!.perServing.protein,7.5);
+ assert.ok(preset,store.messages().at(-1)?.memoryWarnings?.join(' / '));assert.equal(preset!.perServing.protein,7.5);
 });
 
 test('label-like nutrition stated as a long-term fact is accepted automatically',t=>{

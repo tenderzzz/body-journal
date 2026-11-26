@@ -130,7 +130,7 @@ git tag v0.4.1
 git push origin main v0.4.1
 ```
 
-以上假定功能与文档已提交、当前分支为准备发布的 `main`。工作流会再次校验版本、安装依赖、运行测试与打包，把压缩包重命名为 `body-journal-mac-arm64.zip`，生成 `SHA256SUMS.txt`，解压检查签名，再上传 Release。它不运行桌面界面测试，也不验证真实模型或 iPhone。
+工作流从标签构建 Apple Silicon Mac 安装包和未签名 iPhone IPA，校验两个下载文件，并用解压后的 Mac 应用运行四组桌面界面测试。手机上的模型授权和配对可按 iPhone 使用说明验证。
 
 发布后核对 Actions 结果、Release 标签、安装包与校验文件，并同步版本说明。纯文档整理通常无需升级应用版本或重新发布安装包。
 

@@ -4,7 +4,7 @@ The personal iPhone app can analyze meals and workouts directly with the selecte
 
 **A local-first journal that connects workouts, meals, body measurements, and everyday notes.**
 
-Capture on iPhone with Apple Shortcuts, deliver through an iCloud inbox, and keep your journal on your Mac. Invoke AI when you want to interpret photos, review training, or discuss goals.
+Capture on either device, or use Apple Shortcuts to send an entry to the Mac inbox. Connect your preferred model when you want to interpret photos, review training, or discuss goals.
 
 [Download](https://github.com/tenderzzz/body-journal/releases/latest) · [中文](README.md) · [Documentation (Chinese)](docs/README.md) · [Changelog](CHANGELOG.md)
 
@@ -16,7 +16,7 @@ Capture on iPhone with Apple Shortcuts, deliver through an iCloud inbox, and kee
 
 ## iPhone companion
 
-Version 0.8.0 automatically syncs historical and new journal entries over the paired, encrypted iCloud Drive folder. The iPhone can record offline and display the Mac's energy, nutrition, steps, measurements and training summaries. Existing pairs retain their folder and key. [iPhone setup and sync (Chinese)](docs/iphone.md).
+Analyze a meal or workout on iPhone while the Mac is asleep. Portion edits update the daily energy estimate immediately. Paired devices exchange saved analyses and photos through the same encrypted folder. [Download the unsigned iPhone IPA](https://github.com/tenderzzz/body-journal/releases/latest/download/BodyJournal-iPhone.ipa) · [Setup and recovery guide](docs/iphone.md)
 
 
 ## Local v0.6.0
@@ -27,7 +27,7 @@ Related recent topics can continue across new conversations. Explicit dates quer
 
 | Area | Features |
 | --- | --- |
-| Capture | Four iPhone shortcuts for meals, training, measurements, and notes; manual entries and pasted training notes on Mac. Saving records does not require a model connection. |
+| Capture | iPhone app and five shortcuts for meals, workouts, measurements, notes, and steps; manual entries and pasted training notes on Mac. Saving records does not require a model connection. |
 | Review | Workout volume, running, weight and waist trends; editable exercise names and weight conventions; original text, attachments and revision history. |
 | Nutrition | Photo/text interpretation, ingredient and portion ranges, local nutrient calculations, saved package labels and references to previous meals. Missing meals are not counted as zero intake. |
 | Energy | Local daily expenditure estimates, non-training step adjustments, overlap handling, source details and uncertainty ranges; stable food targets. |
@@ -50,12 +50,12 @@ All screenshots use synthetic demo data. The application currently has a Chinese
 
 ## Get started
 
-The published build targets **macOS on Apple Silicon (arm64)**. This is a personal open-source project with an ad-hoc signature and **no Apple notarization**.
+Releases include an ad-hoc signed app for Apple Silicon Macs and an unsigned IPA for iPhone. The Mac app is distributed without Apple notarization.
 
 1. Download `body-journal-mac-arm64.zip` and `SHA256SUMS.txt` from the [latest release](https://github.com/tenderzzz/body-journal/releases/latest).
 2. Run `shasum -a 256 body-journal-mac-arm64.zip` and compare the result with the checksum from the **same release**. Extract the app and move it to Applications.
 3. If macOS blocks opening, review the app in System Settings → Privacy & Security.
-4. Create a test record on Mac. Configure models when you need AI. For iPhone capture, sign the shortcut sources with your own Apple account and configure the shared inbox; see the [shortcut guide (Chinese)](shortcuts/开始安装.md).
+4. On iPhone, download the IPA from the same release and sign it with your own Apple account in AltStore Classic. You can also build and sign from source in Xcode. [iPhone setup](docs/iphone.md)
 
 The repository and release contain unsigned shortcut sources. They cannot be imported directly on iPhone. The [getting started guide (Chinese)](docs/getting-started.md) covers setup and troubleshooting.
 

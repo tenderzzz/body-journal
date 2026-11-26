@@ -31,6 +31,9 @@ try {
   ).trim();
   if (identifier !== 'local.bodyjournal.personal.ios' || !existsSync(path.join(app, 'public/index.html')))
     throw Error('IPA 标识或离线界面缺失');
+  if (existsSync(path.join(app, 'embedded.mobileprovision')) || existsSync(path.join(app, '_CodeSignature'))) {
+    throw Error('公开 IPA 必须由未签名的构建生成。');
+  }
   const binary = execFileSync('xcrun', ['vtool', '-show-build', path.join(app, 'App')], { encoding: 'utf8' });
   if (!/platform IOS\b/.test(binary)) throw Error('构建产物的目标必须是 iPhone 真机。');
   const payload = path.join(work, 'Payload');

@@ -34,13 +34,15 @@
 
 “测试图文连接”会发送应用自带的示意图；聊天、分析和能量问答会发送该操作所需的记录、相关上下文和图片。详见 [隐私与数据](privacy.md)。
 
-## 4. 连接 iPhone 快捷指令
+## 4. 安装 iPhone App 或使用快捷指令
 
-手机入口是 Apple 快捷指令，不是独立的 iPhone App。需要在两台设备上启用自己的 iCloud Drive。
+从同一个 Release 下载 `BodyJournal-iPhone.ipa`，用自己的 Apple 账号在 AltStore Classic 签名安装，也可以在 Xcode 从源码签名运行。在 Mac「连接与数据」和 iPhone「同步」选择同一 iCloud Drive 文件夹并完成配对。手机可在记录详情发起分析。[iPhone 安装与迁移](iphone.md)
+
+如果选择用快捷指令录入，可按下列步骤配置 Mac 收件箱。
 
 1. 在 Mac 应用“连接与数据”点击“建立并打开收件箱”。默认位置是 iCloud Drive 的 `Shortcuts/BodyJournal/inbox`。
-2. 按 [快捷指令安装说明](../shortcuts/开始安装.md) 在 Mac 用自己的 Apple 账号签名四个快捷指令，再传到 iPhone 安装。仓库的 `shortcuts/unsigned/` 文件不能直接导入。
-3. 安装时，为四个入口都选择同一收件箱。相机、照片和文件夹权限由系统首次使用时询问。
+2. 按 [快捷指令安装说明](../shortcuts/开始安装.md) 在 Mac 用自己的 Apple 账号签名所需的快捷指令，再传到 iPhone 安装。仓库的 `shortcuts/unsigned/` 文件不能直接导入。
+3. 安装时，为各个入口都选择同一收件箱。相机、照片和文件夹权限由系统首次使用时询问。
 4. 先用“随手记”写一句不含隐私的测试文字；看到“已保存”后，等待 iCloud 同步，并检查 Mac 导入结果。
 
 | 入口 | 建议记录 |

@@ -53,7 +53,7 @@ export class HealthStore {
   deviceRecords=new MacReplicas(this);
   private applyingDevice=false;
   syncState: { imported:number;pending:number;errors:string[];at?:string;items?:SyncItem[] }={imported:0,pending:0,errors:[]};
-  constructor(public root:string,public catalog:FoodCatalog,defaultInbox:string,seed=true) {
+  constructor(public root:string,public catalog:FoodCatalog,defaultInbox:string,_legacySeed?:boolean) {
     recoverSwap(root);
     beforeUpgrade(root);
     mkdirSync(root,{recursive:true,mode:0o700});
