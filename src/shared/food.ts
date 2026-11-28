@@ -36,9 +36,22 @@ export function matchFoodPreset(presets:FoodPreset[],name:string,productId?:stri
  return exact.length===1?exact[0]:undefined;
 }
 export function ingredientIdentity(item:Ingredient):string {return item.productId??`${normalizeFoodName(item.name)}|${item.foodState??'unknown'}|${item.compositionGroup??''}`;}
+/** An explicit, single-drink order retains the merchant, recipe and size exactly as entered. */
+export function standaloneDrinkName(text:string,items:readonly Ingredient[]):string|undefined {
+ const name=text.trim();
+ if(!name||name.length>80||/[\r\n+➕]|另加一|另点|外加|加点/u.test(name)||items.length!==1)return;
+ const [item]=items;
+ if(item.excludedFromTotal||item.role==='component'||item.role==='added_fat')return;
+ const drink=name.split(/[,，;；]/u,1)[0].match(/拿铁|奶茶|美式|卡布奇诺|馥芮白|摩卡|咖啡|果茶|酸奶|豆浆|牛奶|果汁|气泡水|蛋白饮|latte|cappuccino|espresso/iu)?.[0];
+ if(drink&&normalizeFoodName(name)!==drink.toLowerCase()&&item.name.toLowerCase().includes(drink.toLowerCase()))return name;
+}
 export function foodCandidatePreset(c:FoodCandidate):FoodPreset {
- const grams=Math.max(1,Math.round((c.latestGrams.low+c.latestGrams.high)/2*10)/10),mid=(r:Range)=>Math.round((r.low+r.high)/2*grams/100*10)/10;
- return {name:c.name,servingGrams:grams,nutritionSource:c.source==='label'?'label':'estimate',perServing:{kcal:mid(c.per100g.kcal),protein:mid(c.per100g.protein),carbs:mid(c.per100g.carbs),fat:mid(c.per100g.fat)}};
+ const amount=c.latestAmount,basis=c.labelBasis;
+ const quantity=amount.unit===basis.unit&&amount.low+amount.high>0?round((amount.low+amount.high)/2):basis.quantity;
+ const mid=(r:Range)=>Math.round((r.low+r.high)/2*quantity/basis.quantity*10)/10;
+ return {name:c.name,labelBasis:{quantity,unit:basis.unit},...(basis.unit==='g'?{servingGrams:quantity}:{}),
+  ...(c.densityGramsPerMl?{densityGramsPerMl:c.densityGramsPerMl}:{}),nutritionSource:c.source==='label'?'label':'estimate',
+  perServing:{kcal:mid(c.perBasis.kcal),protein:mid(c.perBasis.protein),carbs:mid(c.perBasis.carbs),fat:mid(c.perBasis.fat)}};
 }
 export function applyFoodPreset(item:Ingredient,preset:FoodPreset):Ingredient {
  const b=labelBasisOf(preset);let per100g:Macro|undefined;
@@ -49,6 +62,8 @@ export function applyFoodPreset(item:Ingredient,preset:FoodPreset):Ingredient {
 export function prepareMealIngredients(ingredients:Ingredient[],presets:FoodPreset[],options:{previous?:Ingredient[];manual?:boolean;text?:string;attachHashes?:string[]}={}):Ingredient[] {
  const corrections=(options.previous??[]).filter(i=>i.userCorrected),corrected=new Map(corrections.map(i=>[ingredientIdentity(i),i]));
  const nameIdentity=(i:Ingredient)=>`${normalizeFoodName(i.name)}|${i.foodState??'unknown'}|${i.compositionGroup??''}`;
+ const orderName=standaloneDrinkName(options.text??'',ingredients);
+ const orderPreset=orderName?matchFoodPreset(presets,orderName):undefined;
  const prepared=ingredients.map(input=>{
   const sameName=corrections.filter(i=>nameIdentity(i)===nameIdentity(input)&&(!input.productId||i.productId===input.productId));
   const previous=corrected.get(ingredientIdentity(input))??(sameName.length===1?sameName[0]:undefined);
@@ -64,7 +79,7 @@ export function prepareMealIngredients(ingredients:Ingredient[],presets:FoodPres
   // Image evidence traces the OCR to an actual attachment, without claiming OCR verification.
   const currentLabel=label?.source==='label'&&label.provenance==='current'&&(quotedText||imageTrace);
   if(item.userCorrected&&(!!item.nutrition||item.foodId!==null)||currentLabel)return item;
-  const p=matchFoodPreset(presets,item.name,item.productId);
+  const p=(!item.productId||orderPreset&&foodProductId(orderPreset)===item.productId?orderPreset:undefined)??matchFoodPreset(presets,item.name,item.productId);
   if(p)return applyFoodPreset(item,p);
   if(item.nutrition?.provenance==='manual')item={...item,nutrition:{...item.nutrition,provenance:undefined}};
   return item;

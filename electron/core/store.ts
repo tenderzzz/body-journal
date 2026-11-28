@@ -23,7 +23,7 @@ import { z } from 'zod';
 import { resolveRecordDate } from './dates';
 import { automaticMemories } from './personalization';
 import { normalizeAnalysis, DEFAULT_SPLIT, inferSession, strengthDurationMinutes, type ExerciseAlias } from '../../src/shared/exercises';
-import { foodPer100g, foodText, matchFoodPreset, normalizeFoodName,prepareMealIngredients,labelBasisOf,foodProductId,ingredientIdentity } from '../../src/shared/food';
+import { foodPer100g, foodText, matchFoodPreset, normalizeFoodName,prepareMealIngredients,labelBasisOf,foodProductId,ingredientIdentity,ingredientAmount,standaloneDrinkName } from '../../src/shared/food';
 import { mealLabel, mealSlot } from '../../src/shared/meals';
 import { DEFAULT_COACH, weeklyContext } from './coaching';
 import { EnergyStore } from './energy-store';
@@ -555,30 +555,45 @@ export class HealthStore {
   }
   // 档案中的推荐只统计独立食物；餐食配菜和烹调油不因出现在其他记录中就成为独立食品。
   foodCandidates(includeDishComponents=true):FoodCandidate[]{
-    const presets=this.foodPresets(),ignored=new Set(this.ignoredFoodCandidates()),records=this.records().filter(x=>!x.deleted&&x.kind==='meal'),wholeRecords=new Set(includeDishComponents?[]:this.commonDishes().flatMap(d=>d.recordIds)),groups=new Map<string,{name:string;meals:Set<string>;days:Set<string>;latestAt:string;grams:Set<string>;per100g:FoodCandidate['per100g']|null;source:FoodCandidate['source']}>();
-    // Older analyses may lack roles. Keep all known dish ingredients, including those absent from its latest template.
+    const presets=this.foodPresets(),ignored=new Set(this.ignoredFoodCandidates().map(normalizeFoodName));
+    const records=this.records().filter(r=>!r.deleted&&r.kind==='meal');
+    const wholeRecords=new Set(includeDishComponents?[]:this.commonDishes().flatMap(d=>d.recordIds));
+    // Older analyses may omit roles. All ingredients of known meals help identify their components.
     const dishIngredients=new Set(records.filter(r=>wholeRecords.has(r.id)).flatMap(r=>(r.analysis?.ingredients??[]).map(i=>normalizeFoodName(i.name))));
-    for(const r of records.filter(x=>includeDishComponents||!wholeRecords.has(x.id))){
-      for(const ing of r.analysis?.ingredients??[]){
-        if(!ing.nutrition&&ing.foodId===null)continue;
-        const key=normalizeFoodName(ing.name);if(!key||ignored.has(ing.name))continue;
-        if(!includeDishComponents&&(ing.excludedFromTotal||ing.role==='component'||ing.role==='added_fat'||ing.role!=='whole_dish'&&(ing.compositionGroup||dishIngredients.has(key))))continue;
-        const group=groups.get(key)??{name:ing.name,meals:new Set(),days:new Set(),latestAt:'',grams:new Set(),per100g:null,source:'estimate' as FoodCandidate['source']};
-        group.meals.add(r.id);group.days.add(journalDay(r.occurredAt,this.getSettings().timezone));
-        if(r.occurredAt>=group.latestAt){
-          group.latestAt=r.occurredAt;
-          group.grams=new Set([`${ing.grams.low}-${ing.grams.high}`]);
-          let per100g:FoodCandidate['per100g']|null=ing.nutrition?.per100g??null,source:FoodCandidate['source']=ing.nutrition?.source??'estimate';
-          if(!per100g&&ing.foodId!==null){const f=this.catalog.get(ing.foodId);if(f&&[f.kcal,f.protein,f.carbs,f.fat].every(v=>v!==null)){per100g={kcal:{low:f.kcal!,high:f.kcal!},protein:{low:f.protein!,high:f.protein!},carbs:{low:f.carbs!,high:f.carbs!},fat:{low:f.fat!,high:f.fat!}};source='catalog';}}
-          if(per100g){group.per100g=per100g;group.source=source;}
+    const groups=new Map<string,{latest:FoodCandidate;meals:Set<string>;days:Set<string>}>();
+    const zone=this.getSettings().timezone;
+    for(const r of records){
+      if(wholeRecords.has(r.id))continue;
+      const items=r.analysis?.ingredients??[],order=standaloneDrinkName(r.text,items);
+      for(const ing of items){
+        const ingredientKey=normalizeFoodName(ing.name);
+        if(!includeDishComponents&&(ing.excludedFromTotal||ing.role==='component'||ing.role==='added_fat'||ing.role!=='whole_dish'&&(ing.compositionGroup||dishIngredients.has(ingredientKey))))continue;
+        const name=order??ing.name,key=normalizeFoodName(name);
+        if(!key||ignored.has(key)||ignored.has(ingredientKey)||matchFoodPreset(presets,name)||matchFoodPreset(presets,ing.name,ing.productId))continue;
+        const n=ing.nutrition,amount=ingredientAmount(ing);
+        let basis=n?.labelBasis,values=n?.perBasis,per100g=n?.per100g,source:FoodCandidate['source']=n?.source??'estimate';
+        if(!basis||!values){
+          if(!per100g&&ing.foodId!==null){
+            const f=this.catalog.get(ing.foodId);
+            if(f&&f.kcal!==null&&f.protein!==null&&f.carbs!==null&&f.fat!==null){
+              per100g={kcal:{low:f.kcal,high:f.kcal},protein:{low:f.protein,high:f.protein},carbs:{low:f.carbs,high:f.carbs},fat:{low:f.fat,high:f.fat}};
+              source='catalog';
+            }
+          }
+          if(!per100g)continue;
+          basis={quantity:100,unit:'g'};values=per100g;
         }
+        const sample:FoodCandidate={name,meals:0,days:0,latestAt:r.occurredAt,source,latestAmount:amount,labelBasis:basis,perBasis:values,
+          ...(ing.grams.high>0?{latestGrams:ing.grams}:{}),...(per100g?{per100g}:{}),...(n?.densityGramsPerMl?{densityGramsPerMl:n.densityGramsPerMl}:{})};
+        const group=groups.get(key)??{latest:sample,meals:new Set<string>(),days:new Set<string>()};
+        group.meals.add(r.id);group.days.add(journalDay(r.occurredAt,zone));
+        if(Date.parse(r.occurredAt)>=Date.parse(group.latest.latestAt))group.latest=sample;
         groups.set(key,group);
       }
     }
-    return [...groups.values()].filter(g=>g.meals.size>=2&&g.per100g&&!presets.some(p=>matchFoodPreset([p],g.name))).map(g=>{
-      const [low,high]=(()=>{const pair=[...g.grams][0]??'0-0';const [a,b]=pair.split('-').map(Number);return [a,b];})();
-      return {name:g.name,meals:g.meals.size,days:g.days.size,latestGrams:{low,high},per100g:g.per100g!,source:g.source,latestAt:g.latestAt};
-    }).sort((a,b)=>b.meals-a.meals||b.latestAt.localeCompare(a.latestAt)).slice(0,12);
+    return [...groups.values()].filter(g=>g.meals.size>=2)
+      .map(g=>({...g.latest,meals:g.meals.size,days:g.days.size}))
+      .sort((a,b)=>b.meals-a.meals||Date.parse(b.latestAt)-Date.parse(a.latestAt)).slice(0,12);
   }
   exerciseAliases():ExerciseAlias[]{return this.getConfig<ExerciseAlias[]>('exerciseAliases')??[];}
   exerciseRules():ExerciseRules{

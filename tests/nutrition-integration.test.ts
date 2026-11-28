@@ -14,6 +14,29 @@ const ingredient=(name:string,over:Partial<Ingredient>={}):Ingredient=>({name,fo
 function meal(s:HealthStore,text='测试餐食',at=now()){return s.importEnvelope({version:1,kind:'meal',id:crypto.randomUUID(),occurredAt:at,timezone:'Asia/Shanghai',text}).record;}
 function food(s:HealthStore,preset:FoodPreset){s.saveMemory({kind:'food',text:preset.name,food:preset,startsAt:new Date(Date.now()-86400000).toISOString(),expiresAt:null,sourceIds:[],active:true,confirmed:true});}
 function analyze(s:HealthStore,id:string,ingredients:Ingredient[],revision:number,manual=false){return s.applyAnalysis(id,{summary:'测试分析',questions:[],assumptions:[],ingredients},manual?'local':'chatgpt',revision,manual);}
+test('identical standalone drink orders count across model names and retain their volume basis',t=>{
+ const s=setup(t),order='示例茶坊燕麦奶茶 240ml，少糖';
+ const drink=(name:string,basis=100)=>ingredient(name,{grams:{low:0,high:0},amount:{low:240,high:240,unit:'ml'},nutrition:{
+  source:'estimate',basis:'合成饮品估算',labelBasis:{quantity:basis,unit:'ml'},
+  perBasis:{kcal:{low:basis/2,high:basis/2},carbs:{low:10,high:10},protein:{low:1,high:1},fat:{low:1,high:1}},
+ }});
+ const add=(text:string,items:Ingredient[],day:number)=>{const r=meal(s,text,`2026-04-0${day}T12:00:00Z`);analyze(s,r.id,items,r.revision);};
+ add(order,[drink('示例少糖燕麦奶茶')],1);
+ add(order,[drink('燕麦奶茶（少糖）',240)],2);
+ add(order,[drink('茶坊燕麦奶茶',240)],3);
+ add('另一家燕麦奶茶 240ml，少糖',[drink('茶坊燕麦奶茶')],4);
+ add('示例茶坊燕麦奶茶 240ml，全糖',[drink('茶坊燕麦奶茶')],5);
+ add(order+' 加点心',[drink('茶坊燕麦奶茶'),ingredient('合成点心')],6);
+ const c=s.foodCandidates(false).find(x=>x.name===order);
+ assert.ok(c);assert.equal(c.meals,3);assert.equal(c.days,3);
+ const p=foodCandidatePreset(c);assert.deepEqual(p.labelBasis,{quantity:240,unit:'ml'});
+ assert.equal(p.perServing.kcal,120);assert.equal(p.servingGrams,undefined);assert.equal(p.nutritionSource,'estimate');
+ assert.deepEqual(c.latestAmount,{low:240,high:240,unit:'ml'});
+ food(s,p);assert.ok(!s.foodCandidates(false).some(x=>x.name===order));
+ const next=meal(s,order);const result=analyze(s,next.id,[drink('另一种奶茶写法')],next.revision);
+ assert.equal(result.analysis!.ingredients![0].nutrition!.provenance,'preset');
+ assert.equal(result.analysis!.macros!.kcal.low,120);
+});
 test('store uses exact product presets and protects this-meal explicit label priority',t=>{
  const s=setup(t);food(s,{name:'香草乳清粉',brand:'测试营养',servingGrams:100,perServing:{kcal:350,protein:70,carbs:10,fat:5}});
  let r=meal(s,'本次香草乳清粉每100g 300kcal，蛋白质60g，碳水10g，脂肪3g');

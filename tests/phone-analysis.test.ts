@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { PhoneJournalModel, stamp, type JournalBridge } from '../src/mobile/journal';
 import { PhoneAnalysis, healthRecord } from '../src/mobile/analysis';
+import { PhoneAnalysisQueue } from '../src/mobile/analysis-queue';
 import { localInsights } from '../src/mobile/local-insights';
 import { detailOf } from '../src/shared/record-detail';
 import { heads, type PhoneRecord } from '../src/shared/device-sync';
@@ -84,6 +85,48 @@ const response = (value: unknown) => ({
   text: JSON.stringify(value),
 });
 const output = { summary: '熟米饭', ingredients: [rice], questions: [], assumptions: [] };
+test('phone queue accepts more work while running, deduplicates, isolates failure and respects edits', async () => {
+  const { phone } = rig(randomUUID());
+  const rows = await Promise.all(['甲', '乙', '丙', '丁'].map((s) => phone.save(record(s), null)));
+  const calls: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((done) => { release = done; });
+  const queue = new PhoneAnalysisQueue(phone, { async analyze(row, photos) {
+    calls.push(row.record.text); assert.deepEqual(photos, []);
+    if (row.record.text === '甲') await gate;
+    if (row.record.text === '乙') throw Error('模拟服务错误');
+    return row;
+  } });
+  const select = (row: typeof rows[number]) => ({ row, photos: [] });
+  queue.setActive(true);
+  await queue.enqueue(rows.slice(0, 2).map(select));
+  await new Promise((done) => setImmediate(done));
+  assert.deepEqual(calls, ['甲']);
+  await queue.enqueue([rows[0], rows[1], rows[2], rows[3]].map(select));
+  await phone.save({ ...rows[2].record, text: '已修改' }, stamp(rows[2]));
+  release();
+  await queue.whenIdle();
+  assert.deepEqual(calls, ['甲', '乙', '丁']);
+  assert.deepEqual(queue.snapshot().jobs.map((j) => j.state), ['done', 'failed', 'failed', 'done']);
+  assert.match(queue.snapshot().jobs[2].message!, /修改/);
+});
+test('reopening a phone queue resumes waiting work and leaves an interrupted request for explicit retry', async () => {
+  const { phone } = rig(randomUUID());
+  const a = await phone.save(record('甲'), null), b = await phone.save(record('乙'), null);
+  const first = new PhoneAnalysisQueue(phone, {async analyze(row) { return row; }});
+  await first.enqueue([{row:a,photos:[]},{row:b,photos:[]}]);
+  const jobs = first.snapshot().jobs.map((j, i) => i === 0 ? {...j, state:'running' as const} : j);
+  await phone.saveAnalysisQueue(jobs);
+  const calls: string[] = [];
+  const reopened = new PhoneAnalysisQueue(phone, { async analyze(row) { calls.push(row.record.text); return row; } });
+  reopened.setActive(true);
+  await reopened.start();
+  await reopened.whenIdle();
+  assert.deepEqual(calls, ['乙']);
+  assert.equal(reopened.snapshot().jobs[0].state,'failed');
+  await reopened.enqueue([{row:a,photos:[]}]); await reopened.whenIdle();
+  assert.deepEqual(calls,['乙','甲']);
+});
 function remote() {
   const files = new Map<string, string>();
   return {

@@ -66,8 +66,18 @@ try {
   const iphone = await context.newPage();
   iphone.on('pageerror', (e) => errors.push(e.message));
   let connected = false;
+  let modelCalls = 0, releaseFirst;
+  const firstRequest = new Promise((resolve) => { releaseFirst = resolve; });
   await iphone.exposeFunction('syntheticJournal', (opts) => {
-    if (opts.method === 'modelRead') return {value:null};
+    if (opts.method === 'modelRead') return {value:opts.name === 'deepseek' ? 'synthetic-ui-test' : null};
+    if (opts.method === 'modelFetch') {
+      if (opts.route !== 'deepseek') throw Error('Unexpected model route in the isolated fixture');
+      const analysis = {summary:'合成队列结果',ingredients:[{name:'白米饭（熟）',foodId:168878,grams:{low:100,high:100},assumption:'合成分量'}],questions:[],assumptions:[]};
+      const chunk = {choices:[{delta:{content:JSON.stringify(analysis)},finish_reason:'stop'}],
+        usage:{prompt_tokens:10,completion_tokens:10}};
+      const response = {status:200, body:'data: ' + JSON.stringify(chunk) + '\n\ndata: [DONE]\n\n'};
+      return ++modelCalls === 1 ? firstRequest.then(() => response) : response;
+    }
     if (opts.method === 'identity') return { device, archive, enabled: true, folder: '测试目录' };
     if (opts.method === 'folder' && !connected) throw Error('测试设备处于离线状态');
     if (opts.method === 'pick') return { photos: [photo] };
@@ -236,9 +246,35 @@ try {
   await iphone.getByLabel('步数日期').fill('2026-03-31');
   await expect(iphone.getByLabel('全天总步数')).toHaveValue('4322');
   await iphone.getByRole('button', { name: '返回', exact: true }).click();
+  connected = false;
+  await iphone.getByLabel('查看日期').fill('2026-04-12');
+  await iphone.evaluate(() => localStorage.setItem('bodyjournal.model.preferences.v1', JSON.stringify({provider:'deepseek'})));
+  for (const text of ['队列测试甲','队列测试乙','队列测试丙']) {
+    await iphone.getByRole('button', {name:'记一餐',exact:true}).click();
+    await iphone.getByLabel('原文').fill(text);
+    await iphone.getByRole('button', {name:'保存到本机'}).click();
+    await expect(iphone.locator('.entry-text')).toHaveText(text);
+    await iphone.getByRole('button', {name:'返回',exact:true}).click();
+  }
+  await iphone.getByRole('button', {name:'批量分析'}).click();
+  await iphone.locator('.entry').filter({hasText:'队列测试甲'}).click();
+  await iphone.locator('.entry').filter({hasText:'队列测试乙'}).click();
+  await iphone.getByRole('button', {name:'加入队列（2）'}).click();
+  await expect.poll(() => modelCalls).toBe(1);
+  await iphone.getByRole('button', {name:'能量',exact:true}).click();
+  await iphone.getByRole('button', {name:'手记',exact:true}).click();
+  await iphone.locator('.entry').filter({hasText:'队列测试丙'}).click();
+  await iphone.getByRole('button', {name:'分析这条记录'}).click();
+  await expect(iphone.getByRole('button', {name:'排队中',exact:true})).toBeVisible();
+  await iphone.getByRole('button', {name:'返回',exact:true}).click();
+  releaseFirst();
+  await expect(iphone.locator('.analysis-queue summary')).toContainText('已完成 3', {timeout:20000});
+  if (modelCalls !== 3) throw Error('批量和单条分析调用次数不匹配');
+  await iphone.locator('.entry').filter({hasText:'队列测试乙'}).click();
+  await expect(iphone.getByText('合成队列结果', {exact:true})).toBeVisible();
   const overflow = await iphone.evaluate(() => document.documentElement.scrollWidth > innerWidth);
   if (overflow || errors.length) throw Error('布局或脚本错误 ' + errors.join(' / '));
-  console.log('五个录入入口与日期边界、跨缺测趋势、跨月补步数与同日修改通过。离线选图和 Mac 修正后手机回读通过。');
+  console.log('记录、趋势及双端同步通过。手机批量排队期间可以切换页面、追加单条分析，三条结果都已保存。');
 } finally {
   await browser?.close();
   await app?.close();

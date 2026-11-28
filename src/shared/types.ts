@@ -6,7 +6,11 @@ export type FoodUnit='g'|'ml'|'serving';
 export type FoodBasis={quantity:number;unit:FoodUnit};
 export type FoodPreset = { name:string; brand?:string; servingGrams?:number; labelBasis?:FoodBasis; densityGramsPerMl?:number; productId?:string; aliases?:string[]; flavor?:string; specification?:string; nutritionSource?:'label'|'estimate'; perServing:{ kcal:number; protein:number; carbs:number; fat:number }; note?:string };
 export type MealSlot = 'breakfast'|'lunch'|'dinner'|'other';
-export type FoodCandidate = { name:string; meals:number; days:number; latestGrams:Range; per100g:Macro; source:'label'|'estimate'|'catalog'; latestAt:string };
+export type FoodCandidate = {
+ name:string; meals:number; days:number; latestAt:string; source:'label'|'estimate'|'catalog';
+ latestAmount:Range&{unit:FoodUnit}; labelBasis:FoodBasis; perBasis:Macro; densityGramsPerMl?:number;
+ latestGrams?:Range; per100g?:Macro;
+};
 export type Attachment = { name: string; mime: string; sha256: string; file: string };
 export type TrainingPart='chest'|'back'|'shoulders'|'legs'|'mixed'|'unknown';
 export type TrainingSession={part:TrainingPart;completion:'completed'|'planned'|'unknown';durationMinutes?:number;pain?:string;recovery?:string};

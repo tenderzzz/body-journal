@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useState } from 'react';
+import { useMemo, useEffect, useState, useSyncExternalStore } from 'react';
 import {
   ArrowLeft,
   ChevronLeft,
@@ -35,6 +35,8 @@ import type { PhoneInsights } from '../shared/phone-insights';
 import { PhoneAnalysis, healthRecord } from './analysis';
 import { detailOf } from '../shared/record-detail';
 import { RecordAnalysis } from './RecordAnalysis';
+import { canQueue, jobLabels, PhoneAnalysisQueue, queueVersion } from './analysis-queue';
+import { AnalysisQueuePanel } from './AnalysisQueuePanel';
 import { localInsights } from './local-insights';
 import type { PersonalLibrary } from '../shared/personal-library';
 import { LibraryPanel } from './LibraryPanel';
@@ -45,6 +47,7 @@ import './phone.css';
 const model = new PhoneJournalModel();
 const models = new MobileModels(model);
 const analysis = new PhoneAnalysis(model, models);
+const analysisQueue = new PhoneAnalysisQueue(model, analysis);
 const labels = { meal: '记一餐', training: '记训练', body: '记身体', note: '随手记', steps: '记步数' };
 const kinds = { meal: '餐食', training: '训练', body: '身体', note: '手记', steps: '步数' };
 const icons = { meal: Utensils, training: Dumbbell, body: Scale, note: StickyNote, steps: Footprints };
@@ -610,6 +613,10 @@ function Pairing({
   );
 }
 export function PhoneJournal() {
+  const { jobs, issue } = useSyncExternalStore(analysisQueue.subscribe, analysisQueue.snapshot);
+  const [batch, setBatch] = useState<Map<string, string> | null>(null);
+  const [includePhotos, setIncludePhotos] = useState(true);
+  const [adding, setAdding] = useState(false);
   const [identity, setId] = useState<PhoneIdentity>(),
     [rows, setRows] = useState<Row[]>([]),
     [report, setReport] = useState<SyncReport>(),
@@ -650,6 +657,16 @@ export function PhoneJournal() {
     const run = () => {
       void sync().catch((e) => setError(e.message));
     };
+    const availability = () => analysisQueue.setActive(!document.hidden && navigator.onLine);
+    availability();
+    void analysisQueue.start().catch((e) => setError(e.message));
+    const unsubscribe = analysisQueue.onSaved((saved) => {
+      setRows((list) => {
+        if (list.some((v) => v.record.id === saved.record.id && v.revision > saved.revision)) return list;
+        return [...list.filter((v) => v.record.id !== saved.record.id), saved];
+      });
+      run();
+    });
     void reload()
       .then(run)
       .catch((e) => setError(e.message));
@@ -657,9 +674,17 @@ export function PhoneJournal() {
       if (!document.hidden) run();
     };
     document.addEventListener('visibilitychange', foreground);
+    document.addEventListener('visibilitychange', availability);
+    window.addEventListener('online', availability);
+    window.addEventListener('offline', availability);
     window.addEventListener('online', run);
     const timer = window.setInterval(foreground, 60000);
     return () => {
+      unsubscribe();
+      analysisQueue.setActive(false);
+      document.removeEventListener('visibilitychange', availability);
+      window.removeEventListener('online', availability);
+      window.removeEventListener('offline', availability);
       document.removeEventListener('visibilitychange', foreground);
       window.removeEventListener('online', run);
       clearInterval(timer);
@@ -733,6 +758,28 @@ export function PhoneJournal() {
   const visible = rows
     .filter((v) => v.record.deleted === trash && (trash || allDates || dayOf(v.record) === date))
     .sort((a, b) => Date.parse(b.record.occurredAt) - Date.parse(a.record.occurredAt));
+  const shown = visible.slice(0, allDates && !trash ? limit : undefined);
+  const latestJobs = new Map(jobs.map((j) => [j.id, j]));
+  const selectable = (v: Row) => {
+    const job = latestJobs.get(v.record.id);
+    return canQueue(v) && !(job && job.version === queueVersion(v) && (job.state === 'waiting' || job.state === 'running'));
+  };
+  const selectedRows = batch ? rows.filter((v) => batch.get(v.record.id) === queueVersion(v) && selectable(v)) : [];
+  const toggle = (v: Row) => setBatch((old) => {
+    if (!old) return null;
+    const next = new Map(old), id = v.record.id;
+    if (next.get(id) === queueVersion(v)) next.delete(id); else next.set(id, queueVersion(v));
+    return next;
+  });
+  const submitBatch = async () => {
+    setAdding(true);
+    try {
+      await analysisQueue.enqueue(selectedRows.sort((a,b) => a.record.occurredAt.localeCompare(b.record.occurredAt))
+        .map((v) => ({row:v, photos:includePhotos ? v.record.photos.map((_, i) => i) : []})));
+      setBatch(null);
+    } catch (e) { setError((e as Error).message); }
+    finally { setAdding(false); }
+  };
   const detail = !!row && !!r;
   return (
     <div className="phone">
@@ -792,7 +839,7 @@ export function PhoneJournal() {
             ))}
           </div>
           {['meal', 'training'].includes(r.kind) && (
-            <RecordAnalysis key={r.id} row={row} service={analysis} model={model} changed={changed} />
+            <RecordAnalysis key={r.id} row={row} service={analysis} queue={analysisQueue} job={latestJobs.get(r.id)} model={model} changed={changed} />
           )}
           <p className="delivery">{deliveryLabel(row.replica, identity.device)}</p>
           {row.replica && (
@@ -864,7 +911,10 @@ export function PhoneJournal() {
           <section className="timeline">
             <div className="day-heading">
               <h2>{trash ? '最近删除' : '时间线'}</h2>
-              <button className="text" onClick={() => setTrash(!trash)}>
+              {!trash && <button className="text" onClick={() => setBatch(batch ? null : new Map())}>
+                {batch ? '取消选择' : '批量分析'}
+              </button>}
+              <button className="text" onClick={() => { setTrash(!trash); setBatch(null); }}>
                 {trash ? (
                   '回到时间线'
                 ) : (
@@ -875,6 +925,7 @@ export function PhoneJournal() {
                 )}
               </button>
             </div>
+            {!trash && <AnalysisQueuePanel queue={analysisQueue} rows={rows} open={setSelected} onError={setError} />}
             {!trash && (
               <div className="period-control" aria-label="记录时间范围">
                 <button aria-pressed={!allDates} onClick={() => showAll(false)}>
@@ -909,13 +960,30 @@ export function PhoneJournal() {
                 </button>
               </div>
             )}
-            {visible.slice(0, allDates && !trash ? limit : undefined).map((v) => {
+            {!trash && batch && <fieldset className="queue-select" disabled={adding}>
+              <button className="text" onClick={() => {
+                const next = new Map(batch);
+                for (const v of shown) if (selectable(v) && (!v.record.detail?.analysis || v.record.detail.pending))
+                  next.set(v.record.id, queueVersion(v));
+                setBatch(next);
+              }}>选中当前列表待分析项</button>
+              <label><input type="checkbox" checked={includePhotos} onChange={(e) => setIncludePhotos(e.target.checked)} /> 随记录发送照片给当前模型</label>
+              <button className="primary" disabled={!selectedRows.length || !!issue} onClick={() => void submitBatch()}>
+                加入队列（{selectedRows.length}）
+              </button>
+            </fieldset>}
+            {shown.map((v) => {
               const entry = v.record;
+              const job = latestJobs.get(entry.id);
+              const picked = !!batch && batch.get(entry.id) === queueVersion(v) && selectable(v);
               return (
                 <button
                   className="entry"
                   key={entry.id}
+                  aria-pressed={batch ? picked : undefined}
+                  disabled={!!batch && (adding || !selectable(v))}
                   onClick={() => {
+                    if (batch) { toggle(v); return; }
                     setSelected(entry.id);
                     setNotice('');
                   }}
@@ -930,10 +998,11 @@ export function PhoneJournal() {
                   <span>
                     <small>
                       {kinds[entry.kind]} · {deliveryLabel(v.replica, identity.device)}
+                      {job && (job.state === 'waiting' || job.state === 'running' || job.state === 'failed') && ' · ' + jobLabels[job.state]}
                     </small>
                     <strong>{localValue(entry).slice(0, 85)}</strong>
                   </span>
-                  <ChevronRight size={16} />
+                  {batch ? <span className="queue-check" aria-hidden="true">{picked ? '✓' : ''}</span> : <ChevronRight size={16} />}
                 </button>
               );
             })}

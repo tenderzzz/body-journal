@@ -24,6 +24,7 @@ import {
 } from '../shared/device-sync';
 import { exchange, type ReplicaStore, type ExchangeFolder } from '../shared/device-exchange';
 
+import type { AnalysisJob } from './analysis-queue';
 export type Row = { revision: number; record: PhoneRecord; replica: Replica | null };
 export function stepsForDay(rows: Row[], day: string, excluding?: string) {
   return rows.find(
@@ -119,6 +120,12 @@ export class PhoneJournalModel implements ReplicaStore {
   }
   attempts() {
     return this.getPersonal<HistoryResult[]>('attempts').then((v) => v ?? []);
+  }
+  analysisQueue() {
+    return this.getPersonal<AnalysisJob[]>('analysisQueue').then((jobs) => jobs ?? []);
+  }
+  saveAnalysisQueue(jobs: AnalysisJob[]) {
+    return this.setPersonal('analysisQueue', jobs);
   }
   keepAttempt(value: HistoryResult) {
     return this.locked(async () => {
@@ -233,7 +240,7 @@ export class PhoneJournalModel implements ReplicaStore {
   async replicas() {
     return (await this.rows()).flatMap((row) => (row.replica ? [row.replica] : []));
   }
-  private async row(id: string): Promise<Row | null> {
+  async row(id: string): Promise<Row | null> {
     const { doc } = await this.call<{ doc: string | null }>('row', { id });
     return doc ? JSON.parse(doc) : null;
   }

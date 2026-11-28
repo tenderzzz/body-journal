@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { SetEntry } from '../shared/types';
 import type { Row, PhoneJournalModel } from './journal';
 import type { PhoneAnalysis } from './analysis';
+import { canQueue, jobLabels, queueVersion, type AnalysisJob, type PhoneAnalysisQueue } from './analysis-queue';
 import { ingredientAmount } from '../shared/food';
 import type { HistoryResult, LibraryRevision } from '../shared/personal-library';
 import { heads } from '../shared/device-sync';
@@ -9,11 +10,15 @@ import { heads } from '../shared/device-sync';
 export function RecordAnalysis({
   row,
   service,
+  queue,
+  job,
   model,
   changed,
 }: {
   row: Row;
   service: PhoneAnalysis;
+  queue: PhoneAnalysisQueue;
+  job?: AnalysisJob;
   model: PhoneJournalModel;
   changed: (r: Row) => void;
 }) {
@@ -25,6 +30,14 @@ export function RecordAnalysis({
   const [photos, select] = useState(() => r.photos.map((_, i) => i));
   const [sets, editSets] = useState<SetEntry[] | null>(null);
   const [history, setHistory] = useState<{ at: string; text: string }[] | null>(null);
+  const activeJob = job && job.version === queueVersion(row) && (job.state === 'running' || job.state === 'waiting');
+  const enqueue = async () => {
+    work(true);
+    show('');
+    try { await queue.enqueue([{row, photos}]); }
+    catch (e) { show((e as Error).message); }
+    finally { work(false); }
+  };
   const action = async (fn: () => Promise<Row>) => {
     work(true);
     show('');
@@ -194,9 +207,11 @@ export function RecordAnalysis({
               ))}
             </div>
           )}
-          <button className="primary" onClick={() => void action(() => service.analyze(row, photos))}>
-            {busy ? '正在处理…' : '分析这条记录'}
+          <button className="primary" disabled={!!activeJob || !canQueue(row)} onClick={() => void enqueue()}>
+            {activeJob ? jobLabels[job.state] : '分析这条记录'}
           </button>
+          {activeJob && <p role="status">已加入分析队列，可以返回手记继续操作。</p>}
+          {job?.state === 'failed' && <p role="status">{job.message}</p>}
           {a && (
             <>
               <label>
@@ -204,13 +219,14 @@ export function RecordAnalysis({
                 <input maxLength={10000} value={answer} onChange={(e) => reply(e.target.value)} />
               </label>
               <button
-                disabled={!answer.trim()}
+                disabled={!answer.trim() || !canQueue(row)}
                 onClick={() =>
                   void action(async () => {
                     const added = await service.followup(row, answer);
-                    changed(added);
                     reply('');
-                    return service.analyze(added, photos);
+                    try { await queue.enqueue([{row:added, photos}]); }
+                    catch (e) { show('补充已保存。' + (e as Error).message); }
+                    return added;
                   })
                 }
               >

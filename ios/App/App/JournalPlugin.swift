@@ -136,7 +136,7 @@ final class JournalPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate
       case "identity": return try identity(db)
       case "personalBackup": try db.backupPersonal(); return [:]
       case "personalGet", "personalSet":
-        guard let name = call.getString("name"), ["library", "libraryHash", "migration", "migrationCursor", "attempts", "lastSync"].contains(name) else { throw JournalFailure("历史档案项目无效。") }
+        guard let name = call.getString("name"), ["library", "libraryHash", "migration", "migrationCursor", "attempts", "lastSync", "analysisQueue"].contains(name) else { throw JournalFailure("历史档案项目无效。") }
         if method == "personalGet" { return ["doc": (try db.get(name) as Any?) ?? NSNull()] }
         guard let value = call.getString("doc") else { throw JournalFailure("历史内容缺失。") }
         try db.set(name, value)

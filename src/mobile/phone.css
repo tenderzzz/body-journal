@@ -165,6 +165,36 @@ summary:focus-visible {
   min-width: 0;
   flex: 1;
 }
+.entry > .queue-check {
+  flex: none;
+  align-self: center;
+  width: 21px;
+  height: 21px;
+  border: 1px solid #76968c;
+  border-radius: 5px;
+  text-align: center;
+}
+.entry[aria-pressed="true"] .queue-check {
+  background: #315e51;
+  color: white;
+}
+.entry:disabled .queue-check { visibility: hidden; }
+.phone .queue-select, .analysis-queue {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid #d9e5e2;
+  border-radius: 8px;
+}
+.phone .queue-select { display: grid; gap: 8px; }
+.phone .queue-select label { display: flex; align-items: center; gap: 6px; margin: 0; }
+.analysis-queue summary { cursor: pointer; font-weight: 650; }
+.analysis-queue summary small { margin-inline-start: 4px; }
+.analysis-queue p, .analysis-queue small { color: #48625a; font-weight: 400; }
+.analysis-queue ul { list-style: none; margin: 0; padding: 0; }
+.analysis-queue li { border-top: 1px solid #d9e5e2; padding-block: 7px; }
+.analysis-queue li small { display: block; }
+.analysis-queue .queue-title { text-align: left; overflow-wrap: anywhere; }
+.queue-actions { display: flex; gap: 12px; }
 .entry small,
 .entry strong {
   display: block;
